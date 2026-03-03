@@ -1,0 +1,7 @@
+{
+  "name": "blog",
+  "system_rules": "Тексты для блога: объясняй понятно, избегай агрессивных продаж",
+  "tone": "разговорный, дружелюбный",
+  "allow_storytelling": true,
+  "allow_marketing": false
+}
