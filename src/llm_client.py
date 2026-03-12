@@ -36,7 +36,7 @@ class LLMProvider(str, Enum):
     PERPLEXITY = "perplexity"
     OPENAI = "openai"
     ANTHROPIC = "anthropic"
-    OPENROUTER = "openrouter"  # новый провайдер
+    OPENROUTER = "openrouter"
 
 
 @dataclass(frozen=True)
@@ -69,6 +69,7 @@ class LLMError(Exception):
 
 class LLMAPIError(LLMError):
     """Ошибка API (4xx, 5xx)."""
+
     def __init__(self, message: str, status_code: Optional[int] = None):
         super().__init__(message)
         self.status_code = status_code
@@ -92,9 +93,7 @@ class LLMRateLimitError(LLMError):
 class BaseLLMClient(ABC):
     """
     Абстрактный базовый класс для LLM-клиентов.
-
-    Все конкретные клиенты (Perplexity, OpenAI и т.д.) должны наследоваться
-    от этого класса и реализовывать метод _call_api().
+    Все конкретные клиенты должны реализовывать _call_api().
     """
 
     def __init__(self, config: LLMConfig):
@@ -265,7 +264,7 @@ class PerplexityClient(BaseLLMClient):
 
 
 # ============================================================================
-# OpenAI Client (для совместимости)
+# OpenAI Client
 # ============================================================================
 
 
@@ -351,20 +350,26 @@ class OpenRouterClient(BaseLLMClient):
         headers = {
             "Authorization": f"Bearer {self.config.api_key}",
             "Content-Type": "application/json",
-            # опционально: идентификатор приложения
-            "HTTP-Referer": os.getenv("OPENROUTER_SITE_URL", ""),
-            "X-Title": os.getenv("OPENROUTER_APP_NAME", "Docs Editor"),
+            "HTTP-Referer": os.getenv("OPENROUTER_SITE_URL", "https://example.com"),
+            "X-Title": os.getenv("OPENROUTER_APP_NAME", "text-editor-docs"),
         }
 
-        payload = {
+        payload: Dict[str, Any] = {
             "model": self.config.model,
-            "messages": [{"role": "user", "content": prompt}],
+            "messages": [
+                {"role": "system", "content": "You are a helpful writing assistant."},
+                {"role": "user", "content": prompt},
+            ],
             "temperature": self.config.temperature,
             "max_tokens": self.config.max_tokens,
         }
 
         try:
-            response = await self._client.post(self.API_URL, json=payload, headers=headers)
+            response = await self._client.post(
+                self.API_URL,
+                json=payload,
+                headers=headers,
+            )
 
             if response.status_code == 429:
                 raise LLMRateLimitError("Rate limit exceeded")
@@ -399,7 +404,6 @@ class OpenRouterClient(BaseLLMClient):
                 tokens_used=tokens_used,
                 finish_reason=finish_reason,
             )
-
         except (KeyError, IndexError) as e:
             raise LLMError(f"Failed to parse response: {str(e)}") from e
 
@@ -407,7 +411,10 @@ class OpenRouterClient(BaseLLMClient):
         try:
             error_data = response.json()
             if "error" in error_data:
-                return str(error_data["error"])
+                err = error_data["error"]
+                if isinstance(err, dict):
+                    return err.get("message", str(err))
+                return str(err)
             return response.text
         except Exception:
             return response.text
@@ -432,7 +439,6 @@ def create_llm_client(
         LLMProvider.PERPLEXITY: "sonar-pro",
         LLMProvider.OPENAI: "gpt-4",
         LLMProvider.ANTHROPIC: "claude-3-5-sonnet-20241022",
-        # через OpenRouter можно тоже поставить дефолт
         LLMProvider.OPENROUTER: "openrouter/auto",
     }
 
