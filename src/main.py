@@ -25,7 +25,7 @@ from src.prompt_builder import AudienceProfile, PromptBuilder
 # Настройка логирования
 logging.basicConfig(
     level=logging.INFO,
-    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
 )
 logger = logging.getLogger(__name__)
 
@@ -43,17 +43,17 @@ async def lifespan(app: FastAPI):
     """
     # Startup
     logger.info("Starting up text editor service...")
-    
+
     # Инициализируем PromptBuilder (проверяем конфиги)
     try:
         app.state.prompt_builder = PromptBuilder()
         logger.info("PromptBuilder initialized successfully")
     except Exception as e:
-        logger.error(f"Failed to initialize PromptBuilder: {e}")
+        logger.error("Failed to initialize PromptBuilder: %s", e)
         raise
-    
+
     yield
-    
+
     # Shutdown
     logger.info("Shutting down text editor service...")
 
@@ -91,23 +91,23 @@ class AudienceRequest(BaseModel):
     expertise: str = Field(default="pro", description="Уровень: novice, pro, expert")
     formality: str = Field(default="neutral", description="Формальность: casual, neutral, formal")
     description: str = Field(default="", description="Дополнительное описание")
-    
+
     @validator("kind")
-    def validate_kind(cls, v):
+    def validate_kind(cls, v: str) -> str:
         allowed = ["b2b", "b2c", "mixed", "custom"]
         if v not in allowed:
             raise ValueError(f"kind must be one of {allowed}")
         return v
-    
+
     @validator("expertise")
-    def validate_expertise(cls, v):
+    def validate_expertise(cls, v: str) -> str:
         allowed = ["novice", "pro", "expert"]
         if v not in allowed:
             raise ValueError(f"expertise must be one of {allowed}")
         return v
-    
+
     @validator("formality")
-    def validate_formality(cls, v):
+    def validate_formality(cls, v: str) -> str:
         allowed = ["casual", "neutral", "formal"]
         if v not in allowed:
             raise ValueError(f"formality must be one of {allowed}")
@@ -117,57 +117,79 @@ class AudienceRequest(BaseModel):
 class EditRequest(BaseModel):
     """Модель запроса на редактирование текста."""
     text: str = Field(..., min_length=1, description="Текст для редактирования")
-    domain: str = Field(default="marketing", description="Домен текста: marketing, blog, fiction")
-    
+    domain: str = Field(
+        default="marketing",
+        description="Домен текста: marketing, blog, fiction, basic_edit, logic_edit",
+    )
+
     intent: Optional[str] = Field(
-        default=None, 
-        description="Цель обработки: analytical (точнее+логичнее), storytelling (увлекательнее), marketing_push (продающим)"
+        default=None,
+        description="Цель обработки: analytical (точнее+логичнее), storytelling (увлекательнее), marketing_push (продающим)",
     )
-    
-    audience: Optional[AudienceRequest] = Field(default=None, description="Профиль аудитории")
-    
+
+    audience: Optional[AudienceRequest] = Field(
+        default=None,
+        description="Профиль аудитории",
+    )
+
     overlays: List[str] = Field(
-        default_factory=list, 
-        description="Дополнительные режимы: infostyle (жёсткий инфостиль), factcheck (отчёт по фактам), recommendations (советы)"
+        default_factory=list,
+        description="Дополнительные режимы: infostyle (жёсткий инфостиль), factcheck (отчёт по фактам), recommendations (советы)",
     )
-    
-    output_mode: str = Field(default="text_only", description="Формат вывода: text_only, text_and_report")
-    
+
+    output_mode: str = Field(
+        default="text_only",
+        description="Формат вывода: text_only, text_and_report",
+    )
+
     # LLM параметры
-    provider: str = Field(default="perplexity", description="LLM провайдер")
-    model: Optional[str] = Field(default=None, description="Модель LLM")
-    temperature: float = Field(default=0.3, ge=0.0, le=2.0, description="Температура генерации")
-    
+    provider: str = Field(
+        default="openrouter",
+        description="LLM провайдер: openrouter, perplexity, openai, anthropic",
+    )
+    model: Optional[str] = Field(
+        default=None,
+        description="Модель LLM (например, openrouter/auto или deepseek/deepseek-chat)",
+    )
+    temperature: float = Field(
+        default=0.3,
+        ge=0.0,
+        le=2.0,
+        description="Температура генерации",
+    )
+
     @validator("intent")
-    def validate_intent(cls, v):
+    def validate_intent(cls, v: Optional[str]) -> Optional[str]:
         if v is not None:
             allowed = ["analytical", "storytelling", "marketing_push"]
             if v not in allowed:
                 raise ValueError(f"intent must be one of {allowed} or None")
         return v
-    
+
     @validator("overlays")
-    def validate_overlays(cls, v):
+    def validate_overlays(cls, v: List[str]) -> List[str]:
         allowed = ["infostyle", "factcheck", "recommendations", "final_check"]
         for overlay in v:
             if overlay not in allowed:
-                raise ValueError(f"overlay '{overlay}' not allowed. Allowed: {allowed}")
+                raise ValueError(
+                    f"overlay '{overlay}' not allowed. Allowed: {allowed}"
+                )
         return v
-    
+
     @validator("output_mode")
-    def validate_output_mode(cls, v):
+    def validate_output_mode(cls, v: str) -> str:
         allowed = ["text_only", "text_and_report"]
         if v not in allowed:
             raise ValueError(f"output_mode must be one of {allowed}")
         return v
-    
+
     @validator("provider")
-    def validate_provider(cls, v):
-        allowed = ["perplexity", "openai", "anthropic"]
+    def validate_provider(cls, v: str) -> str:
+        allowed = ["perplexity", "openai", "anthropic", "openrouter"]
         if v not in allowed:
             raise ValueError(f"provider must be one of {allowed}")
         return v
-    
+
     class Config:
         json_schema_extra = {
             "example": {
@@ -178,10 +200,12 @@ class EditRequest(BaseModel):
                     "kind": "b2b",
                     "expertise": "pro",
                     "formality": "neutral",
-                    "description": "Менеджеры отделов продаж"
+                    "description": "Менеджеры отделов продаж",
                 },
                 "overlays": ["infostyle"],
-                "output_mode": "text_only"
+                "output_mode": "text_only",
+                "provider": "openrouter",
+                "model": "openrouter/auto",
             }
         }
 
@@ -189,10 +213,16 @@ class EditRequest(BaseModel):
 class EditResponse(BaseModel):
     """Модель ответа с отредактированным текстом."""
     edited_text: str = Field(..., description="Отредактированный текст")
-    report: Optional[str] = Field(default=None, description="Отчёт о правках (если запрошен)")
+    report: Optional[str] = Field(
+        default=None,
+        description="Отчёт о правках (если запрошен)",
+    )
     model: str = Field(..., description="Использованная модель")
     provider: str = Field(..., description="Использованный провайдер")
-    tokens_used: Optional[int] = Field(default=None, description="Количество использованных токенов")
+    tokens_used: Optional[int] = Field(
+        default=None,
+        description="Количество использованных токенов",
+    )
 
 
 class HealthResponse(BaseModel):
@@ -213,13 +243,13 @@ class ErrorResponse(BaseModel):
 
 
 @app.get("/", response_model=HealthResponse)
-async def root():
+async def root() -> HealthResponse:
     """Корневой эндпоинт."""
     return HealthResponse(status="ok", version="1.0.0")
 
 
 @app.get("/health", response_model=HealthResponse)
-async def health_check():
+async def health_check() -> HealthResponse:
     """Health check эндпоинт."""
     return HealthResponse(status="ok", version="1.0.0")
 
@@ -230,9 +260,9 @@ async def health_check():
     responses={
         400: {"model": ErrorResponse, "description": "Некорректный запрос"},
         500: {"model": ErrorResponse, "description": "Внутренняя ошибка сервера"},
-    }
+    },
 )
-async def edit_text(request: EditRequest):
+async def edit_text(request: EditRequest) -> EditResponse:
     """
     Редактирует текст с помощью LLM.
     """
@@ -243,12 +273,12 @@ async def edit_text(request: EditRequest):
             "domain": request.domain,
             "intent": request.intent,
             "output_mode": request.output_mode,
-        }
+        },
     )
-    
+
     try:
         # 1. Конвертируем audience в нужный формат
-        audience = None
+        audience: Optional[AudienceProfile] = None
         if request.audience:
             audience = AudienceProfile(
                 kind=request.audience.kind,
@@ -256,9 +286,9 @@ async def edit_text(request: EditRequest):
                 formality=request.audience.formality,
                 description=request.audience.description,
             )
-        
+
         # 2. Собираем промпт
-        prompt_builder = app.state.prompt_builder
+        prompt_builder: PromptBuilder = app.state.prompt_builder
         prompt = prompt_builder.build(
             text=request.text,
             domain=request.domain,
@@ -266,39 +296,39 @@ async def edit_text(request: EditRequest):
             audience=audience,
             overlays=request.overlays,
             output_mode=request.output_mode,
-            include_knowledge=True,  # <── добавили явный флаг
+            include_knowledge=True,
         )
-        
+
         logger.info(
             "Prompt built successfully",
-            extra={"prompt_length": len(prompt)}
+            extra={"prompt_length": len(prompt)},
         )
-        
+
         # 3. Вызываем LLM
         provider_enum = LLMProvider(request.provider)
-        
+
         async with create_llm_client(
             provider=provider_enum,
             model=request.model,
             temperature=request.temperature,
         ) as client:
             response = await client.generate(prompt)
-        
+
         logger.info(
             "LLM generation successful",
             extra={
                 "response_length": len(response.content),
                 "tokens_used": response.tokens_used,
-            }
+            },
         )
-        
+
         # 4. Парсим ответ (если нужен отчёт)
         edited_text = response.content
-        report = None
-        
+        report: Optional[str] = None
+
         if request.output_mode == "text_and_report":
             edited_text, report = _parse_text_and_report(response.content)
-        
+
         # 5. Возвращаем результат
         return EditResponse(
             edited_text=edited_text,
@@ -308,49 +338,41 @@ async def edit_text(request: EditRequest):
             tokens_used=response.tokens_used,
         )
 
-    
     except LLMError as e:
-        logger.error(f"LLM error: {e}", exc_info=True)
+        logger.error("LLM error: %s", e, exc_info=True)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"LLM generation failed: {str(e)}"
+            detail=f"LLM generation failed: {str(e)}",
         )
-    
+
     except FileNotFoundError as e:
-        logger.error(f"Config file not found: {e}", exc_info=True)
+        logger.error("Config file not found: %s", e, exc_info=True)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Configuration error: {str(e)}"
+            detail=f"Configuration error: {str(e)}",
         )
-    
-    except Exception as e:
-        logger.error(f"Unexpected error: {e}", exc_info=True)
+
+    except Exception as e:  # noqa: BLE001
+        logger.error("Unexpected error: %s", e, exc_info=True)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Internal server error: {str(e)}"
+            detail=f"Internal server error: {str(e)}",
         )
 
 
 @app.post("/api/quick-edit")
-async def quick_edit(text: str, audience_type: str = "b2b"):
+async def quick_edit(text: str, audience_type: str = "b2b") -> dict:
     """
     Упрощённый эндпоинт для быстрого редактирования.
     Для обратной совместимости с MVP.
-    
-    Args:
-        text: Текст для редактирования
-        audience_type: Тип аудитории (b2b, b2c, mixed)
-        
-    Returns:
-        Отредактированный текст
     """
     request = EditRequest(
         text=text,
         domain="marketing",
         audience=AudienceRequest(kind=audience_type),
-        output_mode="text_only"
+        output_mode="text_only",
     )
-    
+
     response = await edit_text(request)
     return {"edited_text": response.edited_text}
 
@@ -363,29 +385,23 @@ async def quick_edit(text: str, audience_type: str = "b2b"):
 def _parse_text_and_report(content: str) -> tuple[str, Optional[str]]:
     """
     Парсит ответ в режиме text_and_report.
-    
+
     Ожидается формат:
     ===ТЕКСТ===
     [текст]
-    
+
     ===ОТЧЁТ===
     [отчёт]
-    
-    Args:
-        content: Ответ от LLM
-        
-    Returns:
-        Кортеж (текст, отчёт)
     """
     text_marker = "===ТЕКСТ==="
     report_marker = "===ОТЧЁТ==="
-    
+
     if text_marker in content and report_marker in content:
         parts = content.split(report_marker)
         text_part = parts[0].replace(text_marker, "").strip()
         report_part = parts[1].strip() if len(parts) > 1 else None
         return text_part, report_part
-    
+
     # Если маркеров нет — считаем, что всё — текст
     return content.strip(), None
 
@@ -397,11 +413,11 @@ def _parse_text_and_report(content: str) -> tuple[str, Optional[str]]:
 
 if __name__ == "__main__":
     import uvicorn
-    
+
     uvicorn.run(
         "src.main:app",
         host="0.0.0.0",
         port=8000,
         reload=True,
-        log_level="info"
+        log_level="info",
     )
