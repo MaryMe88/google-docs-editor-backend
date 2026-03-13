@@ -22,6 +22,7 @@ from typing import Any, Dict, Iterable, List, Optional, Sequence
 @dataclass(frozen=True)
 class CoreConfig:
     """Базовая конфигурация редактора (общая для всех режимов)."""
+
     role: str
     priorities: str
     basic_audit_instructions: List[str]
@@ -31,6 +32,7 @@ class CoreConfig:
 @dataclass(frozen=True)
 class DomainConfig:
     """Конфигурация домена (тип текста: маркетинг, блог и т.п.)."""
+
     name: str
     system_rules: str
     tone: str
@@ -41,6 +43,7 @@ class DomainConfig:
 @dataclass(frozen=True)
 class IntentConfig:
     """Конфигурация цели обработки (точнее, увлекательнее и т.п.)."""
+
     name: str
     instructions: List[str]
 
@@ -48,6 +51,7 @@ class IntentConfig:
 @dataclass(frozen=True)
 class OverlayConfig:
     """Конфигурация надстройки (инфостиль, логика, фактчек и т.п.)."""
+
     name: str
     instructions: List[str]
 
@@ -55,6 +59,7 @@ class OverlayConfig:
 @dataclass(frozen=True)
 class AudienceProfile:
     """Профиль аудитории."""
+
     kind: str  # "b2b" | "b2c" | "mixed" | "custom"
     expertise: str  # "novice" | "pro" | "expert"
     formality: str  # "casual" | "neutral" | "formal"
@@ -72,7 +77,11 @@ class KnowledgeBase:
     - storytelling_frameworks: фреймворки для сторителлинга/структуры истории
     - marketing_templates: шаблоны маркетинговых текстов (лендинг, письма, посты)
     - domain_glossary: термины и определения по доменам (опционально)
+    - composition_principles: принципы композиции (типы построения, глобальная связность)
+    - local_cohesion: приёмы локальной связности (абзац, тема-рема, местоимения)
+    - composition_errors: типичные композиционные ошибки
     """
+
     stop_words: Dict[str, List[str]]
     grammar_errors: List[Dict[str, Any]]
     stylistic_issues: List[Dict[str, Any]]
@@ -80,6 +89,9 @@ class KnowledgeBase:
     storytelling_frameworks: List[Dict[str, Any]]
     marketing_templates: List[Dict[str, Any]]
     domain_glossary: Dict[str, Any]
+    composition_principles: List[Dict[str, Any]]
+    local_cohesion: List[Dict[str, Any]]
+    composition_errors: List[Dict[str, Any]]
 
 
 # ============================================================================
@@ -177,6 +189,17 @@ def load_output_format(
 def load_knowledge_base(base_path: Path = Path("knowledge_base")) -> KnowledgeBase:
     """
     Загружает базу знаний из папки knowledge_base.
+    Ожидаемые файлы:
+    - stop_words.json
+    - grammar_errors.json
+    - stylistic_issues.json
+    - storytelling_frameworks.json
+    - marketing_templates.json
+    - logic_issues.json (опционально)
+    - domain_glossary.json (опционально)
+    - composition_principles.json (опционально)
+    - local_cohesion.json (опционально)
+    - composition_errors.json (опционально)
     """
     stop_words = load_json_file(base_path / "stop_words.json")
     grammar = load_json_file(base_path / "grammar_errors.json")
@@ -184,7 +207,6 @@ def load_knowledge_base(base_path: Path = Path("knowledge_base")) -> KnowledgeBa
     storytelling = load_json_file(base_path / "storytelling_frameworks.json")
     marketing = load_json_file(base_path / "marketing_templates.json")
 
-    # логические ошибки (по желанию)
     logic_path = base_path / "logic_issues.json"
     logic_data: Dict[str, Any] = {"issues": []}
     if logic_path.exists():
@@ -195,6 +217,26 @@ def load_knowledge_base(base_path: Path = Path("knowledge_base")) -> KnowledgeBa
     if glossary_path.exists():
         domain_glossary = load_json_file(glossary_path)
 
+    composition_principles_path = base_path / "composition_principles.json"
+    composition_principles: List[Dict[str, Any]] = []
+    if composition_principles_path.exists():
+        composition_principles_data = load_json_file(composition_principles_path)
+        composition_principles = composition_principles_data.get(
+            "composition_principles", []
+        )
+
+    local_cohesion_path = base_path / "local_cohesion.json"
+    local_cohesion: List[Dict[str, Any]] = []
+    if local_cohesion_path.exists():
+        local_cohesion_data = load_json_file(local_cohesion_path)
+        local_cohesion = local_cohesion_data.get("local_cohesion", [])
+
+    composition_errors_path = base_path / "composition_errors.json"
+    composition_errors: List[Dict[str, Any]] = []
+    if composition_errors_path.exists():
+        composition_errors_data = load_json_file(composition_errors_path)
+        composition_errors = composition_errors_data.get("composition_errors", [])
+
     return KnowledgeBase(
         stop_words=stop_words,
         grammar_errors=grammar.get("common_mistakes", []),
@@ -203,6 +245,9 @@ def load_knowledge_base(base_path: Path = Path("knowledge_base")) -> KnowledgeBa
         storytelling_frameworks=storytelling.get("frameworks", []),
         marketing_templates=marketing.get("templates", []),
         domain_glossary=domain_glossary,
+        composition_principles=composition_principles,
+        local_cohesion=local_cohesion,
+        composition_errors=composition_errors,
     )
 
 
@@ -295,7 +340,6 @@ def select_logic_issues(
     matches: List[Dict[str, Any]] = []
 
     for item in candidates:
-        # для logic_issues.json "wrong" можно трактовать как типичный паттерн / ситуация
         pattern = str(item.get("wrong", "")).lower()
         entry_tags = item.get("tags", [])
         if pattern and pattern in text_lower and _match_tags(entry_tags, wanted_tags):
@@ -313,6 +357,32 @@ def select_logic_issues(
     return matches
 
 
+def _select_by_tags_or_all(
+    entries: List[Dict[str, Any]],
+    tags: Iterable[str],
+    limit: int,
+) -> List[Dict[str, Any]]:
+    """
+    Универсальный селектор по тегам для новых блоков знаний.
+    """
+    wanted_tags = list(tags)
+    if not entries:
+        return []
+
+    matches: List[Dict[str, Any]] = []
+    for entry in entries:
+        entry_tags = entry.get("tags", [])
+        if _match_tags(entry_tags, wanted_tags):
+            matches.append(entry)
+            if len(matches) >= limit:
+                break
+
+    if matches:
+        return matches
+
+    return entries[:limit]
+
+
 # ============================================================================
 # Prompt Builder (сборщик промпта)
 # ============================================================================
@@ -327,7 +397,7 @@ class PromptBuilder:
         self,
         config_path: Path = Path("config"),
         kb_path: Path = Path("knowledge_base"),
-    ):
+    ) -> None:
         self.config_path = config_path
         self.kb_path = kb_path
 
@@ -410,17 +480,19 @@ class PromptBuilder:
         description_line = (
             f"\n- Описание: {audience.description}" if audience.description else ""
         )
-        return f"""Аудитория:
-- Тип: {audience.kind}
-- Уровень экспертизы: {audience.expertise}
-- Формальность: {audience.formality}{description_line}"""
+        return (
+            "Аудитория:\n"
+            f"- Тип: {audience.kind}\n"
+            f"- Уровень экспертизы: {audience.expertise}\n"
+            f"- Формальность: {audience.formality}{description_line}"
+        )
 
     def _build_overlays_block(self, overlays: Sequence[str]) -> str:
         overlay_configs = load_overlay_configs(overlays, self.config_path)
 
         parts: List[str] = ["Дополнительные режимы:"]
         for cfg in overlay_configs:
-            instructions = "\n".join(f"  - {instr}" for instr in cfg.instructions)
+            instructions = "\n".join(f" - {instr}" for instr in cfg.instructions)
             parts.append(f"\n• {cfg.name}:\n{instructions}")
 
         return "\n".join(parts)
@@ -446,21 +518,55 @@ class PromptBuilder:
         logic_sample = select_logic_issues(kb, text=text, tags=tags, limit=8)
 
         grammar_lines: List[str] = [
-            f"  • {err.get('wrong', '')} → {err.get('correct', '').strip()} ({err.get('rule', '').strip()})"
+            f" • {err.get('wrong', '')} → {err.get('correct', '').strip()} ({err.get('rule', '').strip()})"
             for err in grammar_sample
             if err.get("wrong") and err.get("correct")
-        ] or ["  • (нет подходящих примеров)"]
+        ] or [" • (нет подходящих примеров)"]
 
         style_lines: List[str] = [
-            f"  • {issue.get('wrong', '')} → {issue.get('correct', '').strip()} ({issue.get('rule', '').strip()})"
+            f" • {issue.get('wrong', '')} → {issue.get('correct', '').strip()} ({issue.get('rule', '').strip()})"
             for issue in style_sample
             if issue.get("wrong")
-        ] or ["  • (нет подходящих примеров)"]
+        ] or [" • (нет подходящих примеров)"]
 
         logic_lines: List[str] = [
-            f"  • {item.get('name', item.get('wrong', ''))}: {item.get('rule', item.get('description', '')).strip()}"
+            f" • {item.get('name', item.get('wrong', ''))}: "
+            f"{item.get('rule', item.get('description', '')).strip()}"
             for item in logic_sample
-        ] or ["  • (нет подходящих примеров)"]
+        ] or [" • (нет подходящих примеров)"]
+
+        composition_principles_sample = _select_by_tags_or_all(
+            kb.composition_principles,
+            tags=tags + ["composition"],
+            limit=6,
+        )
+        composition_principles_lines: List[str] = [
+            f" • {entry.get('name', '')}: "
+            f"{entry.get('rule', entry.get('description', '')).strip()}"
+            for entry in composition_principles_sample
+        ] or [" • (нет принципов композиции в базе)"]
+
+        local_cohesion_sample = _select_by_tags_or_all(
+            kb.local_cohesion,
+            tags=tags + ["cohesion"],
+            limit=6,
+        )
+        local_cohesion_lines: List[str] = [
+            f" • {entry.get('name', '')}: "
+            f"{entry.get('rule', entry.get('description', '')).strip()}"
+            for entry in local_cohesion_sample
+        ] or [" • (нет приёмов локальной связности в базе)"]
+
+        composition_errors_sample = _select_by_tags_or_all(
+            kb.composition_errors,
+            tags=tags + ["composition"],
+            limit=6,
+        )
+        composition_errors_lines: List[str] = [
+            f" • {entry.get('name', '')}: "
+            f"{entry.get('rule', entry.get('description', '')).strip()}"
+            for entry in composition_errors_sample
+        ] or [" • (нет примеров композиционных ошибок в базе)"]
 
         frameworks_text = ""
         if intent == "storytelling" and kb.storytelling_frameworks:
@@ -476,7 +582,7 @@ class PromptBuilder:
                 ]
                 if not name or not step_names:
                     continue
-                framework_lines.append(f"  • {name}: " + " → ".join(step_names))
+                framework_lines.append(f" • {name}: " + " → ".join(step_names))
             if framework_lines:
                 frameworks_text = (
                     "\n\nФреймворки сторителлинга (для структуры рассказа):\n"
@@ -497,7 +603,7 @@ class PromptBuilder:
                 ]
                 if not name or not section_names:
                     continue
-                template_lines.append(f"  • {name}: " + ", ".join(section_names))
+                template_lines.append(f" • {name}: " + ", ".join(section_names))
             if template_lines:
                 marketing_text = (
                     "\n\nМаркетинговые шаблоны (структура текста по типу):\n"
@@ -509,7 +615,7 @@ class PromptBuilder:
             terms = kb.domain_glossary.get(domain, {})
             if isinstance(terms, dict) and terms:
                 sample_items = list(terms.items())[:10]
-                term_lines = [f"  • {k}: {v}" for k, v in sample_items]
+                term_lines = [f" • {k}: {v}" for k, v in sample_items]
                 glossary_text = (
                     "\n\nГлоссарий по домену (ключевые термины):\n"
                     + "\n".join(term_lines)
@@ -525,6 +631,12 @@ class PromptBuilder:
             + "\n".join(style_lines)
             + "\n\nТипичные логические проблемы и риски связности:\n"
             + "\n".join(logic_lines)
+            + "\n\nПринципы композиции (типы построения и глобальная связность):\n"
+            + "\n".join(composition_principles_lines)
+            + "\n\nПриёмы локальной связности (абзац, тема-рема, местоимения, союзы):\n"
+            + "\n".join(local_cohesion_lines)
+            + "\n\nТипичные композиционные ошибки (что искать и как исправлять):\n"
+            + "\n".join(composition_errors_lines)
             + frameworks_text
             + marketing_text
             + glossary_text
@@ -535,7 +647,7 @@ class PromptBuilder:
         return f"Формат ответа:\n{format_text}"
 
     def _build_text_block(self, text: str) -> str:
-        return f'Текст для обработки:\n"""\n{text}\n"""'
+        return f'Tекст для обработки:\n"""\\n{text}\\n"""'
 
 
 def build_prompt(
