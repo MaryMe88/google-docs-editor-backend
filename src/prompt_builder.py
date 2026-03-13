@@ -11,7 +11,7 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Sequence
+from typing import Any, Dict, Iterable, List, Optional, Sequence
 
 
 # ============================================================================
@@ -73,8 +73,8 @@ class KnowledgeBase:
     - domain_glossary: термины и определения по доменам (опционально)
     """
     stop_words: Dict[str, List[str]]
-    grammar_errors: List[Dict[str, str]]
-    stylistic_issues: List[Dict[str, str]]
+    grammar_errors: List[Dict[str, Any]]
+    stylistic_issues: List[Dict[str, Any]]
     storytelling_frameworks: List[Dict[str, Any]]
     marketing_templates: List[Dict[str, Any]]
     domain_glossary: Dict[str, Any]
@@ -94,10 +94,6 @@ def load_json_file(path: Path) -> dict:
 
     Returns:
         Распарсенный JSON как словарь
-
-    Raises:
-        FileNotFoundError: Если файл не найден
-        json.JSONDecodeError: Если файл некорректен
     """
     if not path.exists():
         raise FileNotFoundError(f"Config file not found: {path}")
@@ -118,13 +114,6 @@ def load_core_config(base_path: Path = Path("config")) -> CoreConfig:
 def load_domain_config(domain: str, base_path: Path = Path("config")) -> DomainConfig:
     """
     Загружает конфигурацию домена.
-
-    Args:
-        domain: Имя домена (например, "marketing", "blog")
-        base_path: Базовый путь к папке config
-
-    Returns:
-        Конфигурация домена
     """
     data = load_json_file(base_path / "domains" / f"{domain}.json")
     return DomainConfig(
@@ -138,17 +127,10 @@ def load_domain_config(domain: str, base_path: Path = Path("config")) -> DomainC
 
 def load_intent_config(
     intent: Optional[str],
-    base_path: Path = Path("config")
+    base_path: Path = Path("config"),
 ) -> Optional[IntentConfig]:
     """
     Загружает конфигурацию цели обработки.
-
-    Args:
-        intent: Имя intent ("analytical", "storytelling", "marketing_push", None)
-        base_path: Базовый путь к папке config
-
-    Returns:
-        Конфигурация intent или None, если intent не указан
     """
     if intent is None or intent == "neutral":
         return None
@@ -162,17 +144,10 @@ def load_intent_config(
 
 def load_overlay_configs(
     overlays: Sequence[str],
-    base_path: Path = Path("config")
+    base_path: Path = Path("config"),
 ) -> List[OverlayConfig]:
     """
     Загружает конфигурации надстроек.
-
-    Args:
-        overlays: Список имён надстроек ("infostyle", "factcheck", ...)
-        base_path: Базовый путь к папке config
-
-    Returns:
-        Список конфигураций надстроек
     """
     configs: List[OverlayConfig] = []
     for overlay in overlays:
@@ -188,17 +163,10 @@ def load_overlay_configs(
 
 def load_output_format(
     mode: str,
-    base_path: Path = Path("config")
+    base_path: Path = Path("config"),
 ) -> str:
     """
     Загружает шаблон формата вывода.
-
-    Args:
-        mode: Режим вывода ("text_only", "text_and_report")
-        base_path: Базовый путь к папке config
-
-    Returns:
-        Текст инструкции формата вывода
     """
     data = load_json_file(base_path / "output_format.json")
     return data.get(mode, data["text_only"])
@@ -207,14 +175,6 @@ def load_output_format(
 def load_knowledge_base(base_path: Path = Path("knowledge_base")) -> KnowledgeBase:
     """
     Загружает базу знаний из папки knowledge_base.
-
-    Ожидаемые файлы:
-    - stop_words.json
-    - grammar_errors.json
-    - stylistic_issues.json
-    - storytelling_frameworks.json
-    - marketing_templates.json
-    - domain_glossary.json (может быть пустым)
     """
     stop_words = load_json_file(base_path / "stop_words.json")
     grammar = load_json_file(base_path / "grammar_errors.json")
@@ -238,6 +198,107 @@ def load_knowledge_base(base_path: Path = Path("knowledge_base")) -> KnowledgeBa
 
 
 # ============================================================================
+# Knowledge selection helpers
+# ============================================================================
+
+
+def _match_tags(entry_tags: Iterable[str], wanted_tags: Iterable[str]) -> bool:
+    entry = set(t.strip().lower() for t in (entry_tags or []))
+    wanted = set(t.strip().lower() for t in (wanted_tags or []))
+    return bool(entry & wanted) if wanted else True
+
+
+def select_grammar_rules(
+    kb: KnowledgeBase,
+    text: str,
+    tags: Iterable[str],
+    limit: int = 10,
+) -> List[Dict[str, Any]]:
+    text_lower = text.lower()
+    wanted_tags = list(tags)
+
+    matches: List[Dict[str, Any]] = []
+    for err in kb.grammar_errors:
+        wrong = str(err.get("wrong", "")).lower()
+        entry_tags = err.get("tags", [])
+        if wrong and wrong in text_lower and _match_tags(entry_tags, wanted_tags):
+            matches.append(err)
+            if len(matches) >= limit:
+                break
+
+    if not matches:
+        for err in kb.grammar_errors:
+            if _match_tags(err.get("tags", []), wanted_tags):
+                matches.append(err)
+                if len(matches) >= limit:
+                    break
+
+    return matches
+
+
+def select_style_issues(
+    kb: KnowledgeBase,
+    text: str,
+    tags: Iterable[str],
+    limit: int = 10,
+) -> List[Dict[str, Any]]:
+    text_lower = text.lower()
+    wanted_tags = list(tags)
+
+    matches: List[Dict[str, Any]] = []
+    for issue in kb.stylistic_issues:
+        wrong = str(issue.get("wrong", "")).lower()
+        entry_tags = issue.get("tags", [])
+        if wrong and wrong in text_lower and _match_tags(entry_tags, wanted_tags):
+            matches.append(issue)
+            if len(matches) >= limit:
+                break
+
+    if not matches:
+        for issue in kb.stylistic_issues:
+            if _match_tags(issue.get("tags", []), wanted_tags):
+                matches.append(issue)
+                if len(matches) >= limit:
+                    break
+
+    return matches
+
+
+def select_logic_issues(
+    kb: KnowledgeBase,
+    text: str,
+    tags: Iterable[str],
+    limit: int = 8,
+) -> List[Dict[str, Any]]:
+    """
+    Логические проблемы пока берём из stylistic_issues / grammar по тегам "logic".
+    Если заведёшь отдельный JSON под логику, можно будет переключить на него.
+    """
+    text_lower = text.lower()
+    wanted_tags = list(tags) + ["logic"]
+
+    candidates: List[Dict[str, Any]] = kb.stylistic_issues + kb.grammar_errors
+    matches: List[Dict[str, Any]] = []
+
+    for item in candidates:
+        pattern = str(item.get("wrong", "")).lower()
+        entry_tags = item.get("tags", [])
+        if pattern and pattern in text_lower and _match_tags(entry_tags, wanted_tags):
+            matches.append(item)
+            if len(matches) >= limit:
+                break
+
+    if not matches:
+        for item in candidates:
+            if _match_tags(item.get("tags", []), wanted_tags):
+                matches.append(item)
+                if len(matches) >= limit:
+                    break
+
+    return matches
+
+
+# ============================================================================
 # Prompt Builder (сборщик промпта)
 # ============================================================================
 
@@ -250,7 +311,7 @@ class PromptBuilder:
     def __init__(
         self,
         config_path: Path = Path("config"),
-        kb_path: Path = Path("knowledge_base")
+        kb_path: Path = Path("knowledge_base"),
     ):
         self.config_path = config_path
         self.kb_path = kb_path
@@ -281,7 +342,14 @@ class PromptBuilder:
             parts.append(self._build_overlays_block(overlays))
 
         if include_knowledge:
-            parts.append(self._build_knowledge_block(domain=domain, intent=intent))
+            parts.append(
+                self._build_knowledge_block(
+                    text=text,
+                    domain=domain,
+                    intent=intent,
+                    overlays=overlays,
+                )
+            )
 
         parts.append(self._build_output_format_block(output_mode))
         parts.append(self._build_text_block(text))
@@ -340,26 +408,43 @@ class PromptBuilder:
 
         return "\n".join(parts)
 
-    def _build_knowledge_block(self, domain: str, intent: Optional[str]) -> str:
+    def _build_knowledge_block(
+        self,
+        text: str,
+        domain: str,
+        intent: Optional[str],
+        overlays: Sequence[str],
+    ) -> str:
         kb = load_knowledge_base(self.kb_path)
 
         stop_words_text = json.dumps(kb.stop_words, ensure_ascii=False, indent=2)
 
-        grammar_sample = kb.grammar_errors[:10]
-        grammar_lines: List[str] = [
-            f"  • {err['wrong']} → {err['correct']} ({err.get('rule', '').strip()})"
-            for err in grammar_sample
-            if "wrong" in err and "correct" in err
-        ]
-        grammar_text = "\n".join(grammar_lines) if grammar_lines else "  • (нет примеров)"
+        tags: List[str] = [domain]
+        if intent:
+            tags.append(intent)
+        tags.extend(overlays)
 
-        style_sample = kb.stylistic_issues[:10]
+        grammar_sample = select_grammar_rules(kb, text=text, tags=tags, limit=10)
+        style_sample = select_style_issues(kb, text=text, tags=tags, limit=10)
+        logic_sample = select_logic_issues(kb, text=text, tags=tags, limit=8)
+
+        grammar_lines: List[str] = [
+            f"  • {err.get('wrong', '')} → {err.get('correct', '').strip()} ({err.get('rule', '').strip()})"
+            for err in grammar_sample
+            if err.get("wrong") and err.get("correct")
+        ] or ["  • (нет подходящих примеров)"]
+
         style_lines: List[str] = [
-            f"  • {issue.get('wrong', '')} → {issue.get('correct', '').strip()}"
+            f"  • {issue.get('wrong', '')} → {issue.get('correct', '').strip()} ({issue.get('rule', '').strip()})"
             for issue in style_sample
             if issue.get("wrong")
-        ]
-        style_text = "\n".join(style_lines) if style_lines else "  • (нет примеров)"
+        ] or ["  • (нет подходящих примеров)"]
+
+        logic_lines: List[str] = [
+            f"  • {item.get('wrong', '')}: {item.get('rule', item.get('description', '')).strip()}"
+            for item in logic_sample
+            if item.get("wrong")
+        ] or ["  • (нет подходящих примеров)"]
 
         frameworks_text = ""
         if intent == "storytelling" and kb.storytelling_frameworks:
@@ -371,7 +456,7 @@ class PromptBuilder:
                 step_names = [
                     step.get("name", "")
                     for step in steps
-                    if isinstance(step, dict) and step.get("name")
+                    if isinstance(step, Dict) and step.get("name")
                 ]
                 if not name or not step_names:
                     continue
@@ -392,7 +477,7 @@ class PromptBuilder:
                 section_names = [
                     sec.get("name", "")
                     for sec in sections
-                    if isinstance(sec, dict) and sec.get("name")
+                    if isinstance(sec, Dict) and sec.get("name")
                 ]
                 if not name or not section_names:
                     continue
@@ -414,23 +499,27 @@ class PromptBuilder:
                     + "\n".join(term_lines)
                 )
 
-        return f"""База знаний:
-
-Стоп-слова и нежелательные конструкции (удаляй или переписывай):
-{stop_words_text}
-
-Типичные грамматические и лексические ошибки (исправляй):
-{grammar_text}
-
-Типичные стилистические проблемы (канцелярит, штампы, вода — устраняй):
-{style_text}{frameworks_text}{marketing_text}{glossary_text}"""
+        return (
+            "База знаний:\n\n"
+            "Стоп-слова и нежелательные конструкции (удаляй или переписывай):\n"
+            f"{stop_words_text}\n\n"
+            "Типичные грамматические и лексические ошибки (исправляй по аналогии):\n"
+            + "\n".join(grammar_lines)
+            + "\n\nТипичные стилистические проблемы (канцелярит, штампы, вода — устраняй):\n"
+            + "\n".join(style_lines)
+            + "\n\nТипичные логические проблемы и риски связности:\n"
+            + "\n".join(logic_lines)
+            + frameworks_text
+            + marketing_text
+            + glossary_text
+        )
 
     def _build_output_format_block(self, mode: str) -> str:
         format_text = load_output_format(mode, self.config_path)
         return f"Формат ответа:\n{format_text}"
 
     def _build_text_block(self, text: str) -> str:
-        return f'Tекст для обработки:\n"""\n{text}\n"""'
+        return f'Текст для обработки:\n"""\n{text}\n"""'
 
 
 def build_prompt(
