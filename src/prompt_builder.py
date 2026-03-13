@@ -68,6 +68,7 @@ class KnowledgeBase:
     - stop_words: словари стоп-слов и нежелательных конструкций
     - grammar_errors: типичные грамматические / орфографические ошибки
     - stylistic_issues: типичные стилистические проблемы (канцелярит, штампы и т.п.)
+    - logic_issues: логические ошибки и проблемы связности
     - storytelling_frameworks: фреймворки для сторителлинга/структуры истории
     - marketing_templates: шаблоны маркетинговых текстов (лендинг, письма, посты)
     - domain_glossary: термины и определения по доменам (опционально)
@@ -75,6 +76,7 @@ class KnowledgeBase:
     stop_words: Dict[str, List[str]]
     grammar_errors: List[Dict[str, Any]]
     stylistic_issues: List[Dict[str, Any]]
+    logic_issues: List[Dict[str, Any]]
     storytelling_frameworks: List[Dict[str, Any]]
     marketing_templates: List[Dict[str, Any]]
     domain_glossary: Dict[str, Any]
@@ -182,6 +184,12 @@ def load_knowledge_base(base_path: Path = Path("knowledge_base")) -> KnowledgeBa
     storytelling = load_json_file(base_path / "storytelling_frameworks.json")
     marketing = load_json_file(base_path / "marketing_templates.json")
 
+    # логические ошибки (по желанию)
+    logic_path = base_path / "logic_issues.json"
+    logic_data: Dict[str, Any] = {"issues": []}
+    if logic_path.exists():
+        logic_data = load_json_file(logic_path)
+
     glossary_path = base_path / "domain_glossary.json"
     domain_glossary: Dict[str, Any] = {}
     if glossary_path.exists():
@@ -191,6 +199,7 @@ def load_knowledge_base(base_path: Path = Path("knowledge_base")) -> KnowledgeBa
         stop_words=stop_words,
         grammar_errors=grammar.get("common_mistakes", []),
         stylistic_issues=style.get("common_issues", []),
+        logic_issues=logic_data.get("issues", []),
         storytelling_frameworks=storytelling.get("frameworks", []),
         marketing_templates=marketing.get("templates", []),
         domain_glossary=domain_glossary,
@@ -271,16 +280,22 @@ def select_logic_issues(
     limit: int = 8,
 ) -> List[Dict[str, Any]]:
     """
-    Логические проблемы пока берём из stylistic_issues / grammar по тегам "logic".
-    Если заведёшь отдельный JSON под логику, можно будет переключить на него.
+    Если есть отдельный logic_issues.json — используем его.
+    Если нет, падаем обратно на stylistic_issues + grammar_errors с тегом "logic".
     """
     text_lower = text.lower()
     wanted_tags = list(tags) + ["logic"]
 
-    candidates: List[Dict[str, Any]] = kb.stylistic_issues + kb.grammar_errors
+    candidates: List[Dict[str, Any]]
+    if kb.logic_issues:
+        candidates = kb.logic_issues
+    else:
+        candidates = kb.stylistic_issues + kb.grammar_errors
+
     matches: List[Dict[str, Any]] = []
 
     for item in candidates:
+        # для logic_issues.json "wrong" можно трактовать как типичный паттерн / ситуация
         pattern = str(item.get("wrong", "")).lower()
         entry_tags = item.get("tags", [])
         if pattern and pattern in text_lower and _match_tags(entry_tags, wanted_tags):
@@ -392,7 +407,9 @@ class PromptBuilder:
         if audience is None:
             return "Аудитория: не указана. Используй нейтральный профессиональный тон."
 
-        description_line = f"\n- Описание: {audience.description}" if audience.description else ""
+        description_line = (
+            f"\n- Описание: {audience.description}" if audience.description else ""
+        )
         return f"""Аудитория:
 - Тип: {audience.kind}
 - Уровень экспертизы: {audience.expertise}
@@ -441,9 +458,8 @@ class PromptBuilder:
         ] or ["  • (нет подходящих примеров)"]
 
         logic_lines: List[str] = [
-            f"  • {item.get('wrong', '')}: {item.get('rule', item.get('description', '')).strip()}"
+            f"  • {item.get('name', item.get('wrong', ''))}: {item.get('rule', item.get('description', '')).strip()}"
             for item in logic_sample
-            if item.get("wrong")
         ] or ["  • (нет подходящих примеров)"]
 
         frameworks_text = ""
