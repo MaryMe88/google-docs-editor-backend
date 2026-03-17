@@ -13,7 +13,6 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional, Sequence
 
-
 # ============================================================================
 # Data Models (типы данных для конфигов)
 # ============================================================================
@@ -80,6 +79,7 @@ class KnowledgeBase:
     - composition_principles: принципы композиции (типы построения, глобальная связность)
     - local_cohesion: приёмы локальной связности (абзац, тема-рема, местоимения)
     - composition_errors: типичные композиционные ошибки
+    - rhetoric_frameworks: риторические топосы и приёмы аргументации
     """
 
     stop_words: Dict[str, List[str]]
@@ -92,6 +92,7 @@ class KnowledgeBase:
     composition_principles: List[Dict[str, Any]]
     local_cohesion: List[Dict[str, Any]]
     composition_errors: List[Dict[str, Any]]
+    rhetoric_frameworks: List[Dict[str, Any]]
 
 
 # ============================================================================
@@ -200,6 +201,7 @@ def load_knowledge_base(base_path: Path = Path("knowledge_base")) -> KnowledgeBa
     - composition_principles.json (опционально)
     - local_cohesion.json (опционально)
     - composition_errors.json (опционально)
+    - rithoric.json (опционально, риторические топосы)
     """
     stop_words = load_json_file(base_path / "stop_words.json")
     grammar = load_json_file(base_path / "grammar_errors.json")
@@ -237,6 +239,12 @@ def load_knowledge_base(base_path: Path = Path("knowledge_base")) -> KnowledgeBa
         composition_errors_data = load_json_file(composition_errors_path)
         composition_errors = composition_errors_data.get("composition_errors", [])
 
+    rhetoric_path = base_path / "rithoric.json"
+    rhetoric_frameworks: List[Dict[str, Any]] = []
+    if rhetoric_path.exists():
+        rhetoric_data = load_json_file(rhetoric_path)
+        rhetoric_frameworks = rhetoric_data.get("frameworks", [])
+
     return KnowledgeBase(
         stop_words=stop_words,
         grammar_errors=grammar.get("common_mistakes", []),
@@ -248,6 +256,7 @@ def load_knowledge_base(base_path: Path = Path("knowledge_base")) -> KnowledgeBa
         composition_principles=composition_principles,
         local_cohesion=local_cohesion,
         composition_errors=composition_errors,
+        rhetoric_frameworks=rhetoric_frameworks,
     )
 
 
@@ -277,15 +286,15 @@ def select_grammar_rules(
         entry_tags = err.get("tags", [])
         if wrong and wrong in text_lower and _match_tags(entry_tags, wanted_tags):
             matches.append(err)
-            if len(matches) >= limit:
-                break
+        if len(matches) >= limit:
+            break
 
     if not matches:
         for err in kb.grammar_errors:
             if _match_tags(err.get("tags", []), wanted_tags):
                 matches.append(err)
-                if len(matches) >= limit:
-                    break
+            if len(matches) >= limit:
+                break
 
     return matches
 
@@ -305,15 +314,15 @@ def select_style_issues(
         entry_tags = issue.get("tags", [])
         if wrong and wrong in text_lower and _match_tags(entry_tags, wanted_tags):
             matches.append(issue)
-            if len(matches) >= limit:
-                break
+        if len(matches) >= limit:
+            break
 
     if not matches:
         for issue in kb.stylistic_issues:
             if _match_tags(issue.get("tags", []), wanted_tags):
                 matches.append(issue)
-                if len(matches) >= limit:
-                    break
+            if len(matches) >= limit:
+                break
 
     return matches
 
@@ -344,15 +353,15 @@ def select_logic_issues(
         entry_tags = item.get("tags", [])
         if pattern and pattern in text_lower and _match_tags(entry_tags, wanted_tags):
             matches.append(item)
-            if len(matches) >= limit:
-                break
+        if len(matches) >= limit:
+            break
 
     if not matches:
         for item in candidates:
             if _match_tags(item.get("tags", []), wanted_tags):
                 matches.append(item)
-                if len(matches) >= limit:
-                    break
+            if len(matches) >= limit:
+                break
 
     return matches
 
@@ -374,8 +383,8 @@ def _select_by_tags_or_all(
         entry_tags = entry.get("tags", [])
         if _match_tags(entry_tags, wanted_tags):
             matches.append(entry)
-            if len(matches) >= limit:
-                break
+        if len(matches) >= limit:
+            break
 
     if matches:
         return matches
@@ -603,14 +612,40 @@ class PromptBuilder:
                 ]
                 if not name or not section_names:
                     continue
-                template_lines.append(f" • {name}: " + ", ".join(section_names))
+                template_lines.append(
+                    f" • {name}: " + ", ".join(section_names)
+                )
             if template_lines:
                 marketing_text = (
                     "\n\nМаркетинговые шаблоны (структура текста по типу):\n"
                     + "\n".join(template_lines)
                 )
 
+        rhetoric_text = ""
+        if kb.rhetoric_frameworks:
+            rhetoric_sample = kb.rhetoric_frameworks[:4]
+            rhetoric_lines: List[str] = []
+            for fw in rhetoric_sample:
+                name = fw.get("name", "")
+                steps = fw.get("steps", [])
+                step_names = [
+                    step.get("name", "")
+                    for step in steps
+                    if isinstance(step, Dict) and step.get("name")
+                ]
+                if not name or not step_names:
+                    continue
+                rhetoric_lines.append(
+                    f" • {name}: " + " → ".join(step_names)
+                )
+            if rhetoric_lines:
+                rhetoric_text = (
+                    "\n\nРиторические топосы и приёмы аргументации:\n"
+                    + "\n".join(rhetoric_lines)
+                )
+
         glossary_text = ""
+        # domain_glossary.json сейчас отсутствует в списке файлов, но код оставляем на будущее:
         if kb.domain_glossary and domain in kb.domain_glossary:
             terms = kb.domain_glossary.get(domain, {})
             if isinstance(terms, dict) and terms:
@@ -639,6 +674,7 @@ class PromptBuilder:
             + "\n".join(composition_errors_lines)
             + frameworks_text
             + marketing_text
+            + rhetoric_text
             + glossary_text
         )
 
