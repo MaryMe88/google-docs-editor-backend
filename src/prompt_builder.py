@@ -127,9 +127,7 @@ def load_core_config(base_path: Path = Path("config")) -> CoreConfig:
 
 
 def load_domain_config(domain: str, base_path: Path = Path("config")) -> DomainConfig:
-    """
-    Загружает конфигурацию домена.
-    """
+    """Загружает конфигурацию домена."""
     data = load_json_file(base_path / "domains" / f"{domain}.json")
     return DomainConfig(
         name=data["name"],
@@ -144,9 +142,7 @@ def load_intent_config(
     intent: Optional[str],
     base_path: Path = Path("config"),
 ) -> Optional[IntentConfig]:
-    """
-    Загружает конфигурацию цели обработки.
-    """
+    """Загружает конфигурацию цели обработки."""
     if intent is None or intent == "neutral":
         return None
 
@@ -161,9 +157,7 @@ def load_overlay_configs(
     overlays: Sequence[str],
     base_path: Path = Path("config"),
 ) -> List[OverlayConfig]:
-    """
-    Загружает конфигурации надстроек.
-    """
+    """Загружает конфигурации надстроек."""
     configs: List[OverlayConfig] = []
     for overlay in overlays:
         data = load_json_file(base_path / "overlays" / f"{overlay}.json")
@@ -180,11 +174,49 @@ def load_output_format(
     mode: str,
     base_path: Path = Path("config"),
 ) -> str:
-    """
-    Загружает шаблон формата вывода.
-    """
+    """Загружает шаблон формата вывода."""
     data = load_json_file(base_path / "output_format.json")
     return data.get(mode, data["text_only"])
+
+
+def _flatten_stylistic_issues(raw: Dict[str, Any]) -> List[Dict[str, Any]]:
+    """
+    Разворачивает stylistic_issues.json в плоский список записей с полями
+    wrong / correct / rule / tags / category.
+
+    Поддерживает два формата:
+    - Новый категорийный:
+        {"stylistic_errors": [{category, description, examples: [{wrong, correct, rule, tags}]}]}
+    - Старый плоский (обратная совместимость):
+        {"common_issues": [{wrong, correct, rule, tags}]}
+    """
+    flat: List[Dict[str, Any]] = []
+
+    for item in raw.get("stylistic_errors", []):
+        if "examples" in item:
+            category = item.get("category", "")
+            for example in item["examples"]:
+                entry = dict(example)
+                if "tags" not in entry:
+                    entry["tags"] = ["style"]
+                entry["category"] = category
+                flat.append(entry)
+        else:
+            flat.append(item)
+
+    for item in raw.get("common_issues", []):
+        if "examples" in item:
+            category = item.get("category", "")
+            for example in item["examples"]:
+                entry = dict(example)
+                if "tags" not in entry:
+                    entry["tags"] = ["style"]
+                entry["category"] = category
+                flat.append(entry)
+        else:
+            flat.append(item)
+
+    return flat
 
 
 def load_knowledge_base(base_path: Path = Path("knowledge_base")) -> KnowledgeBase:
@@ -205,7 +237,7 @@ def load_knowledge_base(base_path: Path = Path("knowledge_base")) -> KnowledgeBa
     """
     stop_words = load_json_file(base_path / "stop_words.json")
     grammar = load_json_file(base_path / "grammar_errors.json")
-    style = load_json_file(base_path / "stylistic_issues.json")
+    style_raw = load_json_file(base_path / "stylistic_issues.json")  # ← изменено
     storytelling = load_json_file(base_path / "storytelling_frameworks.json")
     marketing = load_json_file(base_path / "marketing_templates.json")
 
@@ -248,7 +280,7 @@ def load_knowledge_base(base_path: Path = Path("knowledge_base")) -> KnowledgeBa
     return KnowledgeBase(
         stop_words=stop_words,
         grammar_errors=grammar.get("common_mistakes", []),
-        stylistic_issues=style.get("common_issues", []),
+        stylistic_issues=_flatten_stylistic_issues(style_raw),  # ← изменено
         logic_issues=logic_data.get("issues", []),
         storytelling_frameworks=storytelling.get("frameworks", []),
         marketing_templates=marketing.get("templates", []),
@@ -371,9 +403,7 @@ def _select_by_tags_or_all(
     tags: Iterable[str],
     limit: int,
 ) -> List[Dict[str, Any]]:
-    """
-    Универсальный селектор по тегам для новых блоков знаний.
-    """
+    """Универсальный селектор по тегам для новых блоков знаний."""
     wanted_tags = list(tags)
     if not entries:
         return []
@@ -587,7 +617,7 @@ class PromptBuilder:
                 step_names = [
                     step.get("name", "")
                     for step in steps
-                    if isinstance(step, Dict) and step.get("name")
+                    if isinstance(step, dict) and step.get("name")
                 ]
                 if not name or not step_names:
                     continue
@@ -608,13 +638,11 @@ class PromptBuilder:
                 section_names = [
                     sec.get("name", "")
                     for sec in sections
-                    if isinstance(sec, Dict) and sec.get("name")
+                    if isinstance(sec, dict) and sec.get("name")
                 ]
                 if not name or not section_names:
                     continue
-                template_lines.append(
-                    f" • {name}: " + ", ".join(section_names)
-                )
+                template_lines.append(f" • {name}: " + ", ".join(section_names))
             if template_lines:
                 marketing_text = (
                     "\n\nМаркетинговые шаблоны (структура текста по типу):\n"
@@ -631,13 +659,11 @@ class PromptBuilder:
                 step_names = [
                     step.get("name", "")
                     for step in steps
-                    if isinstance(step, Dict) and step.get("name")
+                    if isinstance(step, dict) and step.get("name")
                 ]
                 if not name or not step_names:
                     continue
-                rhetoric_lines.append(
-                    f" • {name}: " + " → ".join(step_names)
-                )
+                rhetoric_lines.append(f" • {name}: " + " → ".join(step_names))
             if rhetoric_lines:
                 rhetoric_text = (
                     "\n\nРиторические топосы и приёмы аргументации:\n"
@@ -645,7 +671,6 @@ class PromptBuilder:
                 )
 
         glossary_text = ""
-        # domain_glossary.json сейчас отсутствует в списке файлов, но код оставляем на будущее:
         if kb.domain_glossary and domain in kb.domain_glossary:
             terms = kb.domain_glossary.get(domain, {})
             if isinstance(terms, dict) and terms:
@@ -683,7 +708,7 @@ class PromptBuilder:
         return f"Формат ответа:\n{format_text}"
 
     def _build_text_block(self, text: str) -> str:
-        return f'Tекст для обработки:\n"""\\n{text}\\n"""'
+        return f'Tекст для обработки:\n"""\n{text}\n"""'
 
 
 def build_prompt(
