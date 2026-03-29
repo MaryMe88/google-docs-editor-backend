@@ -80,6 +80,7 @@ class KnowledgeBase:
     - local_cohesion: приёмы локальной связности (абзац, тема-рема, местоимения)
     - composition_errors: типичные композиционные ошибки
     - rhetoric_frameworks: риторические топосы и приёмы аргументации
+    - editorial_techniques: редакторские приёмы (Нора Галь, Мильчин и др.)
     """
 
     stop_words: Dict[str, List[str]]
@@ -93,6 +94,7 @@ class KnowledgeBase:
     local_cohesion: List[Dict[str, Any]]
     composition_errors: List[Dict[str, Any]]
     rhetoric_frameworks: List[Dict[str, Any]]
+    editorial_techniques: List[Dict[str, Any]]
 
 
 # ============================================================================
@@ -186,9 +188,9 @@ def _flatten_stylistic_issues(raw: Dict[str, Any]) -> List[Dict[str, Any]]:
 
     Поддерживает два формата:
     - Новый категорийный:
-        {"stylistic_errors": [{category, description, examples: [{wrong, correct, rule, tags}]}]}
+      {"stylistic_errors": [{category, description, examples: [{wrong, correct, rule, tags}]}]}
     - Старый плоский (обратная совместимость):
-        {"common_issues": [{wrong, correct, rule, tags}]}
+      {"common_issues": [{wrong, correct, rule, tags}]}
     """
     flat: List[Dict[str, Any]] = []
 
@@ -219,6 +221,98 @@ def _flatten_stylistic_issues(raw: Dict[str, Any]) -> List[Dict[str, Any]]:
     return flat
 
 
+def _flatten_editorial_techniques(raw: Dict[str, Any]) -> List[Dict[str, Any]]:
+    """
+    Разворачивает editorial_techniques.json в плоский список приёмов.
+
+    Ожидаемый формат:
+    {
+      "editorial_techniques": [
+        {
+          "category": "...",
+          "description": "...",
+          "tags": [...],
+          "techniques": [
+            {
+              "id": "...",
+              "name": "...",
+              "description": "...",
+              "when_to_use": [...],
+              "how_to_apply": [...],
+              "examples": [
+                {"wrong": "...", "correct": "...", "explanation": "..."}
+              ],
+              "tags": [...],
+              ...
+            }
+          ]
+        }
+      ]
+    }
+
+    Выходная запись:
+    {
+      "id": str,
+      "name": str,
+      "category": str,
+      "description": str,
+      "when_to_use": List[str],
+      "how_to_apply": List[str],
+      "example_wrong": str,
+      "example_correct": str,
+      "example_explanation": str,
+      "tags": List[str],
+      "source": Dict[str, Any]
+    }
+    """
+    flat: List[Dict[str, Any]] = []
+
+    for block in raw.get("editorial_techniques", []):
+        category = block.get("category", "")
+        block_tags = block.get("tags", [])
+        techniques = block.get("techniques", [])
+        if not isinstance(techniques, list):
+            continue
+
+        for tech in techniques:
+            tech_id = tech.get("id", "")
+            name = tech.get("name", "")
+            desc = tech.get("description", "")
+            when_to_use = tech.get("when_to_use", [])
+            how_to_apply = tech.get("how_to_apply", [])
+            tags = list(block_tags) + list(tech.get("tags", []))
+            source = tech.get("source", {})
+
+            examples = tech.get("examples", [])
+            if examples and isinstance(examples, list):
+                example = examples[0]
+                wrong = example.get("wrong", "")
+                correct = example.get("correct", "")
+                explanation = example.get("explanation", "")
+            else:
+                wrong = ""
+                correct = ""
+                explanation = ""
+
+            flat.append(
+                {
+                    "id": tech_id,
+                    "name": name,
+                    "category": category,
+                    "description": desc,
+                    "when_to_use": when_to_use,
+                    "how_to_apply": how_to_apply,
+                    "example_wrong": wrong,
+                    "example_correct": correct,
+                    "example_explanation": explanation,
+                    "tags": tags or ["editing", "nora_gal"],
+                    "source": source,
+                }
+            )
+
+    return flat
+
+
 def load_knowledge_base(base_path: Path = Path("knowledge_base")) -> KnowledgeBase:
     """
     Загружает базу знаний из папки knowledge_base.
@@ -234,10 +328,11 @@ def load_knowledge_base(base_path: Path = Path("knowledge_base")) -> KnowledgeBa
     - local_cohesion.json (опционально)
     - composition_errors.json (опционально)
     - rithoric.json (опционально, риторические топосы)
+    - editorial_techniques.json (опционально, редакторские приёмы)
     """
     stop_words = load_json_file(base_path / "stop_words.json")
     grammar = load_json_file(base_path / "grammar_errors.json")
-    style_raw = load_json_file(base_path / "stylistic_issues.json")  # ← изменено
+    style_raw = load_json_file(base_path / "stylistic_issues.json")
     storytelling = load_json_file(base_path / "storytelling_frameworks.json")
     marketing = load_json_file(base_path / "marketing_templates.json")
 
@@ -277,10 +372,16 @@ def load_knowledge_base(base_path: Path = Path("knowledge_base")) -> KnowledgeBa
         rhetoric_data = load_json_file(rhetoric_path)
         rhetoric_frameworks = rhetoric_data.get("frameworks", [])
 
+    editorial_path = base_path / "editorial_techniques.json"
+    editorial_techniques: List[Dict[str, Any]] = []
+    if editorial_path.exists():
+        editorial_raw = load_json_file(editorial_path)
+        editorial_techniques = _flatten_editorial_techniques(editorial_raw)
+
     return KnowledgeBase(
         stop_words=stop_words,
         grammar_errors=grammar.get("common_mistakes", []),
-        stylistic_issues=_flatten_stylistic_issues(style_raw),  # ← изменено
+        stylistic_issues=_flatten_stylistic_issues(style_raw),
         logic_issues=logic_data.get("issues", []),
         storytelling_frameworks=storytelling.get("frameworks", []),
         marketing_templates=marketing.get("templates", []),
@@ -289,6 +390,7 @@ def load_knowledge_base(base_path: Path = Path("knowledge_base")) -> KnowledgeBa
         local_cohesion=local_cohesion,
         composition_errors=composition_errors,
         rhetoric_frameworks=rhetoric_frameworks,
+        editorial_techniques=editorial_techniques,
     )
 
 
@@ -670,6 +772,38 @@ class PromptBuilder:
                     + "\n".join(rhetoric_lines)
                 )
 
+        editorial_text = ""
+        if kb.editorial_techniques:
+            editorial_sample = _select_by_tags_or_all(
+                kb.editorial_techniques,
+                tags=tags + ["editing"],
+                limit=6,
+            )
+            editorial_lines: List[str] = []
+            for tech in editorial_sample:
+                name = tech.get("name", "")
+                category = tech.get("category", "")
+                description = tech.get("description", "")
+                wrong = tech.get("example_wrong", "")
+                correct = tech.get("example_correct", "")
+                explanation = tech.get("example_explanation", "")
+                line = f" • {name}"
+                if category:
+                    line += f" ({category})"
+                if description:
+                    line += f": {description.strip()}"
+                if wrong or correct:
+                    pair = f" Пример: {wrong} → {correct}".strip()
+                    if explanation:
+                        pair += f" ({explanation.strip()})"
+                    line += f".{pair}"
+                editorial_lines.append(line)
+            if editorial_lines:
+                editorial_text = (
+                    "\n\nРедакторские приёмы (по Норе Галь и другим редакторам):\n"
+                    + "\n".join(editorial_lines)
+                )
+
         glossary_text = ""
         if kb.domain_glossary and domain in kb.domain_glossary:
             terms = kb.domain_glossary.get(domain, {})
@@ -700,6 +834,7 @@ class PromptBuilder:
             + frameworks_text
             + marketing_text
             + rhetoric_text
+            + editorial_text
             + glossary_text
         )
 
