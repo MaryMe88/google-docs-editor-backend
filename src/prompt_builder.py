@@ -13,6 +13,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional, Sequence
 
+
 # ============================================================================
 # Data Models (типы данных для конфигов)
 # ============================================================================
@@ -114,6 +115,7 @@ def load_json_file(path: Path) -> dict:
     """
     if not path.exists():
         raise FileNotFoundError(f"Config file not found: {path}")
+
     return json.loads(path.read_text(encoding="utf-8"))
 
 
@@ -161,6 +163,7 @@ def load_overlay_configs(
 ) -> List[OverlayConfig]:
     """Загружает конфигурации надстроек."""
     configs: List[OverlayConfig] = []
+
     for overlay in overlays:
         data = load_json_file(base_path / "overlays" / f"{overlay}.json")
         configs.append(
@@ -169,6 +172,7 @@ def load_overlay_configs(
                 instructions=data["instructions"],
             )
         )
+
     return configs
 
 
@@ -271,6 +275,7 @@ def _flatten_editorial_techniques(raw: Dict[str, Any]) -> List[Dict[str, Any]]:
         category = block.get("category", "")
         block_tags = block.get("tags", [])
         techniques = block.get("techniques", [])
+
         if not isinstance(techniques, list):
             continue
 
@@ -316,6 +321,7 @@ def _flatten_editorial_techniques(raw: Dict[str, Any]) -> List[Dict[str, Any]]:
 def load_knowledge_base(base_path: Path = Path("knowledge_base")) -> KnowledgeBase:
     """
     Загружает базу знаний из папки knowledge_base.
+
     Ожидаемые файлы:
     - stop_words.json
     - grammar_errors.json
@@ -327,7 +333,7 @@ def load_knowledge_base(base_path: Path = Path("knowledge_base")) -> KnowledgeBa
     - composition_principles.json (опционально)
     - local_cohesion.json (опционально)
     - composition_errors.json (опционально)
-    - rithoric.json (опционально, риторические топосы)
+    - rhetoric.json (опционально, риторические топосы)
     - editorial_techniques.json (опционально, редакторские приёмы)
     """
     stop_words = load_json_file(base_path / "stop_words.json")
@@ -351,7 +357,8 @@ def load_knowledge_base(base_path: Path = Path("knowledge_base")) -> KnowledgeBa
     if composition_principles_path.exists():
         composition_principles_data = load_json_file(composition_principles_path)
         composition_principles = composition_principles_data.get(
-            "composition_principles", []
+            "composition_principles",
+            [],
         )
 
     local_cohesion_path = base_path / "local_cohesion.json"
@@ -366,7 +373,7 @@ def load_knowledge_base(base_path: Path = Path("knowledge_base")) -> KnowledgeBa
         composition_errors_data = load_json_file(composition_errors_path)
         composition_errors = composition_errors_data.get("composition_errors", [])
 
-    rhetoric_path = base_path / "rithoric.json"
+    rhetoric_path = base_path / "rhetoric.json"
     rhetoric_frameworks: List[Dict[str, Any]] = []
     if rhetoric_path.exists():
         rhetoric_data = load_json_file(rhetoric_path)
@@ -400,8 +407,8 @@ def load_knowledge_base(base_path: Path = Path("knowledge_base")) -> KnowledgeBa
 
 
 def _match_tags(entry_tags: Iterable[str], wanted_tags: Iterable[str]) -> bool:
-    entry = set(t.strip().lower() for t in (entry_tags or []))
-    wanted = set(t.strip().lower() for t in (wanted_tags or []))
+    entry = {t.strip().lower() for t in (entry_tags or [])}
+    wanted = {t.strip().lower() for t in (wanted_tags or [])}
     return bool(entry & wanted) if wanted else True
 
 
@@ -507,6 +514,7 @@ def _select_by_tags_or_all(
 ) -> List[Dict[str, Any]]:
     """Универсальный селектор по тегам для новых блоков знаний."""
     wanted_tags = list(tags)
+
     if not entries:
         return []
 
@@ -585,7 +593,9 @@ class PromptBuilder:
     def _build_core_block(self) -> str:
         core = load_core_config(self.config_path)
 
-        instructions = "\n".join(f"- {instr}" for instr in core.basic_audit_instructions)
+        instructions = "\n".join(
+            f"- {instr}" for instr in core.basic_audit_instructions
+        )
         forbidden = "\n".join(f"❌ {rule}" for rule in core.forbidden)
 
         return f"""{core.role}
@@ -616,10 +626,15 @@ class PromptBuilder:
 
     def _build_audience_block(self, audience: Optional[AudienceProfile]) -> str:
         if audience is None:
-            return "Аудитория: не указана. Используй нейтральный профессиональный тон."
+            return (
+                "Аудитория: не указана. "
+                "Используй нейтральный профессиональный тон."
+            )
 
         description_line = (
-            f"\n- Описание: {audience.description}" if audience.description else ""
+            f"\n- Описание: {audience.description}"
+            if audience.description
+            else ""
         )
         return (
             "Аудитория:\n"
@@ -659,20 +674,30 @@ class PromptBuilder:
         logic_sample = select_logic_issues(kb, text=text, tags=tags, limit=8)
 
         grammar_lines: List[str] = [
-            f" • {err.get('wrong', '')} → {err.get('correct', '').strip()} ({err.get('rule', '').strip()})"
+            (
+                f" • {err.get('wrong', '')} → "
+                f"{err.get('correct', '').strip()} "
+                f"({err.get('rule', '').strip()})"
+            )
             for err in grammar_sample
             if err.get("wrong") and err.get("correct")
         ] or [" • (нет подходящих примеров)"]
 
         style_lines: List[str] = [
-            f" • {issue.get('wrong', '')} → {issue.get('correct', '').strip()} ({issue.get('rule', '').strip()})"
+            (
+                f" • {issue.get('wrong', '')} → "
+                f"{issue.get('correct', '').strip()} "
+                f"({issue.get('rule', '').strip()})"
+            )
             for issue in style_sample
             if issue.get("wrong")
         ] or [" • (нет подходящих примеров)"]
 
         logic_lines: List[str] = [
-            f" • {item.get('name', item.get('wrong', ''))}: "
-            f"{item.get('rule', item.get('description', '')).strip()}"
+            (
+                f" • {item.get('name', item.get('wrong', ''))}: "
+                f"{item.get('rule', item.get('description', '')).strip()}"
+            )
             for item in logic_sample
         ] or [" • (нет подходящих примеров)"]
 
@@ -682,8 +707,10 @@ class PromptBuilder:
             limit=6,
         )
         composition_principles_lines: List[str] = [
-            f" • {entry.get('name', '')}: "
-            f"{entry.get('rule', entry.get('description', '')).strip()}"
+            (
+                f" • {entry.get('name', '')}: "
+                f"{entry.get('rule', entry.get('description', '')).strip()}"
+            )
             for entry in composition_principles_sample
         ] or [" • (нет принципов композиции в базе)"]
 
@@ -693,8 +720,10 @@ class PromptBuilder:
             limit=6,
         )
         local_cohesion_lines: List[str] = [
-            f" • {entry.get('name', '')}: "
-            f"{entry.get('rule', entry.get('description', '')).strip()}"
+            (
+                f" • {entry.get('name', '')}: "
+                f"{entry.get('rule', entry.get('description', '')).strip()}"
+            )
             for entry in local_cohesion_sample
         ] or [" • (нет приёмов локальной связности в базе)"]
 
@@ -704,8 +733,10 @@ class PromptBuilder:
             limit=6,
         )
         composition_errors_lines: List[str] = [
-            f" • {entry.get('name', '')}: "
-            f"{entry.get('rule', entry.get('description', '')).strip()}"
+            (
+                f" • {entry.get('name', '')}: "
+                f"{entry.get('rule', entry.get('description', '')).strip()}"
+            )
             for entry in composition_errors_sample
         ] or [" • (нет примеров композиционных ошибок в базе)"]
 
@@ -713,6 +744,7 @@ class PromptBuilder:
         if intent == "storytelling" and kb.storytelling_frameworks:
             frameworks_sample = kb.storytelling_frameworks[:4]
             framework_lines: List[str] = []
+
             for fw in frameworks_sample:
                 name = fw.get("name", "")
                 steps = fw.get("steps", [])
@@ -723,7 +755,9 @@ class PromptBuilder:
                 ]
                 if not name or not step_names:
                     continue
+
                 framework_lines.append(f" • {name}: " + " → ".join(step_names))
+
             if framework_lines:
                 frameworks_text = (
                     "\n\nФреймворки сторителлинга (для структуры рассказа):\n"
@@ -734,6 +768,7 @@ class PromptBuilder:
         if domain == "marketing" and kb.marketing_templates:
             templates_sample = kb.marketing_templates[:4]
             template_lines: List[str] = []
+
             for tpl in templates_sample:
                 name = tpl.get("name", "")
                 sections = tpl.get("sections", [])
@@ -744,7 +779,9 @@ class PromptBuilder:
                 ]
                 if not name or not section_names:
                     continue
+
                 template_lines.append(f" • {name}: " + ", ".join(section_names))
+
             if template_lines:
                 marketing_text = (
                     "\n\nМаркетинговые шаблоны (структура текста по типу):\n"
@@ -755,6 +792,7 @@ class PromptBuilder:
         if kb.rhetoric_frameworks:
             rhetoric_sample = kb.rhetoric_frameworks[:4]
             rhetoric_lines: List[str] = []
+
             for fw in rhetoric_sample:
                 name = fw.get("name", "")
                 steps = fw.get("steps", [])
@@ -765,7 +803,9 @@ class PromptBuilder:
                 ]
                 if not name or not step_names:
                     continue
+
                 rhetoric_lines.append(f" • {name}: " + " → ".join(step_names))
+
             if rhetoric_lines:
                 rhetoric_text = (
                     "\n\nРиторические топосы и приёмы аргументации:\n"
@@ -780,6 +820,7 @@ class PromptBuilder:
                 limit=6,
             )
             editorial_lines: List[str] = []
+
             for tech in editorial_sample:
                 name = tech.get("name", "")
                 category = tech.get("category", "")
@@ -787,17 +828,20 @@ class PromptBuilder:
                 wrong = tech.get("example_wrong", "")
                 correct = tech.get("example_correct", "")
                 explanation = tech.get("example_explanation", "")
+
                 line = f" • {name}"
                 if category:
                     line += f" ({category})"
                 if description:
                     line += f": {description.strip()}"
                 if wrong or correct:
-                    pair = f" Пример: {wrong} → {correct}".strip()
+                    pair = f"Пример: {wrong} → {correct}"
                     if explanation:
                         pair += f" ({explanation.strip()})"
-                    line += f".{pair}"
+                    line += f". {pair}"
+
                 editorial_lines.append(line)
+
             if editorial_lines:
                 editorial_text = (
                     "\n\nРедакторские приёмы (по Норе Галь и другим редакторам):\n"
@@ -809,7 +853,7 @@ class PromptBuilder:
             terms = kb.domain_glossary.get(domain, {})
             if isinstance(terms, dict) and terms:
                 sample_items = list(terms.items())[:10]
-                term_lines = [f" • {k}: {v}" for k, v in sample_items]
+                term_lines = [f" • {key}: {value}" for key, value in sample_items]
                 glossary_text = (
                     "\n\nГлоссарий по домену (ключевые термины):\n"
                     + "\n".join(term_lines)
@@ -843,7 +887,7 @@ class PromptBuilder:
         return f"Формат ответа:\n{format_text}"
 
     def _build_text_block(self, text: str) -> str:
-        return f'Tекст для обработки:\n"""\n{text}\n"""'
+        return f'Текст для обработки:\n"""\n{text}\n"""'
 
 
 def build_prompt(
@@ -855,9 +899,21 @@ def build_prompt(
     output_mode: str = "text_only",
 ) -> str:
     audience_map = {
-        "b2b": AudienceProfile(kind="b2b", expertise="pro", formality="neutral"),
-        "b2c": AudienceProfile(kind="b2c", expertise="novice", formality="casual"),
-        "mixed": AudienceProfile(kind="mixed", expertise="pro", formality="neutral"),
+        "b2b": AudienceProfile(
+            kind="b2b",
+            expertise="pro",
+            formality="neutral",
+        ),
+        "b2c": AudienceProfile(
+            kind="b2c",
+            expertise="novice",
+            formality="casual",
+        ),
+        "mixed": AudienceProfile(
+            kind="mixed",
+            expertise="pro",
+            formality="neutral",
+        ),
     }
     audience = audience_map.get(audience_type, audience_map["b2b"])
 
