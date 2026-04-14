@@ -82,6 +82,7 @@ class KnowledgeBase:
     - composition_errors: типичные композиционные ошибки
     - rhetoric_frameworks: риторические топосы и приёмы аргументации
     - editorial_techniques: редакторские приёмы (Нора Галь, Мильчин и др.)
+    - nkrj_structure_patterns: Dict[str, Any]
     """
 
     stop_words: Dict[str, List[str]]
@@ -385,6 +386,12 @@ def load_knowledge_base(base_path: Path = Path("knowledge_base")) -> KnowledgeBa
         editorial_raw = load_json_file(editorial_path)
         editorial_techniques = _flatten_editorial_techniques(editorial_raw)
 
+    # НОВОЕ:
+    structure_path = base_path / "nkrj_structure_patterns.json"
+    nkrj_structure_patterns: Dict[str, Any] = {}
+    if structure_path.exists():
+        nkrj_structure_patterns = load_json_file(structure_path)
+
     return KnowledgeBase(
         stop_words=stop_words,
         grammar_errors=grammar.get("common_mistakes", []),
@@ -398,6 +405,7 @@ def load_knowledge_base(base_path: Path = Path("knowledge_base")) -> KnowledgeBa
         composition_errors=composition_errors,
         rhetoric_frameworks=rhetoric_frameworks,
         editorial_techniques=editorial_techniques,
+        nkrj_structure_patterns=nkrj_structure_patterns,
     )
 
 

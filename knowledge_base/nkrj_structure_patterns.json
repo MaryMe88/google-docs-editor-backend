@@ -1,0 +1,142 @@
+{
+  "corpus": "Taiga Social Media",
+  "corpus_dir": "texts",
+  "max_lines_per_file": 10000,
+  "sources": [
+    {
+      "source": "facebook",
+      "file": "texts\\fbtexts.txt",
+      "lines_processed": 9621,
+      "total_sentences": 16894,
+      "total_words": 174832,
+      "sentence_length": {
+        "avg": 10.32,
+        "median": 8.0,
+        "std": 10.66,
+        "variation_coeff": 1.0329,
+        "short_share": 0.4573,
+        "medium_share": 0.4603,
+        "long_share": 0.0825
+      },
+      "paragraphs": {
+        "total": 9594,
+        "flat_count": 3,
+        "flat_share": 0.0003
+      },
+      "passive_rate_per_100_lines": 0.65,
+      "deepr_cliche_rate_per_100_lines": 0.0,
+      "plastic_markers_per_1000_lines": {
+        "таким образом": 0.73,
+        "прежде всего": 0.521,
+        "в конечном счете": 0.104,
+        "задайте себе вопрос": 0.104,
+        "важно учитывать": 0.104
+      }
+    },
+    {
+      "source": "livejournal",
+      "file": "texts\\LiveJournalPostsandcommentsGICR.txt",
+      "lines_processed": 9890,
+      "total_sentences": 20552,
+      "total_words": 229683,
+      "sentence_length": {
+        "avg": 11.14,
+        "median": 8.0,
+        "std": 12.26,
+        "variation_coeff": 1.1005,
+        "short_share": 0.4864,
+        "medium_share": 0.392,
+        "long_share": 0.1216
+      },
+      "paragraphs": {
+        "total": 9794,
+        "flat_count": 7,
+        "flat_share": 0.0007
+      },
+      "passive_rate_per_100_lines": 1.28,
+      "deepr_cliche_rate_per_100_lines": 0.03,
+      "plastic_markers_per_1000_lines": {
+        "таким образом": 1.532,
+        "прежде всего": 0.613,
+        "в заключение": 0.408,
+        "в современном мире": 0.102
+      }
+    },
+    {
+      "source": "twitter",
+      "file": "texts\\twtexts.txt",
+      "lines_processed": 9562,
+      "total_sentences": 10881,
+      "total_words": 94264,
+      "sentence_length": {
+        "avg": 8.65,
+        "median": 8,
+        "std": 3.89,
+        "variation_coeff": 0.4497,
+        "short_share": 0.4844,
+        "medium_share": 0.5044,
+        "long_share": 0.0112
+      },
+      "paragraphs": {
+        "total": 9538,
+        "flat_count": 0,
+        "flat_share": 0.0
+      },
+      "passive_rate_per_100_lines": 0.26,
+      "deepr_cliche_rate_per_100_lines": 0.0,
+      "plastic_markers_per_1000_lines": {
+        "осознанный выбор": 0.105
+      }
+    },
+    {
+      "source": "vkontakte",
+      "file": "texts\\vktexts.txt",
+      "lines_processed": 9996,
+      "total_sentences": 26099,
+      "total_words": 344150,
+      "sentence_length": {
+        "avg": 13.16,
+        "median": 9,
+        "std": 14.82,
+        "variation_coeff": 1.1261,
+        "short_share": 0.3533,
+        "medium_share": 0.4878,
+        "long_share": 0.1588
+      },
+      "paragraphs": {
+        "total": 9996,
+        "flat_count": 4,
+        "flat_share": 0.0004
+      },
+      "passive_rate_per_100_lines": 1.53,
+      "deepr_cliche_rate_per_100_lines": 0.01,
+      "plastic_markers_per_1000_lines": {
+        "таким образом": 2.201,
+        "прежде всего": 2.001,
+        "осознанный выбор": 0.3,
+        "в современном мире": 0.1,
+        "подводя итоги": 0.1
+      }
+    }
+  ],
+  "aggregate_norms": {
+    "norm_sentence_length": {
+      "avg": 10.8175,
+      "variation_coeff": 0.9273,
+      "short_share": 0.4454,
+      "medium_share": 0.4611,
+      "long_share": 0.0935
+    },
+    "norm_flat_paragraph_share": 0.0003,
+    "norm_passive_rate": 0.93,
+    "norm_deepr_rate": 0.01,
+    "thresholds": {
+      "plasticity_index_live": 1.0,
+      "plasticity_index_grey_zone": 2.5,
+      "sentence_variation_coeff_min": 0.4,
+      "short_sentence_share_min": 0.1,
+      "flat_paragraph_share_alert": 0.15,
+      "passive_rate_alert": 5.0
+    }
+  }
+}
