@@ -541,6 +541,47 @@ def _select_by_tags_or_all(
     return entries[:limit]
 
 
+def _has_mode(
+    intent: Optional[str],
+    overlays: Sequence[str],
+    aliases: Iterable[str],
+) -> bool:
+    """
+    Проверяет, активирован ли режим по intent или overlay.
+    Поддерживает алиасы, чтобы не зависеть от точного имени режима.
+    """
+    normalized_aliases = {alias.strip().lower() for alias in aliases}
+    values = {item.strip().lower() for item in overlays}
+
+    if intent:
+        values.add(intent.strip().lower())
+
+    return bool(values & normalized_aliases)
+
+
+def _extend_tags_with_feature_aliases(
+    tags: List[str],
+    intent: Optional[str],
+    overlays: Sequence[str],
+) -> List[str]:
+    """
+    Расширяет набор тегов служебными алиасами для knowledge base.
+    Например, режим deai -> тег anti_ai.
+    """
+    result = list(tags)
+
+    if _has_mode(intent, overlays, {"deai", "anti_ai", "anti-llm", "humanize"}):
+        result.append("anti_ai")
+
+    if _has_mode(intent, overlays, {"storytelling", "story", "narrative"}):
+        result.append("storytelling")
+
+    if _has_mode(intent, overlays, {"marketing_push", "marketing", "sales"}):
+        result.append("marketing")
+
+    return list(dict.fromkeys(result))
+
+
 # ============================================================================
 # Prompt Builder (сборщик промпта)
 # ============================================================================
@@ -670,6 +711,10 @@ class PromptBuilder:
         overlays: Sequence[str],
     ) -> str:
         kb = load_knowledge_base(self.kb_path)
+        domain_cfg = load_domain_config(domain, self.config_path)
+
+        allow_storytelling = domain_cfg.allow_storytelling
+        allow_marketing = domain_cfg.allow_marketing
 
         stop_words_text = json.dumps(kb.stop_words, ensure_ascii=False, indent=2)
 
@@ -677,6 +722,7 @@ class PromptBuilder:
         if intent:
             tags.append(intent)
         tags.extend(overlays)
+        tags = _extend_tags_with_feature_aliases(tags, intent, overlays)
 
         grammar_sample = select_grammar_rules(kb, text=text, tags=tags, limit=10)
         style_sample = select_style_issues(kb, text=text, tags=tags, limit=10)
@@ -750,7 +796,13 @@ class PromptBuilder:
         ] or [" • (нет примеров композиционных ошибок в базе)"]
 
         frameworks_text = ""
-        if intent == "storytelling" and kb.storytelling_frameworks:
+        storytelling_requested = _has_mode(
+            intent,
+            overlays,
+            {"storytelling", "story", "narrative"},
+        )
+
+        if allow_storytelling and storytelling_requested and kb.storytelling_frameworks:
             frameworks_sample = kb.storytelling_frameworks[:4]
             framework_lines: List[str] = []
 
@@ -774,7 +826,17 @@ class PromptBuilder:
                 )
 
         marketing_text = ""
-        if domain == "marketing" and kb.marketing_templates:
+        marketing_requested = _has_mode(
+            intent,
+            overlays,
+            {"marketing_push", "marketing", "sales"},
+        )
+
+        if (
+            allow_marketing
+            and (domain == "marketing" or marketing_requested)
+            and kb.marketing_templates
+        ):
             templates_sample = kb.marketing_templates[:4]
             template_lines: List[str] = []
 
