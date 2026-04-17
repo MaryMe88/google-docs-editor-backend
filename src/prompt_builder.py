@@ -541,6 +541,176 @@ def _select_by_tags_or_all(
     return entries[:limit]
 
 
+def _safe_float(value: Any) -> Optional[float]:
+    """Безопасно приводит значение к float."""
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def build_nkrj_norms_lines(
+    kb: KnowledgeBase,
+    limit_sources: int = 4,
+) -> List[str]:
+    """
+    Превращает nkrj_structure_patterns.json формата Taiga Social Media
+    в компактный набор норм для промпта.
+    """
+    raw = kb.nkrj_structure_patterns
+    if not raw:
+        return []
+
+    lines: List[str] = []
+
+    corpus = raw.get("corpus")
+    if corpus:
+        lines.append(f" • Корпус-ориентир: {corpus}.")
+
+    aggregate = raw.get("aggregate_norms", {})
+    norm_sentence = aggregate.get("norm_sentence_length", {})
+    thresholds = aggregate.get("thresholds", {})
+
+    avg = _safe_float(norm_sentence.get("avg"))
+    variation = _safe_float(norm_sentence.get("variation_coeff"))
+    short_share = _safe_float(norm_sentence.get("short_share"))
+    medium_share = _safe_float(norm_sentence.get("medium_share"))
+    long_share = _safe_float(norm_sentence.get("long_share"))
+
+    if avg is not None:
+        lines.append(
+            " • Ориентир по длине предложения: в среднем около "
+            f"{avg:.2f} слов; держи фразы преимущественно короткими и средними."
+        )
+
+    if (
+        short_share is not None
+        and medium_share is not None
+        and long_share is not None
+    ):
+        lines.append(
+            " • Распределение длины предложений: "
+            f"короткие ≈ {short_share:.1%}, "
+            f"средние ≈ {medium_share:.1%}, "
+            f"длинные ≈ {long_share:.1%}; "
+            "не перегружай текст длинными периодами."
+        )
+
+    if variation is not None:
+        lines.append(
+            " • Коэффициент вариативности длины предложений — около "
+            f"{variation:.2f}; избегай монотонного ритма и чередуй длину фраз."
+        )
+
+    flat_paragraph = _safe_float(aggregate.get("norm_flat_paragraph_share"))
+    if flat_paragraph is not None:
+        lines.append(
+            " • Плоские абзацы почти не встречаются: "
+            f"норма flat paragraph share ≈ {flat_paragraph:.2%}; "
+            "абзацы должны двигать мысль, а не быть механически однотипными."
+        )
+
+    passive_rate = _safe_float(aggregate.get("norm_passive_rate"))
+    if passive_rate is not None:
+        lines.append(
+            " • Ориентир по пассиву: около "
+            f"{passive_rate:.2f} на 100 строк; предпочитай активные конструкции."
+        )
+
+    deepr_rate = _safe_float(aggregate.get("norm_deepr_rate"))
+    if deepr_rate is not None:
+        lines.append(
+            " • Глубокие шаблонные клише почти отсутствуют: "
+            f"норма ≈ {deepr_rate:.2f} на 100 строк; "
+            "избегай формульных вводок и пластиковых связок."
+        )
+
+    plasticity_live = _safe_float(thresholds.get("plasticity_index_live"))
+    plasticity_grey = _safe_float(thresholds.get("plasticity_index_grey_zone"))
+    if plasticity_live is not None and plasticity_grey is not None:
+        lines.append(
+            " • Индекс пластичности: "
+            f"до {plasticity_live:.1f} — живой текст, "
+            f"около {plasticity_grey:.1f} и выше — серая зона / риск искусственности."
+        )
+
+    sentence_variation_min = _safe_float(thresholds.get("sentence_variation_coeff_min"))
+    if sentence_variation_min is not None:
+        lines.append(
+            " • Минимально допустимая вариативность длины фраз: "
+            f"{sentence_variation_min:.2f}; "
+            "не делай весь текст одинаково рубленым или одинаково растянутым."
+        )
+
+    short_sentence_share_min = _safe_float(thresholds.get("short_sentence_share_min"))
+    if short_sentence_share_min is not None:
+        lines.append(
+            " • Доля коротких предложений должна быть не ниже "
+            f"{short_sentence_share_min:.1%}; "
+            "оставляй в тексте быстрые, простые фразы."
+        )
+
+    flat_alert = _safe_float(thresholds.get("flat_paragraph_share_alert"))
+    if flat_alert is not None:
+        lines.append(
+            " • Тревожный порог для плоских абзацев — "
+            f"{flat_alert:.0%}; "
+            "если абзацы становятся однотипными, перестрой композицию."
+        )
+
+    passive_alert = _safe_float(thresholds.get("passive_rate_alert"))
+    if passive_alert is not None:
+        lines.append(
+            " • Тревожный порог по пассиву — "
+            f"{passive_alert:.1f} на 100 строк; "
+            "выше этого текст становится тяжёлым и безличным."
+        )
+
+    sources = raw.get("sources", [])
+    if isinstance(sources, list):
+        for source_data in sources[:limit_sources]:
+            if not isinstance(source_data, dict):
+                continue
+
+            source_name = str(source_data.get("source", "")).strip()
+            sentence_data = source_data.get("sentence_length", {})
+            source_avg = _safe_float(sentence_data.get("avg"))
+            source_long = _safe_float(sentence_data.get("long_share"))
+            source_passive = _safe_float(source_data.get("passive_rate_per_100_lines"))
+
+            if source_name and source_avg is not None:
+                line = (
+                    f" • Источник {source_name}: средняя длина предложения "
+                    f"≈ {source_avg:.2f} слов"
+                )
+                if source_long is not None:
+                    line += f", длинных предложений ≈ {source_long:.1%}"
+                if source_passive is not None:
+                    line += f", пассив ≈ {source_passive:.2f} на 100 строк"
+                line += "."
+                lines.append(line)
+
+    marker_examples: List[str] = []
+    if isinstance(sources, list):
+        for source_data in sources:
+            markers = source_data.get("plastic_markers_per_1000_lines", {})
+            if not isinstance(markers, dict):
+                continue
+            for marker, value in markers.items():
+                score = _safe_float(value)
+                if score is not None and score > 0:
+                    marker_examples.append(f"{marker} ({score:.3f})")
+
+    if marker_examples:
+        unique_markers = list(dict.fromkeys(marker_examples))
+        lines.append(
+            " • Маркеры пластика, которые стоит особенно контролировать: "
+            + ", ".join(unique_markers[:8])
+            + "."
+        )
+
+    return lines
+
 def _has_mode(
     intent: Optional[str],
     overlays: Sequence[str],
@@ -727,6 +897,7 @@ class PromptBuilder:
         grammar_sample = select_grammar_rules(kb, text=text, tags=tags, limit=10)
         style_sample = select_style_issues(kb, text=text, tags=tags, limit=10)
         logic_sample = select_logic_issues(kb, text=text, tags=tags, limit=8)
+        nkrj_norms_lines = build_nkrj_norms_lines(kb)
 
         grammar_lines: List[str] = [
             (
@@ -736,7 +907,7 @@ class PromptBuilder:
             )
             for err in grammar_sample
             if err.get("wrong") and err.get("correct")
-        ] or [" • (нет подходящих примеров)"]
+        ] or [" • (нет примеров в базе)"]
 
         style_lines: List[str] = [
             (
@@ -746,15 +917,15 @@ class PromptBuilder:
             )
             for issue in style_sample
             if issue.get("wrong")
-        ] or [" • (нет подходящих примеров)"]
+        ] or [" • (нет примеров в базе)"]
 
         logic_lines: List[str] = [
             (
-                f" • {item.get('name', item.get('wrong', ''))}: "
+                f" • {item.get('name', item.get('wrong', 'Проблема'))}: "
                 f"{item.get('rule', item.get('description', '')).strip()}"
             )
             for item in logic_sample
-        ] or [" • (нет подходящих примеров)"]
+        ] or [" • (нет логических правил в базе)"]
 
         composition_principles_sample = _select_by_tags_or_all(
             kb.composition_principles,
@@ -794,6 +965,14 @@ class PromptBuilder:
             )
             for entry in composition_errors_sample
         ] or [" • (нет примеров композиционных ошибок в базе)"]
+
+nkrj_structure_text = ""
+if nkrj_norms_lines:
+    nkrj_structure_text = (
+        "\n\nНормы живого текста по корпусу Taiga Social Media "
+        "(используй как статистический ориентир, а не как жёсткий шаблон):\n"
+        + "\n".join(nkrj_norms_lines)
+    )
 
         frameworks_text = ""
         storytelling_requested = _has_mode(
@@ -946,12 +1125,13 @@ class PromptBuilder:
             + "\n".join(local_cohesion_lines)
             + "\n\nТипичные композиционные ошибки (что искать и как исправлять):\n"
             + "\n".join(composition_errors_lines)
+            + nkrj_structure_text
             + frameworks_text
             + marketing_text
             + rhetoric_text
             + editorial_text
             + glossary_text
-        )
+            )
 
     def _build_output_format_block(self, mode: str) -> str:
         format_text = load_output_format(mode, self.config_path)
