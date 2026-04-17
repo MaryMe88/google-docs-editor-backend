@@ -874,31 +874,60 @@ class PromptBuilder:
 
         return "\n".join(parts)
 
-    def _build_knowledge_block(
-        self,
-        text: str,
+    # -------------------------------------------------------------------------
+    # Feature resolution (централизованное принятие решений)
+    # -------------------------------------------------------------------------
+    @staticmethod
+    def _resolve_prompt_features(
+        domain_cfg: DomainConfig,
         domain: str,
         intent: Optional[str],
         overlays: Sequence[str],
-    ) -> str:
-        kb = load_knowledge_base(self.kb_path)
-        domain_cfg = load_domain_config(domain, self.config_path)
-
-        allow_storytelling = domain_cfg.allow_storytelling
-        allow_marketing = domain_cfg.allow_marketing
-
-        stop_words_text = json.dumps(kb.stop_words, ensure_ascii=False, indent=2)
-
-        tags: List[str] = [domain]
+    ) -> Dict[str, Any]:
+        """
+        Централизованно определяет:
+        - итоговый список тегов для knowledge base
+        - включён ли storytelling (с учётом allow_storytelling домена)
+        - включён ли marketing (с учётом allow_marketing домена)
+        """
+        base_tags = [domain]
         if intent:
-            tags.append(intent)
-        tags.extend(overlays)
-        tags = _extend_tags_with_feature_aliases(tags, intent, overlays)
+            base_tags.append(intent)
+        base_tags.extend(overlays)
 
+        tags = _extend_tags_with_feature_aliases(base_tags, intent, overlays)
+
+        storytelling_requested = _has_mode(
+            intent, overlays, {"storytelling", "story", "narrative"}
+        )
+        marketing_requested = _has_mode(
+            intent, overlays, {"marketing_push", "marketing", "sales"}
+        )
+
+        return {
+            "tags": tags,
+            "storytelling_enabled": (
+                domain_cfg.allow_storytelling and storytelling_requested
+            ),
+            "marketing_enabled": (
+                domain_cfg.allow_marketing
+                and (domain == "marketing" or marketing_requested)
+            ),
+        }
+
+    # -------------------------------------------------------------------------
+    # Helper builders для отдельных блоков knowledge
+    # -------------------------------------------------------------------------
+    def _build_grammar_style_logic_block(
+        self,
+        kb: KnowledgeBase,
+        text: str,
+        tags: List[str],
+    ) -> str:
+        """Грамматика, стилистика и логика."""
         grammar_sample = select_grammar_rules(kb, text=text, tags=tags, limit=10)
         style_sample = select_style_issues(kb, text=text, tags=tags, limit=10)
         logic_sample = select_logic_issues(kb, text=text, tags=tags, limit=8)
-        nkrj_norms_lines = build_nkrj_norms_lines(kb)
 
         grammar_lines: List[str] = [
             (
@@ -928,6 +957,21 @@ class PromptBuilder:
             for item in logic_sample
         ] or [" • (нет логических правил в базе)"]
 
+        return (
+            "Типичные грамматические и лексические ошибки (исправляй по аналогии):\n"
+            + "\n".join(grammar_lines)
+            + "\n\nТипичные стилистические проблемы (канцелярит, штампы, вода — устраняй):\n"
+            + "\n".join(style_lines)
+            + "\n\nТипичные логические проблемы и риски связности:\n"
+            + "\n".join(logic_lines)
+        )
+
+    def _build_composition_cohesion_errors_block(
+        self,
+        kb: KnowledgeBase,
+        tags: List[str],
+    ) -> str:
+        """Композиция, локальная связность, композиционные ошибки."""
         composition_principles_sample = _select_by_tags_or_all(
             kb.composition_principles,
             tags=tags + ["composition"],
@@ -967,83 +1011,106 @@ class PromptBuilder:
             for entry in composition_errors_sample
         ] or [" • (нет примеров композиционных ошибок в базе)"]
 
-        nkrj_structure_text = ""
-        if nkrj_norms_lines:
-            nkrj_structure_text = (
-                "\n\nНормы живого текста по корпусу Taiga Social Media "
-                "(используй как статистический ориентир, а не как жёсткий шаблон):\n"
-                + "\n".join(nkrj_norms_lines)
-            )
-
-        frameworks_text = ""
-        storytelling_requested = _has_mode(
-            intent,
-            overlays,
-            {"storytelling", "story", "narrative"},
+        return (
+            "Принципы композиции (типы построения и глобальная связность):\n"
+            + "\n".join(composition_principles_lines)
+            + "\n\nПриёмы локальной связности (абзац, тема-рема, местоимения, союзы):\n"
+            + "\n".join(local_cohesion_lines)
+            + "\n\nТипичные композиционные ошибки (что искать и как исправлять):\n"
+            + "\n".join(composition_errors_lines)
         )
 
-        if allow_storytelling and storytelling_requested and kb.storytelling_frameworks:
-            frameworks_sample = kb.storytelling_frameworks[:4]
-            framework_lines: List[str] = []
+    def _build_nkrj_block(self, kb: KnowledgeBase) -> str:
+        """Блок норм НКРЯ, если есть."""
+        nkrj_norms_lines = build_nkrj_norms_lines(kb)
+        if not nkrj_norms_lines:
+            return ""
 
-            for fw in frameworks_sample:
-                name = fw.get("name", "")
-                steps = fw.get("steps", [])
-                step_names = [
-                    step.get("name", "")
-                    for step in steps
-                    if isinstance(step, dict) and step.get("name")
-                ]
-                if not name or not step_names:
-                    continue
-
-                framework_lines.append(f" • {name}: " + " → ".join(step_names))
-
-            if framework_lines:
-                frameworks_text = (
-                    "\n\nФреймворки сторителлинга (для структуры рассказа):\n"
-                    + "\n".join(framework_lines)
-                )
-
-        marketing_text = ""
-        marketing_requested = _has_mode(
-            intent,
-            overlays,
-            {"marketing_push", "marketing", "sales"},
+        return (
+            "\n\nНормы живого текста по корпусу Taiga Social Media "
+            "(используй как статистический ориентир, а не как жёсткий шаблон):\n"
+            + "\n".join(nkrj_norms_lines)
         )
 
-        if (
-            allow_marketing
-            and (domain == "marketing" or marketing_requested)
-            and kb.marketing_templates
-        ):
-            templates_sample = kb.marketing_templates[:4]
-            template_lines: List[str] = []
+    def _build_storytelling_block(
+        self,
+        kb: KnowledgeBase,
+        storytelling_enabled: bool,
+    ) -> str:
+        """Фреймворки сторителлинга, если разрешено."""
+        if not storytelling_enabled or not kb.storytelling_frameworks:
+            return ""
 
-            for tpl in templates_sample:
-                name = tpl.get("name", "")
-                sections = tpl.get("sections", [])
-                section_names = [
-                    sec.get("name", "")
-                    for sec in sections
-                    if isinstance(sec, dict) and sec.get("name")
-                ]
-                if not name or not section_names:
-                    continue
+        frameworks_sample = kb.storytelling_frameworks[:4]
+        framework_lines: List[str] = []
 
-                template_lines.append(f" • {name}: " + ", ".join(section_names))
+        for fw in frameworks_sample:
+            name = fw.get("name", "")
+            steps = fw.get("steps", [])
+            step_names = [
+                step.get("name", "")
+                for step in steps
+                if isinstance(step, dict) and step.get("name")
+            ]
+            if not name or not step_names:
+                continue
 
-            if template_lines:
-                marketing_text = (
-                    "\n\nМаркетинговые шаблоны (структура текста по типу):\n"
-                    + "\n".join(template_lines)
-                )
+            framework_lines.append(f" • {name}: " + " → ".join(step_names))
 
-        rhetoric_text = ""
+        if not framework_lines:
+            return ""
+
+        return (
+            "\n\nФреймворки сторителлинга (для структуры рассказа):\n"
+            + "\n".join(framework_lines)
+        )
+
+    def _build_marketing_block(
+        self,
+        kb: KnowledgeBase,
+        marketing_enabled: bool,
+    ) -> str:
+        """Маркетинговые шаблоны, если разрешено."""
+        if not marketing_enabled or not kb.marketing_templates:
+            return ""
+
+        templates_sample = kb.marketing_templates[:4]
+        template_lines: List[str] = []
+
+        for tpl in templates_sample:
+            name = tpl.get("name", "")
+            sections = tpl.get("sections", [])
+            section_names = [
+                sec.get("name", "")
+                for sec in sections
+                if isinstance(sec, dict) and sec.get("name")
+            ]
+            if not name or not section_names:
+                continue
+
+            template_lines.append(f" • {name}: " + ", ".join(section_names))
+
+        if not template_lines:
+            return ""
+
+        return (
+            "\n\nМаркетинговые шаблоны (структура текста по типу):\n"
+            + "\n".join(template_lines)
+        )
+
+    def _build_rhetoric_editorial_glossary_block(
+        self,
+        kb: KnowledgeBase,
+        domain: str,
+        tags: List[str],
+    ) -> str:
+        """Риторика, редакторские приёмы и глоссарий."""
+        parts: List[str] = []
+
+        # Риторика
         if kb.rhetoric_frameworks:
             rhetoric_sample = kb.rhetoric_frameworks[:4]
             rhetoric_lines: List[str] = []
-
             for fw in rhetoric_sample:
                 name = fw.get("name", "")
                 steps = fw.get("steps", [])
@@ -1052,18 +1119,16 @@ class PromptBuilder:
                     for step in steps
                     if isinstance(step, dict) and step.get("name")
                 ]
-                if not name or not step_names:
-                    continue
-
-                rhetoric_lines.append(f" • {name}: " + " → ".join(step_names))
+                if name and step_names:
+                    rhetoric_lines.append(f" • {name}: " + " → ".join(step_names))
 
             if rhetoric_lines:
-                rhetoric_text = (
-                    "\n\nРиторические топосы и приёмы аргументации:\n"
+                parts.append(
+                    "Риторические топосы и приёмы аргументации:\n"
                     + "\n".join(rhetoric_lines)
                 )
 
-        editorial_text = ""
+        # Редакторские приёмы
         if kb.editorial_techniques:
             editorial_sample = _select_by_tags_or_all(
                 kb.editorial_techniques,
@@ -1071,7 +1136,6 @@ class PromptBuilder:
                 limit=6,
             )
             editorial_lines: List[str] = []
-
             for tech in editorial_sample:
                 name = tech.get("name", "")
                 category = tech.get("category", "")
@@ -1090,48 +1154,69 @@ class PromptBuilder:
                     if explanation:
                         pair += f" ({explanation.strip()})"
                     line += f". {pair}"
-
                 editorial_lines.append(line)
 
             if editorial_lines:
-                editorial_text = (
-                    "\n\nРедакторские приёмы (по Норе Галь и другим редакторам):\n"
+                parts.append(
+                    "Редакторские приёмы (по Норе Галь и другим редакторам):\n"
                     + "\n".join(editorial_lines)
                 )
 
-        glossary_text = ""
+        # Глоссарий
         if kb.domain_glossary and domain in kb.domain_glossary:
             terms = kb.domain_glossary.get(domain, {})
             if isinstance(terms, dict) and terms:
                 sample_items = list(terms.items())[:10]
                 term_lines = [f" • {key}: {value}" for key, value in sample_items]
-                glossary_text = (
-                    "\n\nГлоссарий по домену (ключевые термины):\n"
+                parts.append(
+                    "Глоссарий по домену (ключевые термины):\n"
                     + "\n".join(term_lines)
                 )
+
+        if not parts:
+            return ""
+
+        return "\n\n" + "\n\n".join(parts)
+
+    # -------------------------------------------------------------------------
+    # Основной метод сборки knowledge блока (упрощённый)
+    # -------------------------------------------------------------------------
+    def _build_knowledge_block(
+        self,
+        text: str,
+        domain: str,
+        intent: Optional[str],
+        overlays: Sequence[str],
+    ) -> str:
+        kb = load_knowledge_base(self.kb_path)
+        domain_cfg = load_domain_config(domain, self.config_path)
+
+        features = self._resolve_prompt_features(domain_cfg, domain, intent, overlays)
+        tags = features["tags"]
+        storytelling_enabled = features["storytelling_enabled"]
+        marketing_enabled = features["marketing_enabled"]
+
+        stop_words_text = json.dumps(kb.stop_words, ensure_ascii=False, indent=2)
+
+        grammar_style_logic = self._build_grammar_style_logic_block(kb, text, tags)
+        composition_cohesion = self._build_composition_cohesion_errors_block(kb, tags)
+        nkrj_block = self._build_nkrj_block(kb)
+        storytelling_block = self._build_storytelling_block(kb, storytelling_enabled)
+        marketing_block = self._build_marketing_block(kb, marketing_enabled)
+        rhetoric_editorial_glossary = self._build_rhetoric_editorial_glossary_block(
+            kb, domain, tags
+        )
 
         return (
             "База знаний:\n\n"
             "Стоп-слова и нежелательные конструкции (удаляй или переписывай):\n"
             f"{stop_words_text}\n\n"
-            "Типичные грамматические и лексические ошибки (исправляй по аналогии):\n"
-            + "\n".join(grammar_lines)
-            + "\n\nТипичные стилистические проблемы (канцелярит, штампы, вода — устраняй):\n"
-            + "\n".join(style_lines)
-            + "\n\nТипичные логические проблемы и риски связности:\n"
-            + "\n".join(logic_lines)
-            + "\n\nПринципы композиции (типы построения и глобальная связность):\n"
-            + "\n".join(composition_principles_lines)
-            + "\n\nПриёмы локальной связности (абзац, тема-рема, местоимения, союзы):\n"
-            + "\n".join(local_cohesion_lines)
-            + "\n\nТипичные композиционные ошибки (что искать и как исправлять):\n"
-            + "\n".join(composition_errors_lines)
-            + nkrj_structure_text
-            + frameworks_text
-            + marketing_text
-            + rhetoric_text
-            + editorial_text
-            + glossary_text
+            f"{grammar_style_logic}\n\n"
+            f"{composition_cohesion}"
+            f"{nkrj_block}"
+            f"{storytelling_block}"
+            f"{marketing_block}"
+            f"{rhetoric_editorial_glossary}"
         )
 
     def _build_output_format_block(self, mode: str) -> str:
