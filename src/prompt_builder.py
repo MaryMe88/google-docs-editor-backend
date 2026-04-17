@@ -9,10 +9,10 @@ prompt_builder.py
 from __future__ import annotations
 
 import json
+import logging
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Dict, Iterable, List, Optional, Sequence
-
+from typing import Any, Dict, Iterable, List, Optional, Sequence, Set
 
 # ============================================================================
 # Data Models (типы данных для конфигов)
@@ -754,6 +754,50 @@ def _extend_tags_with_feature_aliases(
 
 
 # ============================================================================
+# Централизованный маппинг на canonical теги
+# ============================================================================
+
+# Источник истины: какие теги соответствуют доменам / интентам / оверлеям.
+# Если значение отсутствует в словаре, оно добавляется как тег «как есть».
+CANONICAL_TAGS = {
+    "domains": {
+        "marketing": ["marketing"],
+        "blog": ["blog", "non_marketing"],
+        # дополнительные домены могут быть добавлены здесь
+    },
+    "intents": {
+        "storytelling": ["storytelling", "structure"],
+        "noragal": ["editing", "nora_gal"],
+        "deai": ["anti_ai", "humanize"],
+        # дополнительные интенты
+    },
+    "overlays": {
+        "logic": ["logic"],
+        "factcheck": ["factcheck"],
+        "infostyle": ["infostyle"],
+        # дополнительные оверлеи
+    },
+}
+
+# Известные интенты и оверлеи (для диагностики)
+KNOWN_INTENTS: Set[str] = {
+    "storytelling", "noragal", "deai", "neutral",
+}
+KNOWN_OVERLAYS: Set[str] = {
+    "logic", "factcheck", "infostyle", "marketing_push",
+}
+
+
+def _get_canonical_tags_for_category(
+    category: str,
+    value: str,
+) -> List[str]:
+    """Возвращает список канонических тегов для значения из указанной категории."""
+    category_map = CANONICAL_TAGS.get(category, {})
+    return category_map.get(value, [value])
+
+
+# ============================================================================
 # Prompt Builder (сборщик промпта)
 # ============================================================================
 
@@ -767,10 +811,85 @@ class PromptBuilder:
         self,
         config_path: Path = Path("config"),
         kb_path: Path = Path("knowledge_base"),
+        # Лимиты для knowledge блоков (управление полнотой)
+        grammar_limit: int = 10,
+        style_limit: int = 10,
+        logic_limit: int = 8,
+        composition_limit: int = 6,
+        cohesion_limit: int = 6,
+        composition_errors_limit: int = 6,
+        storytelling_limit: int = 4,
+        marketing_limit: int = 4,
+        rhetoric_limit: int = 4,
+        editorial_limit: int = 6,
+        glossary_limit: int = 10,
     ) -> None:
         self.config_path = config_path
         self.kb_path = kb_path
 
+        # Лимиты
+        self.grammar_limit = grammar_limit
+        self.style_limit = style_limit
+        self.logic_limit = logic_limit
+        self.composition_limit = composition_limit
+        self.cohesion_limit = cohesion_limit
+        self.composition_errors_limit = composition_errors_limit
+        self.storytelling_limit = storytelling_limit
+        self.marketing_limit = marketing_limit
+        self.rhetoric_limit = rhetoric_limit
+        self.editorial_limit = editorial_limit
+        self.glossary_limit = glossary_limit
+
+        # Кэши
+        self._core_cache: Optional[CoreConfig] = None
+        self._domain_cache: Dict[str, DomainConfig] = {}
+        self._output_format_cache: Dict[str, str] = {}
+        self._overlay_cache: Dict[str, OverlayConfig] = {}
+        self._kb_cache: Optional[KnowledgeBase] = None
+
+    def reload_configs(self) -> None:
+        """Сбрасывает все кэши, заставляя следующую загрузку читать с диска."""
+        self._core_cache = None
+        self._domain_cache.clear()
+        self._output_format_cache.clear()
+        self._overlay_cache.clear()
+        self._kb_cache = None
+
+    # -------------------------------------------------------------------------
+    # Приватные методы с кэшированием загрузки
+    # -------------------------------------------------------------------------
+    def _get_core_config(self) -> CoreConfig:
+        if self._core_cache is None:
+            self._core_cache = load_core_config(self.config_path)
+        return self._core_cache
+
+    def _get_domain_config(self, domain: str) -> DomainConfig:
+        if domain not in self._domain_cache:
+            self._domain_cache[domain] = load_domain_config(domain, self.config_path)
+        return self._domain_cache[domain]
+
+    def _get_output_format(self, mode: str) -> str:
+        if mode not in self._output_format_cache:
+            self._output_format_cache[mode] = load_output_format(mode, self.config_path)
+        return self._output_format_cache[mode]
+
+    def _get_overlay_config(self, overlay: str) -> OverlayConfig:
+        if overlay not in self._overlay_cache:
+            data = load_json_file(self.config_path / "overlays" / f"{overlay}.json")
+            self._overlay_cache[overlay] = OverlayConfig(
+                name=data["name"],
+                instructions=data["instructions"],
+            )
+        return self._overlay_cache[overlay]
+
+    def _get_knowledge_base(self) -> KnowledgeBase:
+        if self._kb_cache is None:
+            self._kb_cache = load_knowledge_base(self.kb_path)
+        return self._kb_cache
+
+    # -------------------------------------------------------------------------
+    # Основной публичный метод
+    # -------------------------------------------------------------------------
     def build(
         self,
         text: str,
@@ -811,8 +930,11 @@ class PromptBuilder:
 
         return "\n\n".join(parts)
 
+    # -------------------------------------------------------------------------
+    # Сборка отдельных блоков
+    # -------------------------------------------------------------------------
     def _build_core_block(self) -> str:
-        core = load_core_config(self.config_path)
+        core = self._get_core_config()
 
         instructions = "\n".join(
             f"- {instr}" for instr in core.basic_audit_instructions
@@ -830,7 +952,7 @@ class PromptBuilder:
 {forbidden}"""
 
     def _build_domain_block(self, domain: str) -> str:
-        domain_cfg = load_domain_config(domain, self.config_path)
+        domain_cfg = self._get_domain_config(domain)
         return f"""Домен: {domain_cfg.system_rules}
 Тон: {domain_cfg.tone}"""
 
@@ -852,6 +974,34 @@ class PromptBuilder:
                 "Используй нейтральный профессиональный тон."
             )
 
+        # Для стандартных профилей без кастомного описания – компактный формат
+        if not audience.description:
+            kind_display = {
+                "b2b": "B2B",
+                "b2c": "B2C",
+                "mixed": "смешанная",
+                "custom": "особая",
+            }.get(audience.kind, audience.kind)
+
+            expertise_display = {
+                "novice": "новички",
+                "pro": "эксперты",
+                "expert": "глубокие эксперты",
+            }.get(audience.expertise, audience.expertise)
+
+            formality_display = {
+                "casual": "расслабленный",
+                "neutral": "нейтральный",
+                "formal": "официальный",
+            }.get(audience.formality, audience.formality)
+
+            return (
+                f"Аудитория: {kind_display}, "
+                f"{expertise_display}, "
+                f"{formality_display} тон."
+            )
+
+        # Полный формат для кастомных профилей
         description_line = (
             f"\n- Описание: {audience.description}"
             if audience.description
@@ -865,10 +1015,9 @@ class PromptBuilder:
         )
 
     def _build_overlays_block(self, overlays: Sequence[str]) -> str:
-        overlay_configs = load_overlay_configs(overlays, self.config_path)
-
         parts: List[str] = ["Дополнительные режимы:"]
-        for cfg in overlay_configs:
+        for overlay in overlays:
+            cfg = self._get_overlay_config(overlay)
             instructions = "\n".join(f" - {instr}" for instr in cfg.instructions)
             parts.append(f"\n• {cfg.name}:\n{instructions}")
 
@@ -890,11 +1039,19 @@ class PromptBuilder:
         - включён ли storytelling (с учётом allow_storytelling домена)
         - включён ли marketing (с учётом allow_marketing домена)
         """
-        base_tags = [domain]
+        # Базовые теги из канонического маппинга
+        base_tags: List[str] = []
+        base_tags.extend(_get_canonical_tags_for_category("domains", domain))
         if intent:
-            base_tags.append(intent)
-        base_tags.extend(overlays)
+            base_tags.extend(_get_canonical_tags_for_category("intents", intent))
+            if intent not in KNOWN_INTENTS:
+                logging.warning(f"Unknown intent '{intent}' passed to PromptBuilder")
+        for ov in overlays:
+            base_tags.extend(_get_canonical_tags_for_category("overlays", ov))
+            if ov not in KNOWN_OVERLAYS:
+                logging.warning(f"Unknown overlay '{ov}' passed to PromptBuilder")
 
+        # Расширение алиасами
         tags = _extend_tags_with_feature_aliases(base_tags, intent, overlays)
 
         storytelling_requested = _has_mode(
@@ -925,9 +1082,15 @@ class PromptBuilder:
         tags: List[str],
     ) -> str:
         """Грамматика, стилистика и логика."""
-        grammar_sample = select_grammar_rules(kb, text=text, tags=tags, limit=10)
-        style_sample = select_style_issues(kb, text=text, tags=tags, limit=10)
-        logic_sample = select_logic_issues(kb, text=text, tags=tags, limit=8)
+        grammar_sample = select_grammar_rules(
+            kb, text=text, tags=tags, limit=self.grammar_limit
+        )
+        style_sample = select_style_issues(
+            kb, text=text, tags=tags, limit=self.style_limit
+        )
+        logic_sample = select_logic_issues(
+            kb, text=text, tags=tags, limit=self.logic_limit
+        )
 
         grammar_lines: List[str] = [
             (
@@ -975,7 +1138,7 @@ class PromptBuilder:
         composition_principles_sample = _select_by_tags_or_all(
             kb.composition_principles,
             tags=tags + ["composition"],
-            limit=6,
+            limit=self.composition_limit,
         )
         composition_principles_lines: List[str] = [
             (
@@ -988,7 +1151,7 @@ class PromptBuilder:
         local_cohesion_sample = _select_by_tags_or_all(
             kb.local_cohesion,
             tags=tags + ["cohesion"],
-            limit=6,
+            limit=self.cohesion_limit,
         )
         local_cohesion_lines: List[str] = [
             (
@@ -1001,7 +1164,7 @@ class PromptBuilder:
         composition_errors_sample = _select_by_tags_or_all(
             kb.composition_errors,
             tags=tags + ["composition"],
-            limit=6,
+            limit=self.composition_errors_limit,
         )
         composition_errors_lines: List[str] = [
             (
@@ -1041,7 +1204,7 @@ class PromptBuilder:
         if not storytelling_enabled or not kb.storytelling_frameworks:
             return ""
 
-        frameworks_sample = kb.storytelling_frameworks[:4]
+        frameworks_sample = kb.storytelling_frameworks[: self.storytelling_limit]
         framework_lines: List[str] = []
 
         for fw in frameworks_sample:
@@ -1074,7 +1237,7 @@ class PromptBuilder:
         if not marketing_enabled or not kb.marketing_templates:
             return ""
 
-        templates_sample = kb.marketing_templates[:4]
+        templates_sample = kb.marketing_templates[: self.marketing_limit]
         template_lines: List[str] = []
 
         for tpl in templates_sample:
@@ -1109,7 +1272,7 @@ class PromptBuilder:
 
         # Риторика
         if kb.rhetoric_frameworks:
-            rhetoric_sample = kb.rhetoric_frameworks[:4]
+            rhetoric_sample = kb.rhetoric_frameworks[: self.rhetoric_limit]
             rhetoric_lines: List[str] = []
             for fw in rhetoric_sample:
                 name = fw.get("name", "")
@@ -1133,7 +1296,7 @@ class PromptBuilder:
             editorial_sample = _select_by_tags_or_all(
                 kb.editorial_techniques,
                 tags=tags + ["editing"],
-                limit=6,
+                limit=self.editorial_limit,
             )
             editorial_lines: List[str] = []
             for tech in editorial_sample:
@@ -1166,7 +1329,7 @@ class PromptBuilder:
         if kb.domain_glossary and domain in kb.domain_glossary:
             terms = kb.domain_glossary.get(domain, {})
             if isinstance(terms, dict) and terms:
-                sample_items = list(terms.items())[:10]
+                sample_items = list(terms.items())[: self.glossary_limit]
                 term_lines = [f" • {key}: {value}" for key, value in sample_items]
                 parts.append(
                     "Глоссарий по домену (ключевые термины):\n"
@@ -1188,8 +1351,8 @@ class PromptBuilder:
         intent: Optional[str],
         overlays: Sequence[str],
     ) -> str:
-        kb = load_knowledge_base(self.kb_path)
-        domain_cfg = load_domain_config(domain, self.config_path)
+        kb = self._get_knowledge_base()
+        domain_cfg = self._get_domain_config(domain)
 
         features = self._resolve_prompt_features(domain_cfg, domain, intent, overlays)
         tags = features["tags"]
@@ -1220,13 +1383,16 @@ class PromptBuilder:
         )
 
     def _build_output_format_block(self, mode: str) -> str:
-        format_text = load_output_format(mode, self.config_path)
+        format_text = self._get_output_format(mode)
         return f"Формат ответа:\n{format_text}"
 
     def _build_text_block(self, text: str) -> str:
         return f'Текст для обработки:\n"""\n{text}\n"""'
 
 
+# ============================================================================
+# Legacy wrapper (обратная совместимость)
+# ============================================================================
 def build_prompt(
     text: str,
     domain: str = "marketing",
@@ -1263,3 +1429,95 @@ def build_prompt(
         overlays=overlays,
         output_mode=output_mode,
     )
+
+
+# ============================================================================
+# Валидация конфигов и knowledge base (для вызова при старте приложения)
+# ============================================================================
+def validate_configs_and_kb(
+    config_path: Path = Path("config"),
+    kb_path: Path = Path("knowledge_base"),
+) -> None:
+    """
+    Проверяет загрузку конфигов и KB, а также базовую работоспособность селекторов.
+    Выбрасывает исключение при обнаружении критических проблем.
+
+    Использует первые доступные файлы из папок domains/, intents/, overlays/.
+    Если папки пусты — валидация соответствующей части пропускается.
+    """
+    # 1. Core config
+    try:
+        core = load_core_config(config_path)
+        assert core.role, "Core config missing role"
+    except Exception as e:
+        raise RuntimeError(f"Core config validation failed: {e}") from e
+
+    # 2. Domain config – берём первый попавшийся JSON
+    domains_dir = config_path / "domains"
+    try:
+        domain_files = list(domains_dir.glob("*.json")) if domains_dir.exists() else []
+        if domain_files:
+            first_domain = domain_files[0].stem  # имя файла без расширения
+            domain_cfg = load_domain_config(first_domain, config_path)
+            assert domain_cfg.system_rules, "Domain config missing system_rules"
+    except Exception as e:
+        raise RuntimeError(f"Domain config validation failed: {e}") from e
+
+    # 3. Intent config – первый попавшийся
+    intents_dir = config_path / "intents"
+    try:
+        intent_files = list(intents_dir.glob("*.json")) if intents_dir.exists() else []
+        if intent_files:
+            first_intent = intent_files[0].stem
+            intent_cfg = load_intent_config(first_intent, config_path)
+            if intent_cfg is not None:
+                assert intent_cfg.instructions, "Intent config missing instructions"
+    except Exception as e:
+        raise RuntimeError(f"Intent config validation failed: {e}") from e
+
+    # 4. Overlay config – первый попавшийся
+    overlays_dir = config_path / "overlays"
+    try:
+        overlay_files = list(overlays_dir.glob("*.json")) if overlays_dir.exists() else []
+        if overlay_files:
+            first_overlay = overlay_files[0].stem
+            overlay_cfgs = load_overlay_configs([first_overlay], config_path)
+            assert overlay_cfgs, "Overlay config missing"
+    except Exception as e:
+        raise RuntimeError(f"Overlay config validation failed: {e}") from e
+
+    # 5. Output format
+    try:
+        fmt = load_output_format("text_only", config_path)
+        assert isinstance(fmt, str), "Output format not a string"
+    except Exception as e:
+        raise RuntimeError(f"Output format validation failed: {e}") from e
+
+    # 6. Knowledge base – загружаем и проверяем типы (не обязательную непустоту)
+    try:
+        kb = load_knowledge_base(kb_path)
+        assert isinstance(kb.stop_words, dict), "KB stop_words is not a dict"
+        assert isinstance(kb.grammar_errors, list), "KB grammar_errors is not a list"
+        assert isinstance(kb.stylistic_issues, list), "KB stylistic_issues is not a list"
+    except Exception as e:
+        raise RuntimeError(f"Knowledge base validation failed: {e}") from e
+
+    # 7. Smoke-тесты селекторов на dummy-данных
+    dummy_text = "тестовый текст"
+    dummy_tags = ["marketing", "test"]
+
+    try:
+        _ = select_grammar_rules(kb, dummy_text, dummy_tags, limit=1)
+        _ = select_style_issues(kb, dummy_text, dummy_tags, limit=1)
+        _ = select_logic_issues(kb, dummy_text, dummy_tags, limit=1)
+        _ = _select_by_tags_or_all(kb.composition_principles, dummy_tags, limit=1)
+    except Exception as e:
+        raise RuntimeError(f"Knowledge selectors smoke test failed: {e}") from e
+
+    # 8. NKRJ блок (опционально, но с отловом ошибок)
+    try:
+        _ = build_nkrj_norms_lines(kb)
+    except Exception as e:
+        raise RuntimeError(f"NKRJ validation failed: {e}") from e
+
+    logging.info("Config and knowledge base validation passed successfully.")
