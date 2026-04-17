@@ -711,6 +711,7 @@ def build_nkrj_norms_lines(
 
     return lines
 
+
 def _has_mode(
     intent: Optional[str],
     overlays: Sequence[str],
@@ -966,13 +967,13 @@ class PromptBuilder:
             for entry in composition_errors_sample
         ] or [" • (нет примеров композиционных ошибок в базе)"]
 
-nkrj_structure_text = ""
-if nkrj_norms_lines:
-    nkrj_structure_text = (
-        "\n\nНормы живого текста по корпусу Taiga Social Media "
-        "(используй как статистический ориентир, а не как жёсткий шаблон):\n"
-        + "\n".join(nkrj_norms_lines)
-    )
+        nkrj_structure_text = ""
+        if nkrj_norms_lines:
+            nkrj_structure_text = (
+                "\n\nНормы живого текста по корпусу Taiga Social Media "
+                "(используй как статистический ориентир, а не как жёсткий шаблон):\n"
+                + "\n".join(nkrj_norms_lines)
+            )
 
         frameworks_text = ""
         storytelling_requested = _has_mode(
@@ -1131,7 +1132,7 @@ if nkrj_norms_lines:
             + rhetoric_text
             + editorial_text
             + glossary_text
-            )
+        )
 
     def _build_output_format_block(self, mode: str) -> str:
         format_text = load_output_format(mode, self.config_path)
