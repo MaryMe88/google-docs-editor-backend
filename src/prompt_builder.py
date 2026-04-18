@@ -361,7 +361,7 @@ def load_knowledge_base(base_path: Path = Path("knowledge_base")) -> KnowledgeBa
 # Knowledge selection helpers (улучшенные)
 # ============================================================================
 
-def _normalize_text(text: str) -> str:
+def _normalize_text_for_match(text: str) -> str:
     """
     Приводит текст к нижнему регистру, заменяет 'ё' на 'е',
     оставляет только буквы, цифры и пробелы, схлопывает пробелы.
@@ -382,7 +382,7 @@ def _contains_pattern(normalized_text: str, pattern: str) -> bool:
     """
     if not pattern:
         return False
-    norm_pattern = _normalize_text(pattern)
+    norm_pattern = _normalize_text_for_match(pattern)
     if not norm_pattern:
         return False
     # Слишком короткий паттерн (<2 символов) считаем неспецифичным и не матчим как text match
@@ -408,7 +408,7 @@ def _score_entry(
     score тем выше, чем:
     - есть текстовое совпадение (pattern совпал) -> +1000
     - количество пересекающихся тегов * 10
-    - наличие хотя бы одного тега -> +1
+    - если есть хотя бы одно пересечение тегов -> +1
     tie_breaker = -idx (чтобы более ранние записи при равном score имели приоритет)
     """
     score = 0
@@ -424,8 +424,8 @@ def _score_entry(
     tag_set = {t.strip().lower() for t in entry_tags if isinstance(t, str)}
     overlap = len(tag_set & wanted_tags)
     score += overlap * 10
-    if overlap > 0 or tag_set:
-        score += 1  # небольшой бонус за наличие каких-либо тегов
+    if overlap > 0:
+        score += 1  # бонус за реальное пересечение тегов
 
     return (score, -idx)
 
@@ -441,7 +441,7 @@ def _select_ranked_entries(
     Общая функция ранжирования записей:
     - собирает score для каждой записи
     - сортирует по убыванию score (и по возрастанию исходного индекса при равных)
-    - возвращает первые limit записей, удаляя дубликаты (по id если есть, иначе по содержимому)
+    - возвращает первые limit записей, удаляя дубликаты (по id если есть, иначе по составному ключу)
     - если ни одна запись не набрала положительный score, возвращает первые limit из исходного списка
     """
     if not entries:
@@ -457,14 +457,13 @@ def _select_ranked_entries(
 
     if not scored:
         # Fallback: возвращаем первые limit записей в исходном порядке
-        seen_ids = set()
+        seen_keys = set()
         result = []
         for entry in entries:
-            eid = entry.get('id')
-            if eid is not None:
-                if eid in seen_ids:
-                    continue
-                seen_ids.add(eid)
+            key = _make_dedupe_key(entry)
+            if key in seen_keys:
+                continue
+            seen_keys.add(key)
             result.append(entry)
             if len(result) >= limit:
                 break
@@ -474,18 +473,33 @@ def _select_ranked_entries(
     scored.sort(key=lambda x: (x[0], x[1]), reverse=True)
 
     result = []
-    seen_ids = set()
+    seen_keys = set()
     for _, _, entry in scored:
-        eid = entry.get('id')
-        if eid is not None:
-            if eid in seen_ids:
-                continue
-            seen_ids.add(eid)
+        key = _make_dedupe_key(entry)
+        if key in seen_keys:
+            continue
+        seen_keys.add(key)
         result.append(entry)
         if len(result) >= limit:
             break
 
     return result
+
+
+def _make_dedupe_key(entry: Dict[str, Any]) -> Tuple[Any, ...]:
+    """
+    Создаёт ключ для дедупликации: приоритет у поля 'id', иначе комбинация
+    'wrong', 'rule', 'description', 'name'.
+    """
+    if 'id' in entry:
+        return ('id', entry['id'])
+    # Для записей без id используем основные информационные поля
+    return (
+        entry.get('wrong', ''),
+        entry.get('rule', ''),
+        entry.get('description', ''),
+        entry.get('name', ''),
+    )
 
 
 def _match_tags(entry_tags: Iterable[str], wanted_tags: Iterable[str]) -> bool:
@@ -500,7 +514,7 @@ def select_grammar_rules(
     tags: Iterable[str],
     limit: int = 10,
 ) -> List[Dict[str, Any]]:
-    normalized_text = _normalize_text(text)
+    normalized_text = _normalize_text_for_match(text)
     return _select_ranked_entries(
         kb.grammar_errors,
         normalized_text,
@@ -516,7 +530,7 @@ def select_style_issues(
     tags: Iterable[str],
     limit: int = 10,
 ) -> List[Dict[str, Any]]:
-    normalized_text = _normalize_text(text)
+    normalized_text = _normalize_text_for_match(text)
     return _select_ranked_entries(
         kb.stylistic_issues,
         normalized_text,
@@ -536,7 +550,7 @@ def select_logic_issues(
     Если есть отдельный logic_issues.json — используем его.
     Если нет, падаем обратно на stylistic_issues + grammar_errors с тегом "logic".
     """
-    normalized_text = _normalize_text(text)
+    normalized_text = _normalize_text_for_match(text)
     wanted_tags = list(tags) + ["logic"]
     candidates: List[Dict[str, Any]]
     if kb.logic_issues:
@@ -1559,14 +1573,14 @@ def build_prompt(
 # ============================================================================
 
 def _validate_stop_words_structure(stop_words: Any) -> None:
-    """Проверяет, что stop_words – словарь со значениями-списками строк."""
+    """Проверяет, что stop_words – словарь со значениями-списками (или кортежами) строк."""
     if not isinstance(stop_words, dict):
         raise ValueError("stop_words must be a dict")
     for category, words in stop_words.items():
         if not isinstance(category, str):
             raise ValueError(f"stop_words category key must be str, got {type(category)}")
-        if not isinstance(words, list):
-            raise ValueError(f"stop_words['{category}'] must be a list, got {type(words)}")
+        if not isinstance(words, (list, tuple)):
+            raise ValueError(f"stop_words['{category}'] must be a list or tuple, got {type(words)}")
         for i, w in enumerate(words):
             if not isinstance(w, str):
                 raise ValueError(
@@ -1579,7 +1593,7 @@ def _validate_rule_entries(entries: List[Dict[str, Any]], name: str, sample_size
     Проверяет первые sample_size элементов списка entries:
     - каждый элемент должен быть словарём;
     - ключи wrong, correct, rule, description, name, category (если есть) должны быть строками;
-    - ключ tags (если есть) должен быть списком;
+    - ключ tags (если есть) должен быть списком, а все его элементы – строками;
     - хотя бы одно из полей wrong, rule, description не должно быть пустым.
     """
     if not isinstance(entries, list):
@@ -1604,6 +1618,11 @@ def _validate_rule_entries(entries: List[Dict[str, Any]], name: str, sample_size
                 raise ValueError(
                     f"{name}[{i}].tags must be a list, got {type(tags)}"
                 )
+            for j, tag in enumerate(tags):
+                if not isinstance(tag, str):
+                    raise ValueError(
+                        f"{name}[{i}].tags[{j}] must be str, got {type(tag)}"
+                    )
 
         # Хотя бы одно информативное поле непустое
         has_info = False
