@@ -397,6 +397,24 @@ def _contains_pattern(normalized_text: str, pattern: str) -> bool:
         return norm_pattern in normalized_text
 
 
+def _get_entry_match_patterns(entry: Dict[str, Any]) -> List[str]:
+    """
+    Собирает кандидаты для текстового матчинга из полей:
+    wrong, name, rule, description (в указанном порядке).
+    Возвращает уникальные непустые строки после strip().
+    """
+    patterns: List[str] = []
+    seen = set()
+    for field in ('wrong', 'name', 'rule', 'description'):
+        val = entry.get(field)
+        if isinstance(val, str):
+            stripped = val.strip()
+            if stripped and stripped not in seen:
+                seen.add(stripped)
+                patterns.append(stripped)
+    return patterns
+
+
 def _score_entry(
     entry: Dict[str, Any],
     normalized_text: str,
@@ -405,17 +423,30 @@ def _score_entry(
 ) -> Tuple[int, int]:
     """
     Возвращает (score, tie_breaker) для записи.
-    score тем выше, чем:
-    - есть текстовое совпадение (pattern совпал) -> +1000
-    - количество пересекающихся тегов * 10
-    - если есть хотя бы одно пересечение тегов -> +1
-    tie_breaker = -idx (чтобы более ранние записи при равном score имели приоритет)
+
+    Схема начисления баллов:
+    - текстовое совпадение с полем 'wrong'               -> +1000
+    - иначе текстовое совпадение с name/rule/description -> +200
+    - пересекающиеся теги (overlap) * 10
+    - дополнительный +1 балл, если overlap > 0
+
+    tie_breaker = -idx (более ранние записи имеют приоритет при равном score).
     """
     score = 0
-    # Текстовое совпадение
-    pattern = str(entry.get('wrong', '')).strip()
-    if pattern and _contains_pattern(normalized_text, pattern):
-        score += 1000
+
+    # Текстовое совпадение по паттернам из записи
+    match_patterns = _get_entry_match_patterns(entry)
+    if match_patterns:
+        # Первый паттерн в списке — 'wrong' (если есть)
+        if match_patterns and _contains_pattern(normalized_text, match_patterns[0]):
+            # wrong — самый сильный сигнал
+            score += 1000
+        else:
+            # Проверяем остальные паттерны (name/rule/description)
+            for pat in match_patterns[1:]:
+                if _contains_pattern(normalized_text, pat):
+                    score += 200
+                    break
 
     # Теги
     entry_tags = entry.get('tags', [])
@@ -1594,7 +1625,7 @@ def _validate_rule_entries(entries: List[Dict[str, Any]], name: str, sample_size
     - каждый элемент должен быть словарём;
     - ключи wrong, correct, rule, description, name, category (если есть) должны быть строками;
     - ключ tags (если есть) должен быть списком, а все его элементы – строками;
-    - хотя бы одно из полей wrong, rule, description не должно быть пустым.
+    - хотя бы одно из полей wrong, rule, description, name не должно быть пустым.
     """
     if not isinstance(entries, list):
         raise ValueError(f"{name} must be a list")
@@ -1626,14 +1657,112 @@ def _validate_rule_entries(entries: List[Dict[str, Any]], name: str, sample_size
 
         # Хотя бы одно информативное поле непустое
         has_info = False
-        for info_key in ("wrong", "rule", "description"):
+        for info_key in ("wrong", "rule", "description", "name"):
             val = entry.get(info_key)
             if isinstance(val, str) and val.strip():
                 has_info = True
                 break
         if not has_info:
             raise ValueError(
-                f"{name}[{i}] must contain non-empty 'wrong', 'rule', or 'description'"
+                f"{name}[{i}] must contain non-empty 'wrong', 'rule', 'description', or 'name'"
+            )
+
+
+def _validate_named_entries(entries: List[Dict[str, Any]], name: str, sample_size: int = 5) -> None:
+    """
+    Проверяет первые sample_size элементов списка entries, подходящих для composition/editorial блоков:
+    - каждый элемент должен быть словарём;
+    - ключи name, rule, description, category (если есть) должны быть строками;
+    - ключ tags (если есть) должен быть списком строк;
+    - хотя бы одно из полей name, rule, description не должно быть пустым.
+    """
+    if not isinstance(entries, list):
+        raise ValueError(f"{name} must be a list")
+    for i, entry in enumerate(entries[:sample_size]):
+        if not isinstance(entry, dict):
+            raise ValueError(f"{name}[{i}] must be a dict, got {type(entry)}")
+
+        # Проверяем строковые ключи
+        for str_key in ("name", "rule", "description", "category"):
+            if str_key in entry:
+                val = entry[str_key]
+                if not isinstance(val, str):
+                    raise ValueError(
+                        f"{name}[{i}].{str_key} must be str, got {type(val)}"
+                    )
+
+        # Проверяем tags
+        if "tags" in entry:
+            tags = entry["tags"]
+            if not isinstance(tags, list):
+                raise ValueError(
+                    f"{name}[{i}].tags must be a list, got {type(tags)}"
+                )
+            for j, tag in enumerate(tags):
+                if not isinstance(tag, str):
+                    raise ValueError(
+                        f"{name}[{i}].tags[{j}] must be str, got {type(tag)}"
+                    )
+
+        # Хотя бы одно информативное поле непустое
+        has_info = False
+        for info_key in ("name", "rule", "description"):
+            val = entry.get(info_key)
+            if isinstance(val, str) and val.strip():
+                has_info = True
+                break
+        if not has_info:
+            raise ValueError(
+                f"{name}[{i}] must contain non-empty 'name', 'rule', or 'description'"
+            )
+
+
+def _validate_logic_entries(entries: List[Dict[str, Any]], name: str, sample_size: int = 5) -> None:
+    """
+    Проверяет первые sample_size элементов списка logic_issues:
+    - каждый элемент должен быть словарём;
+    - ключи name, wrong, rule, description, category (если есть) должны быть строками;
+    - ключ tags (если есть) должен быть списком строк;
+    - хотя бы одно из полей name, wrong, rule, description не должно быть пустым.
+    """
+    if not isinstance(entries, list):
+        raise ValueError(f"{name} must be a list")
+    for i, entry in enumerate(entries[:sample_size]):
+        if not isinstance(entry, dict):
+            raise ValueError(f"{name}[{i}] must be a dict, got {type(entry)}")
+
+        # Проверяем строковые ключи
+        for str_key in ("name", "wrong", "rule", "description", "category"):
+            if str_key in entry:
+                val = entry[str_key]
+                if not isinstance(val, str):
+                    raise ValueError(
+                        f"{name}[{i}].{str_key} must be str, got {type(val)}"
+                    )
+
+        # Проверяем tags
+        if "tags" in entry:
+            tags = entry["tags"]
+            if not isinstance(tags, list):
+                raise ValueError(
+                    f"{name}[{i}].tags must be a list, got {type(tags)}"
+                )
+            for j, tag in enumerate(tags):
+                if not isinstance(tag, str):
+                    raise ValueError(
+                        f"{name}[{i}].tags[{j}] must be str, got {type(tag)}"
+                    )
+
+        # Хотя бы одно информативное поле непустое
+        has_info = False
+        for info_key in ("name", "wrong", "rule", "description"):
+            val = entry.get(info_key)
+            if isinstance(val, str) and val.strip():
+                has_info = True
+                break
+        if not has_info:
+            raise ValueError(
+                f"{name}[{i}] must contain non-empty 'name', 'wrong', 'rule', or 'description'"
             )
 
 
@@ -1717,15 +1846,19 @@ def validate_configs_and_kb(
         _validate_rule_entries(kb.grammar_errors, "grammar_errors")
         _validate_rule_entries(kb.stylistic_issues, "stylistic_issues")
 
-        # Проверка composition-блоков
+        # Проверка logic_issues
+        if kb.logic_issues:
+            _validate_logic_entries(kb.logic_issues, "logic_issues")
+
+        # Проверка composition-блоков (с более осмысленной валидацией)
         if kb.composition_principles:
-            _validate_list_of_dicts(kb.composition_principles, "composition_principles")
+            _validate_named_entries(kb.composition_principles, "composition_principles")
         if kb.local_cohesion:
-            _validate_list_of_dicts(kb.local_cohesion, "local_cohesion")
+            _validate_named_entries(kb.local_cohesion, "local_cohesion")
         if kb.composition_errors:
-            _validate_list_of_dicts(kb.composition_errors, "composition_errors")
+            _validate_named_entries(kb.composition_errors, "composition_errors")
         if kb.editorial_techniques:
-            _validate_list_of_dicts(kb.editorial_techniques, "editorial_techniques")
+            _validate_named_entries(kb.editorial_techniques, "editorial_techniques")
 
     except Exception as e:
         raise RuntimeError(f"Knowledge base validation failed: {e}") from e
