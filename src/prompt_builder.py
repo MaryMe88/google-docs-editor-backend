@@ -15,6 +15,9 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional, Sequence, Set, Tuple
 
+# Локальный логгер модуля
+logger = logging.getLogger(__name__)
+
 # ============================================================================
 # Data Models (типы данных для конфигов)
 # ============================================================================
@@ -1075,10 +1078,8 @@ class PromptBuilder:
         self.marketing_candidate_limit = marketing_candidate_limit
         self.rhetoric_candidate_limit = rhetoric_candidate_limit
 
-        # Диагностика
+        # Диагностика (безопасная: не меняет глобальный уровень)
         self.enable_selection_diagnostics = enable_selection_diagnostics
-        if enable_selection_diagnostics:
-            logging.getLogger().setLevel(logging.DEBUG)
 
         # Кэши конфигов
         self._core_cache: Optional[CoreConfig] = None
@@ -1323,12 +1324,12 @@ class PromptBuilder:
         if intent is not None:
             base_tags.extend(_get_canonical_tags_for_category("intents", intent))
             if intent not in KNOWN_INTENTS and intent not in available_intents:
-                logging.warning(f"Unknown intent '{intent}' passed to PromptBuilder")
+                logger.warning(f"Unknown intent '{intent}' passed to PromptBuilder")
 
         for ov in overlays:
             base_tags.extend(_get_canonical_tags_for_category("overlays", ov))
             if ov not in KNOWN_OVERLAYS and ov not in available_overlays:
-                logging.warning(f"Unknown overlay '{ov}' passed to PromptBuilder")
+                logger.warning(f"Unknown overlay '{ov}' passed to PromptBuilder")
 
         # Расширение алиасами
         tags = _extend_tags_with_feature_aliases(base_tags, intent, overlays)
@@ -1752,8 +1753,8 @@ class PromptBuilder:
         marketing_enabled = features["marketing_enabled"]
 
         if self.enable_selection_diagnostics:
-            logging.debug(f"Resolved tags: {tags}")
-            logging.debug(f"Storytelling enabled: {storytelling_enabled}, Marketing enabled: {marketing_enabled}")
+            logger.debug(f"Resolved tags: {tags}")
+            logger.debug(f"Storytelling enabled: {storytelling_enabled}, Marketing enabled: {marketing_enabled}")
 
         stop_words_block = self._build_stop_words_block(kb)
 
@@ -1826,7 +1827,7 @@ def build_prompt(
     }
 
     if audience_type not in audience_map:
-        logging.warning(
+        logger.warning(
             f"Unknown audience_type '{audience_type}', falling back to 'b2b'"
         )
     audience = audience_map.get(audience_type, audience_map["b2b"])
@@ -2124,4 +2125,4 @@ def validate_configs_and_kb(
     except Exception as e:
         raise RuntimeError(f"NKRJ validation failed: {e}") from e
 
-    logging.info("Config and knowledge base validation passed successfully.")
+    logger.info("Config and knowledge base validation passed successfully.")

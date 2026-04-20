@@ -16,6 +16,8 @@ from prompt_builder import (
     PromptBuilder,
     _flatten_editorial_techniques,
     _flatten_stylistic_issues,
+    _score_structural_entry,
+    _select_ranked_entries,
     load_knowledge_base,
     select_grammar_rules,
     select_logic_issues,
@@ -143,7 +145,7 @@ def minimal_kb(tmp_path: Path) -> Path:
         }, ensure_ascii=False)
     )
 
-    # Опциональные файлы (для проверки, что они загружаются)
+    # Опциональные файлы
     (kb_dir / "logic_issues.json").write_text(
         json.dumps({
             "issues": [
@@ -197,7 +199,7 @@ def minimal_kb(tmp_path: Path) -> Path:
 
 
 # ----------------------------------------------------------------------
-# Тесты загрузки KB и flattening
+# Существующие тесты (сохранены без изменений)
 # ----------------------------------------------------------------------
 
 def test_load_knowledge_base_happy_path(minimal_kb: Path):
@@ -292,10 +294,6 @@ def test_flatten_editorial_techniques():
     assert isinstance(tech["source"], dict)
 
 
-# ----------------------------------------------------------------------
-# Тесты селекторов
-# ----------------------------------------------------------------------
-
 def test_select_grammar_rules_match(minimal_kb: Path):
     """Прямое совпадение по тексту."""
     kb = load_knowledge_base(minimal_kb)
@@ -310,7 +308,6 @@ def test_select_grammar_rules_fallback(minimal_kb: Path):
     kb = load_knowledge_base(minimal_kb)
     text = "Всё правильно написано."
     rules = select_grammar_rules(kb, text, tags=["grammar"], limit=5)
-    # fallback всё равно вернёт записи (если они есть в базе)
     assert len(rules) > 0
 
 
@@ -329,7 +326,6 @@ def test_select_logic_issues_with_dedicated_file(minimal_kb: Path):
     text = "Либо мы делаем так, либо всё пропало."
     issues = select_logic_issues(kb, text, tags=["logic"], limit=5)
     assert len(issues) > 0
-    # В нашем файле одна запись
     assert issues[0].get("name") == "Ложная дилемма"
 
 
@@ -343,19 +339,13 @@ def test_select_logic_issues_fallback_to_combined(tmp_path: Path):
     (kb_dir / "storytelling_frameworks.json").write_text(json.dumps({"frameworks": []}))
     (kb_dir / "marketing_templates.json").write_text(json.dumps({"templates": []}))
     kb = load_knowledge_base(kb_dir)
-    # Добавим в grammar запись с тегом logic
     kb.grammar_errors.append({"wrong": "пример", "rule": "логика", "tags": ["logic"]})
     issues = select_logic_issues(kb, "любой текст", tags=["test"], limit=5)
     assert len(issues) > 0
 
 
-# ----------------------------------------------------------------------
-# Тесты validate_configs_and_kb
-# ----------------------------------------------------------------------
-
 def test_validate_configs_and_kb_success(minimal_config: Path, minimal_kb: Path):
     """Полностью валидные конфиги и KB должны проходить без ошибок."""
-    # Перенаправляем логи, чтобы не засорять вывод тестов
     validate_configs_and_kb(minimal_config, minimal_kb)
 
 
@@ -380,10 +370,6 @@ def test_validate_configs_and_kb_failure_bad_stop_words(minimal_config: Path, mi
         validate_configs_and_kb(minimal_config, minimal_kb)
 
 
-# ----------------------------------------------------------------------
-# Тест PromptBuilder.build()
-# ----------------------------------------------------------------------
-
 def test_prompt_builder_build_happy_path(minimal_config: Path, minimal_kb: Path):
     """Базовый вызов build с минимальными параметрами."""
     builder = PromptBuilder(config_path=minimal_config, kb_path=minimal_kb)
@@ -396,13 +382,96 @@ def test_prompt_builder_build_happy_path(minimal_config: Path, minimal_kb: Path)
         output_mode="text_only",
         include_knowledge=True,
     )
-    # Проверяем наличие основных блоков
     assert "Test Editor" in prompt
     assert "Домен: Текст для привлечения клиентов" in prompt
     assert "Цель обработки: Сторителлинг" in prompt
     assert "Формат ответа:" in prompt
     assert text in prompt
-    # Knowledge блок присутствует
     assert "База знаний" in prompt
-    # Стоп-слова в компактном виде
     assert "канцелярит" in prompt
+
+
+# ----------------------------------------------------------------------
+# Новые тесты на качество retrieval
+# ----------------------------------------------------------------------
+
+def test_text_match_wins_over_tags(minimal_kb: Path):
+    """Запись с прямым совпадением по тексту должна иметь приоритет перед записью с тегами."""
+    kb = load_knowledge_base(minimal_kb)
+    # Добавим две записи в grammar_errors
+    kb.grammar_errors = [
+        {"wrong": "тестовый", "correct": "тест", "rule": "правило 1", "tags": ["grammar"]},
+        {"wrong": "другой", "correct": "иной", "rule": "правило 2", "tags": ["grammar"]},
+    ]
+    text = "Это тестовый пример."
+    rules = select_grammar_rules(kb, text, tags=["grammar"], limit=5)
+    assert len(rules) >= 2
+    # Первая запись должна быть та, где wrong совпал с текстом
+    assert rules[0]["wrong"] == "тестовый"
+
+
+def test_tag_overlap_fallback_when_no_text_match(minimal_kb: Path):
+    """При отсутствии текстовых совпадений записи сортируются по количеству пересекающихся тегов."""
+    kb = load_knowledge_base(minimal_kb)
+    kb.grammar_errors = [
+        {"wrong": "слово1", "correct": "замена1", "rule": "правило 1", "tags": ["tagA"]},
+        {"wrong": "слово2", "correct": "замена2", "rule": "правило 2", "tags": ["tagA", "tagB"]},
+        {"wrong": "слово3", "correct": "замена3", "rule": "правило 3", "tags": ["tagC"]},
+    ]
+    text = "Нет совпадений."
+    rules = select_grammar_rules(kb, text, tags=["tagA", "tagB"], limit=5)
+    # Запись с двумя тегами должна быть первой
+    assert rules[0]["wrong"] == "слово2"
+
+
+def test_structural_entry_scoring_storytelling(tmp_path: Path):
+    """Проверяет, что структурный скоринг учитывает name и when_to_use."""
+    kb_dir = tmp_path / "kb"
+    kb_dir.mkdir()
+    (kb_dir / "stop_words.json").write_text("{}")
+    (kb_dir / "grammar_errors.json").write_text(json.dumps({"common_mistakes": []}))
+    (kb_dir / "stylistic_issues.json").write_text(json.dumps({"stylistic_errors": []}))
+    (kb_dir / "storytelling_frameworks.json").write_text(json.dumps({
+        "frameworks": [
+            {"name": "Путь героя", "steps": [], "tags": ["story"]},
+            {"name": "Спираль", "description": "Для сложных сюжетов", "when_to_use": ["запутанный сюжет"]},
+        ]
+    }))
+    (kb_dir / "marketing_templates.json").write_text(json.dumps({"templates": []}))
+    kb = load_knowledge_base(kb_dir)
+
+    from prompt_builder import _normalize_text_for_match, _score_structural_entry
+
+    text = "У нас запутанный сюжет, нужно что-то придумать."
+    norm_text = _normalize_text_for_match(text)
+    wanted_tags = {"storytelling"}
+
+    scores = []
+    for idx, entry in enumerate(kb.storytelling_frameworks):
+        score, _ = _score_structural_entry(entry, norm_text, wanted_tags, idx)
+        scores.append((score, entry.get("name")))
+
+    # Запись с when_to_use должна получить более высокий балл
+    assert scores[1][0] > scores[0][0]
+    assert scores[1][1] == "Спираль"
+
+
+def test_deduplication_in_selection(minimal_kb: Path):
+    """Дубликаты записей удаляются."""
+    kb = load_knowledge_base(minimal_kb)
+    duplicate = {"wrong": "дубль", "correct": "оригинал", "rule": "правило", "tags": ["grammar"]}
+    kb.grammar_errors = [duplicate, duplicate.copy()]
+    text = "дубль"
+    rules = select_grammar_rules(kb, text, tags=["grammar"], limit=5)
+    assert len(rules) == 1
+
+
+def test_diagnostics_does_not_change_global_log_level():
+    """Проверяет, что enable_selection_diagnostics не меняет глобальный уровень логирования."""
+    root_logger = logging.getLogger()
+    original_level = root_logger.level
+
+    builder = PromptBuilder(enable_selection_diagnostics=True)
+
+    assert root_logger.level == original_level
+    assert builder.enable_selection_diagnostics is True
