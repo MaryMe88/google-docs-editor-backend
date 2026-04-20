@@ -461,36 +461,138 @@ def _score_entry(
     return (score, -idx)
 
 
+def _score_structural_entry(
+    entry: Dict[str, Any],
+    normalized_text: str,
+    wanted_tags: Set[str],
+    idx: int,
+) -> Tuple[int, int]:
+    """
+    Скоринг для структурных записей (storytelling, marketing, rhetoric).
+    Учитывает поля: name, description, when_to_use, steps/sections.
+    """
+    score = 0
+
+    # Собираем все текстовые паттерны
+    patterns: List[str] = []
+
+    def _add_field(field: str):
+        val = entry.get(field)
+        if isinstance(val, str):
+            stripped = val.strip()
+            if stripped:
+                patterns.append(stripped)
+
+    _add_field("name")
+    _add_field("description")
+    _add_field("when_to_use")
+    _add_field("rule")
+
+    # Обработка when_to_use как списка
+    when = entry.get("when_to_use")
+    if isinstance(when, list):
+        for item in when:
+            if isinstance(item, str):
+                patterns.append(item.strip())
+
+    # Обработка steps / sections
+    for container_key in ("steps", "sections"):
+        container = entry.get(container_key)
+        if isinstance(container, list):
+            for step in container:
+                if isinstance(step, dict):
+                    step_name = step.get("name")
+                    if isinstance(step_name, str) and step_name.strip():
+                        patterns.append(step_name.strip())
+                    step_desc = step.get("description")
+                    if isinstance(step_desc, str) and step_desc.strip():
+                        patterns.append(step_desc.strip())
+
+    # Убираем дубликаты, сохраняя порядок первого появления
+    seen = set()
+    unique_patterns = []
+    for p in patterns:
+        if p not in seen:
+            seen.add(p)
+            unique_patterns.append(p)
+
+    # Проверяем совпадения: первый попавшийся даёт бонус
+    match_bonus = 0
+    for pat in unique_patterns:
+        if _contains_pattern(normalized_text, pat):
+            # name даёт больший вес
+            if pat == entry.get("name", "").strip():
+                match_bonus = 500
+            else:
+                match_bonus = 200
+            break
+
+    score += match_bonus
+
+    # Теги
+    entry_tags = entry.get("tags", [])
+    if not isinstance(entry_tags, (list, tuple)):
+        entry_tags = []
+    tag_set = {t.strip().lower() for t in entry_tags if isinstance(t, str)}
+    overlap = len(tag_set & wanted_tags)
+    score += overlap * 10
+    if overlap > 0:
+        score += 1
+
+    return (score, -idx)
+
+
 def _select_ranked_entries(
     entries: List[Dict[str, Any]],
     normalized_text: str,
     wanted_tags: Iterable[str],
     limit: int,
     require_text_match: bool = False,
+    scorer: Any = _score_entry,
+    candidate_limit: Optional[int] = None,
+    debug_context: str = "",
 ) -> List[Dict[str, Any]]:
     """
-    Общая функция ранжирования записей:
-    - собирает score для каждой записи
-    - сортирует по убыванию score (и по возрастанию исходного индекса при равных)
-    - возвращает первые limit записей, удаляя дубликаты (по id если есть, иначе по составному ключу)
-    - если ни одна запись не набрала положительный score, возвращает первые limit из исходного списка
+    Общая функция ранжирования записей.
+    - candidate_limit: сколько записей рассматривать перед ранжированием (None = все)
+    - debug_context: название блока для диагностики
     """
     if not entries:
         return []
 
+    # Ограничиваем кандидатов
+    candidates = entries if candidate_limit is None else entries[:candidate_limit]
+
     wanted_set = {t.strip().lower() for t in wanted_tags if isinstance(t, str)}
     scored = []
-    for idx, entry in enumerate(entries):
-        score, tie = _score_entry(entry, normalized_text, wanted_set, idx)
+    for idx, entry in enumerate(candidates):
+        score, tie = scorer(entry, normalized_text, wanted_set, idx)
         if require_text_match and score < 1000:
             continue
         scored.append((score, tie, entry))
 
     if not scored:
-        # Fallback: возвращаем первые limit записей в исходном порядке
-        seen_keys = set()
+        # Fallback: ранжируем по тегам, затем по исходному порядку
+        fallback_candidates = []
+        for idx, entry in enumerate(candidates):
+            entry_tags = entry.get("tags", [])
+            if not isinstance(entry_tags, (list, tuple)):
+                entry_tags = []
+            tag_set = {t.strip().lower() for t in entry_tags if isinstance(t, str)}
+            overlap = len(tag_set & wanted_set)
+            fallback_candidates.append((overlap, -idx, entry))
+
+        fallback_candidates.sort(key=lambda x: (x[0], x[1]), reverse=True)
+
+        if debug_context and logging.getLogger().isEnabledFor(logging.DEBUG):
+            logging.debug(
+                f"[{debug_context}] Fallback: {len(candidates)} candidates, "
+                f"top tag overlap={fallback_candidates[0][0] if fallback_candidates else 0}"
+            )
+
         result = []
-        for entry in entries:
+        seen_keys = set()
+        for _, _, entry in fallback_candidates:
             key = _make_dedupe_key(entry)
             if key in seen_keys:
                 continue
@@ -502,6 +604,31 @@ def _select_ranked_entries(
 
     # Сортировка: по score убыв., затем по tie убыв. (т.е. по возрастанию исходного индекса)
     scored.sort(key=lambda x: (x[0], x[1]), reverse=True)
+
+    # Диагностика
+    if debug_context and logging.getLogger().isEnabledFor(logging.DEBUG):
+        top_info = []
+        for s in scored[:5]:
+            entry = s[2]
+            score_val = s[0]
+            name = entry.get("name", entry.get("wrong", "?"))[:30]
+            if score_val >= 1000:
+                reason = "text_match"
+            elif score_val >= 200:
+                reason = "partial_text"
+            elif score_val >= 10:
+                reason = "tags"
+            else:
+                reason = "fallback"
+            top_info.append((score_val, name, reason))
+        logging.debug(
+            f"[{debug_context}] Candidates: {len(candidates)}, selected: {min(limit, len(scored))}, "
+            f"top scores: {top_info}"
+        )
+        if len(scored) > limit:
+            missed = scored[limit:limit+2]
+            missed_info = [(s[0], s[2].get("name", "?")[:30]) for s in missed]
+            logging.debug(f"[{debug_context}] Missed due to limit: {missed_info}")
 
     result = []
     seen_keys = set()
@@ -544,6 +671,7 @@ def select_grammar_rules(
     text: str,
     tags: Iterable[str],
     limit: int = 10,
+    candidate_limit: Optional[int] = None,
 ) -> List[Dict[str, Any]]:
     normalized_text = _normalize_text_for_match(text)
     return _select_ranked_entries(
@@ -552,6 +680,8 @@ def select_grammar_rules(
         tags,
         limit,
         require_text_match=False,
+        candidate_limit=candidate_limit,
+        debug_context="grammar",
     )
 
 
@@ -560,6 +690,7 @@ def select_style_issues(
     text: str,
     tags: Iterable[str],
     limit: int = 10,
+    candidate_limit: Optional[int] = None,
 ) -> List[Dict[str, Any]]:
     normalized_text = _normalize_text_for_match(text)
     return _select_ranked_entries(
@@ -568,6 +699,8 @@ def select_style_issues(
         tags,
         limit,
         require_text_match=False,
+        candidate_limit=candidate_limit,
+        debug_context="style",
     )
 
 
@@ -576,6 +709,7 @@ def select_logic_issues(
     text: str,
     tags: Iterable[str],
     limit: int = 8,
+    candidate_limit: Optional[int] = None,
 ) -> List[Dict[str, Any]]:
     """
     Если есть отдельный logic_issues.json — используем его.
@@ -594,6 +728,8 @@ def select_logic_issues(
         wanted_tags,
         limit,
         require_text_match=False,
+        candidate_limit=candidate_limit,
+        debug_context="logic",
     )
 
 
@@ -610,6 +746,7 @@ def _select_by_tags_or_all(
         tags,
         limit,
         require_text_match=False,
+        debug_context="tags_or_all",
     )
 
 
@@ -891,11 +1028,19 @@ class PromptBuilder:
         glossary_limit: int = 10,
         stop_words_category_limit: int = 8,
         stop_words_items_limit: int = 5,
+        # Ограничения на число кандидатов (None = без ограничений)
+        grammar_candidate_limit: Optional[int] = None,
+        style_candidate_limit: Optional[int] = None,
+        logic_candidate_limit: Optional[int] = None,
+        storytelling_candidate_limit: Optional[int] = None,
+        marketing_candidate_limit: Optional[int] = None,
+        rhetoric_candidate_limit: Optional[int] = None,
+        enable_selection_diagnostics: bool = False,
     ) -> None:
         self.config_path = config_path
         self.kb_path = kb_path
 
-        # Лимиты
+        # Лимиты выдачи
         self.grammar_limit = grammar_limit
         self.style_limit = style_limit
         self.logic_limit = logic_limit
@@ -909,6 +1054,19 @@ class PromptBuilder:
         self.glossary_limit = glossary_limit
         self.stop_words_category_limit = stop_words_category_limit
         self.stop_words_items_limit = stop_words_items_limit
+
+        # Лимиты кандидатов
+        self.grammar_candidate_limit = grammar_candidate_limit
+        self.style_candidate_limit = style_candidate_limit
+        self.logic_candidate_limit = logic_candidate_limit
+        self.storytelling_candidate_limit = storytelling_candidate_limit
+        self.marketing_candidate_limit = marketing_candidate_limit
+        self.rhetoric_candidate_limit = rhetoric_candidate_limit
+
+        # Диагностика
+        self.enable_selection_diagnostics = enable_selection_diagnostics
+        if enable_selection_diagnostics:
+            logging.getLogger().setLevel(logging.DEBUG)
 
         # Кэши конфигов
         self._core_cache: Optional[CoreConfig] = None
@@ -1192,13 +1350,16 @@ class PromptBuilder:
     ) -> str:
         """Грамматика, стилистика и логика."""
         grammar_sample = select_grammar_rules(
-            kb, text=text, tags=tags, limit=self.grammar_limit
+            kb, text=text, tags=tags, limit=self.grammar_limit,
+            candidate_limit=self.grammar_candidate_limit
         )
         style_sample = select_style_issues(
-            kb, text=text, tags=tags, limit=self.style_limit
+            kb, text=text, tags=tags, limit=self.style_limit,
+            candidate_limit=self.style_candidate_limit
         )
         logic_sample = select_logic_issues(
-            kb, text=text, tags=tags, limit=self.logic_limit
+            kb, text=text, tags=tags, limit=self.logic_limit,
+            candidate_limit=self.logic_candidate_limit
         )
 
         grammar_lines: List[str] = [
@@ -1307,15 +1468,27 @@ class PromptBuilder:
     def _build_storytelling_block(
         self,
         kb: KnowledgeBase,
+        text: str,
+        tags: List[str],
         storytelling_enabled: bool,
     ) -> str:
         """Фреймворки сторителлинга, если разрешено."""
         if not storytelling_enabled or not kb.storytelling_frameworks:
             return ""
 
-        frameworks_sample = kb.storytelling_frameworks[: self.storytelling_limit]
-        framework_lines: List[str] = []
+        normalized_text = _normalize_text_for_match(text)
+        frameworks_sample = _select_ranked_entries(
+            kb.storytelling_frameworks,
+            normalized_text,
+            tags + ["storytelling"],
+            self.storytelling_limit,
+            require_text_match=False,
+            scorer=_score_structural_entry,
+            candidate_limit=self.storytelling_candidate_limit,
+            debug_context="storytelling",
+        )
 
+        framework_lines: List[str] = []
         for fw in frameworks_sample:
             name = fw.get("name", "")
             steps = fw.get("steps", [])
@@ -1326,7 +1499,6 @@ class PromptBuilder:
             ]
             if not name or not step_names:
                 continue
-
             framework_lines.append(f" • {name}: " + " → ".join(step_names))
 
         if not framework_lines:
@@ -1340,15 +1512,27 @@ class PromptBuilder:
     def _build_marketing_block(
         self,
         kb: KnowledgeBase,
+        text: str,
+        tags: List[str],
         marketing_enabled: bool,
     ) -> str:
         """Маркетинговые шаблоны, если разрешено."""
         if not marketing_enabled or not kb.marketing_templates:
             return ""
 
-        templates_sample = kb.marketing_templates[: self.marketing_limit]
-        template_lines: List[str] = []
+        normalized_text = _normalize_text_for_match(text)
+        templates_sample = _select_ranked_entries(
+            kb.marketing_templates,
+            normalized_text,
+            tags + ["marketing"],
+            self.marketing_limit,
+            require_text_match=False,
+            scorer=_score_structural_entry,
+            candidate_limit=self.marketing_candidate_limit,
+            debug_context="marketing",
+        )
 
+        template_lines: List[str] = []
         for tpl in templates_sample:
             name = tpl.get("name", "")
             sections = tpl.get("sections", [])
@@ -1359,7 +1543,6 @@ class PromptBuilder:
             ]
             if not name or not section_names:
                 continue
-
             template_lines.append(f" • {name}: " + ", ".join(section_names))
 
         if not template_lines:
@@ -1374,6 +1557,7 @@ class PromptBuilder:
         self,
         kb: KnowledgeBase,
         domain: str,
+        text: str,
         tags: List[str],
     ) -> str:
         """Риторика, редакторские приёмы и глоссарий."""
@@ -1381,7 +1565,17 @@ class PromptBuilder:
 
         # Риторика
         if kb.rhetoric_frameworks:
-            rhetoric_sample = kb.rhetoric_frameworks[: self.rhetoric_limit]
+            normalized_text = _normalize_text_for_match(text)
+            rhetoric_sample = _select_ranked_entries(
+                kb.rhetoric_frameworks,
+                normalized_text,
+                tags + ["rhetoric"],
+                self.rhetoric_limit,
+                require_text_match=False,
+                scorer=_score_structural_entry,
+                candidate_limit=self.rhetoric_candidate_limit,
+                debug_context="rhetoric",
+            )
             rhetoric_lines: List[str] = []
             for fw in rhetoric_sample:
                 name = fw.get("name", "")
@@ -1512,15 +1706,19 @@ class PromptBuilder:
         storytelling_enabled = features["storytelling_enabled"]
         marketing_enabled = features["marketing_enabled"]
 
+        if self.enable_selection_diagnostics:
+            logging.debug(f"Resolved tags: {tags}")
+            logging.debug(f"Storytelling enabled: {storytelling_enabled}, Marketing enabled: {marketing_enabled}")
+
         stop_words_block = self._build_stop_words_block(kb)
 
         grammar_style_logic = self._build_grammar_style_logic_block(kb, text, tags)
         composition_cohesion = self._build_composition_cohesion_errors_block(kb, tags)
         nkrj_block = self._build_nkrj_block(kb)
-        storytelling_block = self._build_storytelling_block(kb, storytelling_enabled)
-        marketing_block = self._build_marketing_block(kb, marketing_enabled)
+        storytelling_block = self._build_storytelling_block(kb, text, tags, storytelling_enabled)
+        marketing_block = self._build_marketing_block(kb, text, tags, marketing_enabled)
         rhetoric_editorial_glossary = self._build_rhetoric_editorial_glossary_block(
-            kb, domain, tags
+            kb, domain, text, tags
         )
 
         return (
