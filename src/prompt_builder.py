@@ -939,25 +939,35 @@ def _has_mode(
     return bool(values & normalized_aliases)
 
 
+# Словарь алиасов для фич
+FEATURE_ALIASES = {
+    "anti_ai": {"deai", "anti_ai", "anti-llm", "humanize", "natural"},
+    "storytelling": {"storytelling", "story", "narrative", "story-driven"},
+    "marketing": {"marketing_push", "marketing", "sales", "promo", "conversion", "cta"},
+    "editing": {"noragal", "nora_gal", "editing", "brevity"},
+    "logic": {"logic", "coherence", "reasoning"},
+    "factcheck": {"factcheck", "verify", "accuracy"},
+    "infostyle": {"infostyle", "information_style", "precision"},
+}
+
+
 def _extend_tags_with_feature_aliases(
     tags: List[str],
     intent: Optional[str],
     overlays: Sequence[str],
 ) -> List[str]:
     """
-    Расширяет набор тегов служебными алиасами для knowledge base.
-    Например, режим deai -> тег anti_ai.
+    Расширяет набор тегов служебными алиасами.
     """
     result = list(tags)
+    values = set(overlays)
+    if intent:
+        values.add(intent)
+    values_lower = {v.strip().lower() for v in values}
 
-    if _has_mode(intent, overlays, {"deai", "anti_ai", "anti-llm", "humanize"}):
-        result.append("anti_ai")
-
-    if _has_mode(intent, overlays, {"storytelling", "story", "narrative"}):
-        result.append("storytelling")
-
-    if _has_mode(intent, overlays, {"marketing_push", "marketing", "sales"}):
-        result.append("marketing")
+    for canonical, aliases in FEATURE_ALIASES.items():
+        if values_lower & {a.lower() for a in aliases}:
+            result.append(canonical)
 
     return list(dict.fromkeys(result))
 
@@ -968,18 +978,20 @@ def _extend_tags_with_feature_aliases(
 
 CANONICAL_TAGS = {
     "domains": {
-        "marketing": ["marketing"],
-        "blog": ["blog", "non_marketing"],
+        "marketing": ["marketing", "sales", "promo", "conversion"],
+        "blog": ["blog", "non_marketing", "article", "educational"],
+        "deai": ["anti_ai", "humanize", "natural"],
     },
     "intents": {
-        "storytelling": ["storytelling", "structure"],
-        "noragal": ["editing", "nora_gal"],
-        "deai": ["anti_ai", "humanize"],
+        "storytelling": ["storytelling", "structure", "narrative", "engagement"],
+        "noragal": ["editing", "nora_gal", "brevity", "clarity"],
+        "deai": ["anti_ai", "humanize", "authentic"],
     },
     "overlays": {
-        "logic": ["logic"],
-        "factcheck": ["factcheck"],
-        "infostyle": ["infostyle"],
+        "logic": ["logic", "coherence", "argumentation"],
+        "factcheck": ["factcheck", "accuracy", "verification"],
+        "infostyle": ["infostyle", "clarity", "precision"],
+        "marketing_push": ["marketing", "persuasion", "cta"],
     },
 }
 
@@ -1321,6 +1333,9 @@ class PromptBuilder:
         # Расширение алиасами
         tags = _extend_tags_with_feature_aliases(base_tags, intent, overlays)
 
+        # Нормализация и дедупликация
+        tags = list({t.strip().lower() for t in tags if isinstance(t, str)})
+
         storytelling_requested = _has_mode(
             intent, overlays, {"storytelling", "story", "narrative"}
         )
@@ -1628,15 +1643,45 @@ class PromptBuilder:
                     + "\n".join(editorial_lines)
                 )
 
-        # Глоссарий
-        if kb.domain_glossary and domain in kb.domain_glossary:
-            terms = kb.domain_glossary.get(domain, {})
-            if isinstance(terms, dict) and terms:
-                sample_items = list(terms.items())[: self.glossary_limit]
+        # Глоссарий (контекстный отбор)
+        if kb.domain_glossary:
+            # Собираем релевантные термины
+            relevant_terms: Dict[str, str] = {}
+            wanted_tags_set = {t.lower() for t in tags}
+
+            # Приоритет: домен запроса, затем другие домены, соответствующие тегам
+            domains_to_check = [domain] + [d for d in kb.domain_glossary.keys() if d != domain]
+            for dom in domains_to_check:
+                if dom in kb.domain_glossary:
+                    dom_terms = kb.domain_glossary[dom]
+                    if isinstance(dom_terms, dict):
+                        if dom == domain or any(t in wanted_tags_set for t in [dom.lower()]):
+                            for term, definition in dom_terms.items():
+                                if term not in relevant_terms:
+                                    relevant_terms[term] = definition
+                if len(relevant_terms) >= self.glossary_limit:
+                    break
+
+            # Дополнительно ищем термины, упомянутые в тексте
+            if len(relevant_terms) < self.glossary_limit:
+                normalized_text = _normalize_text_for_match(text)
+                for dom, dom_terms in kb.domain_glossary.items():
+                    if isinstance(dom_terms, dict):
+                        for term, definition in dom_terms.items():
+                            if term in relevant_terms:
+                                continue
+                            if _contains_pattern(normalized_text, term):
+                                relevant_terms[term] = definition
+                                if len(relevant_terms) >= self.glossary_limit:
+                                    break
+                    if len(relevant_terms) >= self.glossary_limit:
+                        break
+
+            if relevant_terms:
+                sample_items = list(relevant_terms.items())[: self.glossary_limit]
                 term_lines = [f" • {key}: {value}" for key, value in sample_items]
                 parts.append(
-                    "Глоссарий по домену (ключевые термины):\n"
-                    + "\n".join(term_lines)
+                    "Глоссарий (релевантные термины):\n" + "\n".join(term_lines)
                 )
 
         if not parts:
