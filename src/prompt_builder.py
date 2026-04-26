@@ -101,14 +101,26 @@ class DomainConfig:
     allow_storytelling: bool = True
     allow_marketing: bool = True
 
-
 @dataclass(frozen=True)
 class IntentConfig:
-    """Конфигурация цели обработки (точнее, увлекательнее и т.п.)."""
+    """Конфигурация цели обработки (точнее, увлекательнее и т.п.).
+
+    name: отображаемое имя режима (для промпта и логов).
+    instructions: список инструкций для модели.
+    """
+
+    name: str
+    instructions: List[str]
+
 
 @dataclass(frozen=True)
 class OverlayConfig:
-    """Конфигурация надстройки (инфостиль, логика, фактчек и т.п.)."""
+    """Конфигурация надстройки (инфостиль, логика, фактчек и т.п.).
+
+    name: отображаемое имя режима.
+    instructions: список инструкций.
+    description: необязательное описание режима (для расширенных конфигов).
+    """
 
     name: str
     instructions: List[str]
@@ -220,7 +232,8 @@ def load_intent_config(
 
     data = load_json_file(base_path / "intents" / f"{intent}.json")
     return IntentConfig(
-        name=data["name"],
+        # если в JSON нет name, используем техническое имя файла
+        name=data.get("name", intent),
         instructions=data["instructions"],
     )
 
@@ -229,16 +242,11 @@ def load_overlay_config(
     overlay: str,
     base_path: Path = Path("config"),
 ) -> OverlayConfig:
-    """Загружает конфигурацию одного оверлея.
-
-    Поля:
-    - name: человекочитаемое имя режима (может быть на русском)
-    - instructions: список шагов
-    - description: короткое описание режима (опционально)
-    """
+    """Загружает конфигурацию одного оверлея."""
     data = load_json_file(base_path / "overlays" / f"{overlay}.json")
     return OverlayConfig(
-        name=data["name"],
+        # если в JSON нет name, используем имя файла
+        name=data.get("name", overlay),
         instructions=data["instructions"],
         description=data.get("description", ""),
     )
