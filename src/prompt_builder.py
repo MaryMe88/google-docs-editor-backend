@@ -11,7 +11,7 @@ from __future__ import annotations
 import json
 import logging
 import re
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
 from typing import (
     Any,
@@ -28,17 +28,6 @@ from typing import (
 
 # Локальный логгер модуля
 logger = logging.getLogger(__name__)
-
-# ============================================================================
-# Константы: веса скоринга для ранжирования записей knowledge base
-# ============================================================================
-SCORE_EXACT_MATCH: int = 1000
-SCORE_NAME_MATCH: int = 500
-SCORE_FIELD_MATCH: int = 200
-SCORE_TAG_BONUS: int = 10
-SCORE_EXPANDED_TAG_BONUS: int = 2
-SCORE_TAG_PRESENCE_BONUS: int = 1
-
 
 # ============================================================================
 # Типы для записей Knowledge Base
@@ -84,32 +73,7 @@ class EditorialTechniqueEntry(TypedDict, total=False):
     source: Dict[str, Any]
 
 
-@dataclass
-class FlatEntry:
-    """Нормализованная запись из knowledge base (единый тип для всех flatten-функций)."""
-    wrong: str = ""
-    correct: str = ""
-    rule: str = ""
-    name: str = ""
-    description: str = ""
-    category: str = ""
-    tags: List[str] = field(default_factory=list)
-    when_to_use: List[str] = field(default_factory=list)
-    how_to_apply: List[str] = field(default_factory=list)
-    example_wrong: str = ""
-    example_correct: str = ""
-    example_explanation: str = ""
-    source: Dict[str, Any] = field(default_factory=dict)
-    metadata: Dict[str, Any] = field(default_factory=dict)
-
-    def __post_init__(self) -> None:
-        if not isinstance(self.tags, list):
-            self.tags = []
-        self.tags = [t.lower() for t in self.tags if isinstance(t, str)]
-
-    def get(self, key: str, default: Any = None) -> Any:
-        """Dict-совместимость: entry.get('wrong') работает без изменений в вызывающем коде."""
-        return getattr(self, key, default)
+FlatEntry = Dict[str, Any]  # любой уплощённый словарь
 
 
 # ============================================================================
@@ -142,16 +106,13 @@ class DomainConfig:
 class IntentConfig:
     """Конфигурация цели обработки (точнее, увлекательнее и т.п.)."""
 
-    name: str
-    instructions: List[str]
-
-
 @dataclass(frozen=True)
 class OverlayConfig:
     """Конфигурация надстройки (инфостиль, логика, фактчек и т.п.)."""
 
     name: str
     instructions: List[str]
+    description: str = ""
 
 
 @dataclass(frozen=True)
@@ -268,11 +229,18 @@ def load_overlay_config(
     overlay: str,
     base_path: Path = Path("config"),
 ) -> OverlayConfig:
-    """Загружает конфигурацию одного оверлея."""
+    """Загружает конфигурацию одного оверлея.
+
+    Поля:
+    - name: человекочитаемое имя режима (может быть на русском)
+    - instructions: список шагов
+    - description: короткое описание режима (опционально)
+    """
     data = load_json_file(base_path / "overlays" / f"{overlay}.json")
     return OverlayConfig(
         name=data["name"],
         instructions=data["instructions"],
+        description=data.get("description", ""),
     )
 
 
@@ -298,29 +266,6 @@ def load_output_format(
 # ============================================================================
 
 
-def _dict_to_flat_entry(d: Dict[str, Any], category: str = "") -> FlatEntry:
-    """Преобразует dict из KB в типизированный FlatEntry."""
-    known = {"wrong", "correct", "rule", "name", "description", "category",
-             "tags", "when_to_use", "how_to_apply",
-             "example_wrong", "example_correct", "example_explanation", "source"}
-    return FlatEntry(
-        wrong=d.get("wrong", ""),
-        correct=d.get("correct", ""),
-        rule=d.get("rule", ""),
-        name=d.get("name", ""),
-        description=d.get("description", ""),
-        category=d.get("category", category),
-        tags=list(d.get("tags", ["style"])),
-        when_to_use=d.get("when_to_use", []) if isinstance(d.get("when_to_use"), list) else [],
-        how_to_apply=d.get("how_to_apply", []) if isinstance(d.get("how_to_apply"), list) else [],
-        example_wrong=d.get("example_wrong", d.get("wrong", "")),
-        example_correct=d.get("example_correct", d.get("correct", "")),
-        example_explanation=d.get("example_explanation", d.get("explanation", "")),
-        source=d.get("source", {}) if isinstance(d.get("source"), dict) else {},
-        metadata={k: v for k, v in d.items() if k not in known},
-    )
-
-
 def _flatten_examples_block(
     items: List[Dict[str, Any]],
     category: str = "",
@@ -333,17 +278,20 @@ def _flatten_examples_block(
         if "examples" in item:
             examples = item.get("examples")
             if not isinstance(examples, list):
-                flat.append(_dict_to_flat_entry(item, category))
+                # нет примеров – оставляем запись как есть
+                flat.append(item)
                 continue
             cat = item.get("category", category)
             for example in examples:
                 if not isinstance(example, dict):
                     continue
-                if "tags" not in example:
-                    example = dict(example); example["tags"] = ["style"]
-                flat.append(_dict_to_flat_entry(example, cat))
+                entry = dict(example)
+                if "tags" not in entry:
+                    entry["tags"] = ["style"]
+                entry["category"] = cat
+                flat.append(entry)
         else:
-            flat.append(_dict_to_flat_entry(item, category))
+            flat.append(item)
     return flat
 
 
@@ -397,19 +345,21 @@ def _flatten_editorial_techniques(raw: Dict[str, Any]) -> List[EditorialTechniqu
                 correct = ""
                 explanation = ""
 
-            flat.append(FlatEntry(
-                name=name,
-                category=category,
-                description=desc,
-                when_to_use=when_to_use if isinstance(when_to_use, list) else [],
-                how_to_apply=how_to_apply if isinstance(how_to_apply, list) else [],
-                example_wrong=wrong,
-                example_correct=correct,
-                example_explanation=explanation,
-                tags=tags or ["editing", "nora_gal"],
-                source=source if isinstance(source, dict) else {},
-                metadata={"id": tech_id} if tech_id else {},
-            ))
+            flat.append(
+                {
+                    "id": tech_id,
+                    "name": name,
+                    "category": category,
+                    "description": desc,
+                    "when_to_use": when_to_use,
+                    "how_to_apply": how_to_apply,
+                    "example_wrong": wrong,
+                    "example_correct": correct,
+                    "example_explanation": explanation,
+                    "tags": tags or ["editing", "nora_gal"],
+                    "source": source,
+                }
+            )
 
     return flat
 
@@ -565,11 +515,11 @@ def _score_rule_entry(
     match_patterns = _get_entry_match_patterns(entry)
     if match_patterns:
         if _contains_pattern(normalized_text, match_patterns[0]):
-            score += SCORE_EXACT_MATCH
+            score += 1000  # wrong match
         else:
             for pat in match_patterns[1:]:
                 if _contains_pattern(normalized_text, pat):
-                    score += SCORE_FIELD_MATCH
+                    score += 200
                     break
 
     entry_tags = entry.get("tags", [])
@@ -577,13 +527,13 @@ def _score_rule_entry(
         entry_tags = []
     tag_set = {t.strip().lower() for t in entry_tags if isinstance(t, str)}
     overlap = len(tag_set & wanted_tags)
-    score += overlap * SCORE_TAG_BONUS
+    score += overlap * 10
     if overlap > 0:
-        score += SCORE_TAG_PRESENCE_BONUS
+        score += 1
 
     if expanded_tags:
         overlap_exp = len(tag_set & expanded_tags)
-        score += overlap_exp * SCORE_EXPANDED_TAG_BONUS
+        score += overlap_exp * 2
 
     return (score, -idx)
 
@@ -651,9 +601,9 @@ def _score_structural_entry(
     for pat in unique_patterns:
         if _contains_pattern(normalized_text, pat):
             if pat == entry.get("name", "").strip():
-                match_bonus = SCORE_NAME_MATCH
+                match_bonus = 500
             else:
-                match_bonus = SCORE_FIELD_MATCH
+                match_bonus = 200
             break
 
     score += match_bonus
@@ -663,47 +613,19 @@ def _score_structural_entry(
         entry_tags = []
     tag_set = {t.strip().lower() for t in entry_tags if isinstance(t, str)}
     overlap = len(tag_set & wanted_tags)
-    score += overlap * SCORE_TAG_BONUS
+    score += overlap * 10
     if overlap > 0:
-        score += SCORE_TAG_PRESENCE_BONUS
+        score += 1
 
     if expanded_tags:
         overlap_exp = len(tag_set & expanded_tags)
-        score += overlap_exp * SCORE_EXPANDED_TAG_BONUS
+        score += overlap_exp * 2
 
     return (score, -idx)
 
 
 # Для обратной совместимости
 _score_entry = _score_rule_entry
-
-
-def compute_entry_score(
-    entry: "FlatEntry",
-    normalized_text: str,
-    wanted_tags: Set[str],
-    idx: int,
-    *,
-    is_structural: bool = False,
-    expanded_tags: Optional[Set[str]] = None,
-) -> Tuple[int, int]:
-    """
-    Публичная точка входа в scoring.
-
-    is_structural=False → _score_rule_entry (грамматика, стиль, логика)
-    is_structural=True  → _score_structural_entry (техники, фреймворки)
-
-    Удобно для изолированных unit-тестов без полного pipeline::
-
-        score, _ = compute_entry_score(entry, "ихний", {"grammar"}, 0)
-        assert score == SCORE_EXACT_MATCH
-    """
-    if is_structural:
-        return _score_structural_entry(entry, normalized_text, wanted_tags, idx,
-                                       expanded_tags=expanded_tags)
-    return _score_rule_entry(entry, normalized_text, wanted_tags, idx,
-                             expanded_tags=expanded_tags)
-
 
 
 # ---------------------------------------------------------------------------
@@ -728,11 +650,11 @@ def _log_selection_debug(
         entry = s[2]
         score_val = s[0]
         name = entry.get("name", entry.get("wrong", "?"))[:30]
-        if score_val >= SCORE_EXACT_MATCH:
+        if score_val >= 1000:
             reason = "text_match"
-        elif score_val >= SCORE_FIELD_MATCH:
+        elif score_val >= 200:
             reason = "partial_text"
-        elif score_val >= SCORE_TAG_BONUS:
+        elif score_val >= 10:
             reason = "tags"
         else:
             reason = "fallback"
@@ -783,7 +705,7 @@ def _select_ranked_entries(
         score, tie = scorer(
             entry, normalized_text, wanted_set, idx, expanded_tags=expanded_tags
         )
-        if require_text_match and score < SCORE_EXACT_MATCH:
+        if require_text_match and score < 1000:
             continue
         if min_score is not None and score < min_score:
             continue
@@ -1528,10 +1450,14 @@ class PromptBuilder:
         parts: List[str] = ["Дополнительные режимы:"]
         for overlay in overlays:
             cfg = self._get_overlay_config(overlay)
-            instructions = "\n".join(
-                f" - {instr}" for instr in cfg.instructions
-            )
-            parts.append(f"\n• {cfg.name}:\n{instructions}")
+            instructions = "\n".join(f" - {instr}" for instr in cfg.instructions)
+
+            if getattr(cfg, "description", ""):
+                header = f"• {cfg.name} — {cfg.description}"
+            else:
+                header = f"• {cfg.name}"
+
+            parts.append(f"\n{header}\n{instructions}")
 
         return "\n".join(parts)
 
