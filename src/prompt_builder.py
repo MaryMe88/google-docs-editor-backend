@@ -25,7 +25,7 @@ from typing import (
     Union,
 )
 
-from knowledge_retrieval import (
+from src.knowledge_retrieval import (
     normalize_text_for_match,
     score_rule_entry,
     score_structural_entry,
