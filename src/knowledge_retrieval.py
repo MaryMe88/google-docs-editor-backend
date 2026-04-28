@@ -353,37 +353,47 @@ def _select_ranked_entries(
                 )
             return []
 
-        # Fallback: сортировка по overlap тегов, info_score, индексу
-        fallback_candidates: List[Tuple[int, int, int, Dict[str, Any]]] = []
-        for idx, entry in enumerate(candidates):
-            entry_tags = entry.get("tags", [])
-            if not isinstance(entry_tags, (list, tuple)):
-                entry_tags = []
-            tag_set = {t.strip().lower() for t in entry_tags if isinstance(t, str)}
-            overlap = len(tag_set & wanted_set)
-            info = _entry_info_score(entry)
-            fallback_candidates.append((overlap, info, -idx, entry))
+# СТАЛО — fallback только по записям с тегами, иначе молчим
+fallback_candidates: List[Tuple[int, int, int, Dict[str, Any]]] = []
+for idx, entry in enumerate(candidates):
+    entry_tags = entry.get("tags", [])
+    if not isinstance(entry_tags, (list, tuple)):
+        entry_tags = []
+    tag_set = {t.strip().lower() for t in entry_tags if isinstance(t, str)}
+    overlap = len(tag_set & wanted_set)
+    if overlap == 0:  # ← ключевое изменение: без overlap — пропускаем
+        continue
+    info = _entry_info_score(entry)
+    fallback_candidates.append((overlap, info, -idx, entry))
 
-        fallback_candidates.sort(key=lambda x: (x[0], x[1], x[2]), reverse=True)
+if not fallback_candidates:
+    if debug_context:
+        logging.debug(
+            f"[{debug_context}] Fallback: no tag overlap found, "
+            f"returning [] (silence over noise)."
+        )
+    return []
 
-        if debug_context and fallback_candidates:
-            top_overlap = fallback_candidates[0][0]
-            logging.debug(
-                f"[{debug_context}] Fallback: {len(candidates)} candidates, "
-                f"top tag overlap={top_overlap}"
-            )
+fallback_candidates.sort(key=lambda x: (x[0], x[1], x[2]), reverse=True)
 
-        result: List[Dict[str, Any]] = []
-        seen_keys: Set[Tuple[Any, ...]] = set()
-        for _, _, _, entry in fallback_candidates:
-            key = _make_dedupe_key(entry)
-            if key in seen_keys:
-                continue
-            seen_keys.add(key)
-            result.append(entry)
-            if len(result) >= limit:
-                break
-        return result
+if debug_context:
+    logging.debug(
+        f"[{debug_context}] Fallback (tag-only): "
+        f"{len(fallback_candidates)} candidates with tag overlap, "
+        f"top overlap={fallback_candidates[0][0]}"
+    )
+
+result: List[Dict[str, Any]] = []
+seen_keys: Set[Tuple[Any, ...]] = set()
+for _, _, _, entry in fallback_candidates:
+    key = _make_dedupe_key(entry)
+    if key in seen_keys:
+        continue
+    seen_keys.add(key)
+    result.append(entry)
+    if len(result) >= limit:
+        break
+return result
 
     scored.sort(key=lambda x: (x[0], x[1]), reverse=True)
 
@@ -431,6 +441,7 @@ def _select_by_tags_or_all(
 # ============================================================================
 
 
+# СТАЛО
 def select_grammar_rules(
     kb: Any,
     text: str,
@@ -440,10 +451,11 @@ def select_grammar_rules(
     min_score: int = 1,
 ) -> List[Dict[str, Any]]:
     normalized_text = normalize_text_for_match(text)
+    effective_tags = list(tags) or ["grammar"]
     return _select_ranked_entries(
         kb.grammar_errors,
         normalized_text,
-        tags,
+        effective_tags,
         limit,
         scorer=score_rule_entry,
         candidate_limit=candidate_limit,
@@ -461,10 +473,11 @@ def select_style_issues(
     min_score: int = 1,
 ) -> List[Dict[str, Any]]:
     normalized_text = normalize_text_for_match(text)
+    effective_tags = list(tags) or ["style"]
     return _select_ranked_entries(
         kb.stylistic_issues,
         normalized_text,
-        tags,
+        effective_tags,
         limit,
         scorer=score_rule_entry,
         candidate_limit=candidate_limit,
