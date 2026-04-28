@@ -17,7 +17,6 @@ logger = logging.getLogger(__name__)
 # Нормализация текста и матчинга
 # ============================================================================
 
-
 def normalize_text_for_match(text: str) -> str:
     """
     Приводит текст к нижнему регистру, заменяет 'ё' на 'е',
@@ -27,7 +26,6 @@ def normalize_text_for_match(text: str) -> str:
     text = re.sub(r"[^\w\s]", " ", text)
     text = re.sub(r"\s+", " ", text)
     return text.lower().strip()
-
 
 def _contains_pattern(normalized_text: str, pattern: str) -> bool:
     """
@@ -47,7 +45,6 @@ def _contains_pattern(normalized_text: str, pattern: str) -> bool:
         )
     return norm_pattern in normalized_text
 
-
 def _get_entry_match_patterns(entry: Dict[str, Any]) -> List[str]:
     """
     Собирает кандидаты для текстового матчинга из полей:
@@ -64,7 +61,6 @@ def _get_entry_match_patterns(entry: Dict[str, Any]) -> List[str]:
                 seen.add(stripped)
                 patterns.append(stripped)
     return patterns
-
 
 def _entry_info_score(entry: Dict[str, Any]) -> int:
     """Количество информативных полей в записи (для fallback)."""
@@ -86,18 +82,17 @@ def _entry_info_score(entry: Dict[str, Any]) -> int:
 # ============================================================================
 
 SCORE_WEIGHTS: Final[Dict[str, int]] = {
-    "wrong_exact_match": 1000,      # точное совпадение с полем wrong
-    "name_exact_match": 500,        # точное совпадение с полем name (структурный)
-    "partial_text_match": 200,      # совпадение с другими полями
-    "tag_primary": 10,              # overlap с primary тегами (за каждый тег)
-    "tag_primary_bonus": 1,         # бонус за наличие любого primary overlap
-    "tag_expanded": 2,              # overlap с expanded тегами (за каждый тег)
+    "wrong_exact_match": 1000,   # точное совпадение с полем wrong
+    "name_exact_match": 500,     # точное совпадение с полем name (структурный)
+    "partial_text_match": 200,   # совпадение с другими полями
+    "tag_primary": 10,           # overlap с primary тегами (за каждый тег)
+    "tag_primary_bonus": 1,      # бонус за наличие любого primary overlap
+    "tag_expanded": 2,           # overlap с expanded тегами (за каждый тег)
 }
 
 # ============================================================================
 # Scorer'ы
 # ============================================================================
-
 
 def score_rule_entry(
     entry: Dict[str, Any],
@@ -152,7 +147,6 @@ def score_rule_entry(
         score += overlap_exp * SCORE_WEIGHTS["tag_expanded"]
 
     return (score, -idx)
-
 
 def score_structural_entry(
     entry: Dict[str, Any],
@@ -213,7 +207,6 @@ def score_structural_entry(
                     if s:
                         patterns.append(s)
 
-    # Удаляем дубликаты, сохраняя порядок
     seen: Set[str] = set()
     unique_patterns: List[str] = []
     for p in patterns:
@@ -255,9 +248,8 @@ def score_structural_entry(
 _score_entry = score_rule_entry
 
 # ============================================================================
-# Вспомогательные функции для ranked‑выбора
+# Вспомогательные функции для ranked-выбора
 # ============================================================================
-
 
 def _log_selection_debug(
     debug_context: str,
@@ -295,7 +287,6 @@ def _log_selection_debug(
         missed_info = [(s[0], s[2].get("name", "?")[:30]) for s in missed]
         logging.debug(f"[{debug_context}] Missed due to limit: {missed_info}")
 
-
 def _make_dedupe_key(entry: Dict[str, Any]) -> Tuple[Any, ...]:
     if "id" in entry:
         return ("id", entry["id"])
@@ -305,7 +296,6 @@ def _make_dedupe_key(entry: Dict[str, Any]) -> Tuple[Any, ...]:
         entry.get("description", ""),
         entry.get("name", ""),
     )
-
 
 def _select_ranked_entries(
     entries: List[Dict[str, Any]],
@@ -323,8 +313,8 @@ def _select_ranked_entries(
     Общая функция ранжирования записей.
 
     - candidate_limit: сколько записей рассматривать (None = все).
-    - min_score: минимальный балл, чтобы попасть в ranked‑путь.
-      По умолчанию None – все записи проходят.
+    - min_score: минимальный балл, чтобы попасть в ranked-путь.
+      По умолчанию None -- все записи проходят.
     - debug_context: метка для диагностики.
     """
     if not entries:
@@ -353,47 +343,47 @@ def _select_ranked_entries(
                 )
             return []
 
-# СТАЛО — fallback только по записям с тегами, иначе молчим
-fallback_candidates: List[Tuple[int, int, int, Dict[str, Any]]] = []
-for idx, entry in enumerate(candidates):
-    entry_tags = entry.get("tags", [])
-    if not isinstance(entry_tags, (list, tuple)):
-        entry_tags = []
-    tag_set = {t.strip().lower() for t in entry_tags if isinstance(t, str)}
-    overlap = len(tag_set & wanted_set)
-    if overlap == 0:  # ← ключевое изменение: без overlap — пропускаем
-        continue
-    info = _entry_info_score(entry)
-    fallback_candidates.append((overlap, info, -idx, entry))
+        # Fallback: только записи с тегами, иначе молчим (ФП-2 fix)
+        fallback_candidates: List[Tuple[int, int, int, Dict[str, Any]]] = []
+        for idx, entry in enumerate(candidates):
+            entry_tags = entry.get("tags", [])
+            if not isinstance(entry_tags, (list, tuple)):
+                entry_tags = []
+            tag_set = {t.strip().lower() for t in entry_tags if isinstance(t, str)}
+            overlap = len(tag_set & wanted_set)
+            if overlap == 0:
+                continue
+            info = _entry_info_score(entry)
+            fallback_candidates.append((overlap, info, -idx, entry))
 
-if not fallback_candidates:
-    if debug_context:
-        logging.debug(
-            f"[{debug_context}] Fallback: no tag overlap found, "
-            f"returning [] (silence over noise)."
-        )
-    return []
+        if not fallback_candidates:
+            if debug_context:
+                logging.debug(
+                    f"[{debug_context}] Fallback: no tag overlap found, "
+                    f"returning [] (silence over noise)."
+                )
+            return []
 
-fallback_candidates.sort(key=lambda x: (x[0], x[1], x[2]), reverse=True)
+        fallback_candidates.sort(key=lambda x: (x[0], x[1], x[2]), reverse=True)
 
-if debug_context:
-    logging.debug(
-        f"[{debug_context}] Fallback (tag-only): "
-        f"{len(fallback_candidates)} candidates with tag overlap, "
-        f"top overlap={fallback_candidates[0][0]}"
-    )
+        if debug_context:
+            logging.debug(
+                f"[{debug_context}] Fallback (tag-only): "
+                f"{len(fallback_candidates)} candidates with tag overlap, "
+                f"top overlap={fallback_candidates[0][0]}"
+            )
 
-result: List[Dict[str, Any]] = []
-seen_keys: Set[Tuple[Any, ...]] = set()
-for _, _, _, entry in fallback_candidates:
-    key = _make_dedupe_key(entry)
-    if key in seen_keys:
-        continue
-    seen_keys.add(key)
-    result.append(entry)
-    if len(result) >= limit:
-        break
-return result
+        result: List[Dict[str, Any]] = []
+        seen_keys: Set[Tuple[Any, ...]] = set()
+        for _, _, _, entry in fallback_candidates:
+            key = _make_dedupe_key(entry)
+            if key in seen_keys:
+                continue
+            seen_keys.add(key)
+            result.append(entry)
+            if len(result) >= limit:
+                break
+        return result
 
     scored.sort(key=lambda x: (x[0], x[1]), reverse=True)
 
@@ -411,7 +401,6 @@ return result
             break
 
     return result
-
 
 def _select_by_tags_or_all(
     entries: List[Dict[str, Any]],
@@ -440,8 +429,6 @@ def _select_by_tags_or_all(
 # Публичные селекторы (API, совместимый с прежним кодом)
 # ============================================================================
 
-
-# СТАЛО
 def select_grammar_rules(
     kb: Any,
     text: str,
@@ -463,7 +450,6 @@ def select_grammar_rules(
         min_score=min_score,
     )
 
-
 def select_style_issues(
     kb: Any,
     text: str,
@@ -484,7 +470,6 @@ def select_style_issues(
         debug_context="style",
         min_score=min_score,
     )
-
 
 def select_logic_issues(
     kb: Any,
@@ -509,7 +494,6 @@ def select_logic_issues(
         debug_context="logic",
         min_score=min_score,
     )
-
 
 # Экспортируем частично приватный селектор для использования в PromptBuilder
 select_structural_by_tags_or_all = _select_by_tags_or_all
