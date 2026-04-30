@@ -27,6 +27,7 @@ def normalize_text_for_match(text: str) -> str:
     text = re.sub(r"\s+", " ", text)
     return text.lower().strip()
 
+
 def _contains_pattern(normalized_text: str, pattern: str) -> bool:
     """
     Проверяет, содержится ли паттерн в нормализованном тексте.
@@ -35,21 +36,17 @@ def _contains_pattern(normalized_text: str, pattern: str) -> bool:
     if not pattern:
         return False
     norm_pattern = normalize_text_for_match(pattern)
-    if not norm_pattern:
-        return False
-    if len(norm_pattern) < 2:
+    if not norm_pattern or len(norm_pattern) < 2:
         return False
     if " " not in norm_pattern:
-        return (
-            re.search(rf"\b{re.escape(norm_pattern)}\b", normalized_text) is not None
-        )
+        return re.search(rf"\b{re.escape(norm_pattern)}\b", normalized_text) is not None
     return norm_pattern in normalized_text
+
 
 def _get_entry_match_patterns(entry: Dict[str, Any]) -> List[str]:
     """
     Собирает кандидаты для текстового матчинга из полей:
     wrong, name, rule, description (в указанном порядке).
-    Возвращает уникальные непустые строки после strip().
     """
     patterns: List[str] = []
     seen: Set[str] = set()
@@ -61,6 +58,7 @@ def _get_entry_match_patterns(entry: Dict[str, Any]) -> List[str]:
                 seen.add(stripped)
                 patterns.append(stripped)
     return patterns
+
 
 def _entry_info_score(entry: Dict[str, Any]) -> int:
     """Количество информативных полей в записи (для fallback)."""
@@ -77,17 +75,41 @@ def _entry_info_score(entry: Dict[str, Any]) -> int:
             score += 1
     return score
 
+
+def _estimate_entry_chars(entry: Dict[str, Any]) -> int:
+    """
+    Быстрая оценка размера записи в символах для char_budget.
+    Суммирует длины строковых полей и имён шагов/секций.
+    """
+    total = 0
+    for field in ("wrong", "correct", "rule", "description", "name",
+                  "example_wrong", "example_correct", "example_explanation"):
+        val = entry.get(field)
+        if isinstance(val, str):
+            total += len(val)
+    for container_key in ("steps", "sections"):
+        container = entry.get(container_key)
+        if isinstance(container, list):
+            for step in container:
+                if isinstance(step, dict):
+                    for f in ("name", "description"):
+                        v = step.get(f)
+                        if isinstance(v, str):
+                            total += len(v)
+    return total
+
+
 # ============================================================================
 # Скоринговые константы
 # ============================================================================
 
 SCORE_WEIGHTS: Final[Dict[str, int]] = {
-    "wrong_exact_match": 1000,   # точное совпадение с полем wrong
-    "name_exact_match": 500,     # точное совпадение с полем name (структурный)
-    "partial_text_match": 200,   # совпадение с другими полями
-    "tag_primary": 10,           # overlap с primary тегами (за каждый тег)
-    "tag_primary_bonus": 1,      # бонус за наличие любого primary overlap
-    "tag_expanded": 2,           # overlap с expanded тегами (за каждый тег)
+    "wrong_exact_match": 1000,
+    "name_exact_match": 500,
+    "partial_text_match": 200,
+    "tag_primary": 10,
+    "tag_primary_bonus": 1,
+    "tag_expanded": 2,
 }
 
 # ============================================================================
@@ -101,52 +123,34 @@ def score_rule_entry(
     idx: int,
     expanded_tags: Optional[Set[str]] = None,
 ) -> Tuple[int, int]:
-    """
-    Скоринг для «правильных» записей (грамматика, стиль, логика).
-    Поля: wrong, correct, rule, description, tags.
-
-    Баллы:
-    - точное совпадение с 'wrong' -> +1000
-    - совпадение с name/rule/description -> +200
-    - overlap с primary тегами * 10 -> + overlap * 10
-    - overlap с expanded тегами * 2 -> + overlap_exp * 2
-    - дополнительный +1, если есть primary overlap
-    """
+    """Скоринг для «правильных» записей (грамматика, стиль, логика)."""
     score = 0
-
     wrong_val = entry.get("wrong", "")
     if isinstance(wrong_val, str):
         wrong_stripped = wrong_val.strip()
         if wrong_stripped and _contains_pattern(normalized_text, wrong_stripped):
             score += SCORE_WEIGHTS["wrong_exact_match"]
-
     if score == 0:
         for field in ("name", "rule", "description"):
             val = entry.get(field)
             if not isinstance(val, str):
                 continue
             stripped = val.strip()
-            if not stripped:
-                continue
-            if _contains_pattern(normalized_text, stripped):
+            if stripped and _contains_pattern(normalized_text, stripped):
                 score += SCORE_WEIGHTS["partial_text_match"]
                 break
-
     entry_tags = entry.get("tags", [])
     if not isinstance(entry_tags, (list, tuple)):
         entry_tags = []
     tag_set = {t.strip().lower() for t in entry_tags if isinstance(t, str)}
-
     overlap = len(tag_set & wanted_tags)
     score += overlap * SCORE_WEIGHTS["tag_primary"]
     if overlap > 0:
         score += SCORE_WEIGHTS["tag_primary_bonus"]
-
     if expanded_tags:
-        overlap_exp = len(tag_set & expanded_tags)
-        score += overlap_exp * SCORE_WEIGHTS["tag_expanded"]
-
+        score += len(tag_set & expanded_tags) * SCORE_WEIGHTS["tag_expanded"]
     return (score, -idx)
+
 
 def score_structural_entry(
     entry: Dict[str, Any],
@@ -155,19 +159,8 @@ def score_structural_entry(
     idx: int,
     expanded_tags: Optional[Set[str]] = None,
 ) -> Tuple[int, int]:
-    """
-    Скоринг для структурных записей (storytelling, marketing, rhetoric,
-    composition, editorial). Поля: name, description, when_to_use, steps/sections.
-
-    Баллы:
-    - текстовое совпадение с 'name' -> +500
-    - иначе совпадение с другими полями -> +200
-    - overlap primary тегов * 10
-    - overlap expanded тегов * 2
-    - дополнительный +1 при primary overlap
-    """
+    """Скоринг для структурных записей (storytelling, marketing, rhetoric, composition, editorial)."""
     score = 0
-
     patterns: List[str] = []
 
     def _add_field(field: str) -> None:
@@ -196,16 +189,12 @@ def score_structural_entry(
             for step in container:
                 if not isinstance(step, dict):
                     continue
-                step_name = step.get("name")
-                if isinstance(step_name, str):
-                    s = step_name.strip()
-                    if s:
-                        patterns.append(s)
-                step_desc = step.get("description")
-                if isinstance(step_desc, str):
-                    s = step_desc.strip()
-                    if s:
-                        patterns.append(s)
+                for f in ("name", "description"):
+                    val = step.get(f)
+                    if isinstance(val, str):
+                        s = val.strip()
+                        if s:
+                            patterns.append(s)
 
     seen: Set[str] = set()
     unique_patterns: List[str] = []
@@ -214,38 +203,37 @@ def score_structural_entry(
             seen.add(p)
             unique_patterns.append(p)
 
-    match_bonus = 0
     name_val = entry.get("name", "")
     name_stripped = name_val.strip() if isinstance(name_val, str) else ""
+    match_bonus = 0
     for pat in unique_patterns:
         if not _contains_pattern(normalized_text, pat):
             continue
-        if name_stripped and pat == name_stripped:
-            match_bonus = SCORE_WEIGHTS["name_exact_match"]
-        else:
-            match_bonus = SCORE_WEIGHTS["partial_text_match"]
+        match_bonus = (
+            SCORE_WEIGHTS["name_exact_match"]
+            if (name_stripped and pat == name_stripped)
+            else SCORE_WEIGHTS["partial_text_match"]
+        )
         break
-
     score += match_bonus
 
     entry_tags = entry.get("tags", [])
     if not isinstance(entry_tags, (list, tuple)):
         entry_tags = []
     tag_set = {t.strip().lower() for t in entry_tags if isinstance(t, str)}
-
     overlap = len(tag_set & wanted_tags)
     score += overlap * SCORE_WEIGHTS["tag_primary"]
     if overlap > 0:
         score += SCORE_WEIGHTS["tag_primary_bonus"]
-
     if expanded_tags:
-        overlap_exp = len(tag_set & expanded_tags)
-        score += SCORE_WEIGHTS["tag_expanded"] * overlap_exp
+        score += SCORE_WEIGHTS["tag_expanded"] * len(tag_set & expanded_tags)
 
     return (score, -idx)
 
-# Для обратной совместимости с прежним именем
+
+# Для обратной совместимости
 _score_entry = score_rule_entry
+
 
 # ============================================================================
 # Вспомогательные функции для ranked-выбора
@@ -283,9 +271,10 @@ def _log_selection_debug(
         f"top scores: {top_info}"
     )
     if len(scored) > limit:
-        missed = scored[limit : limit + 2]
+        missed = scored[limit: limit + 2]
         missed_info = [(s[0], s[2].get("name", "?")[:30]) for s in missed]
         logging.debug(f"[{debug_context}] Missed due to limit: {missed_info}")
+
 
 def _make_dedupe_key(entry: Dict[str, Any]) -> Tuple[Any, ...]:
     if "id" in entry:
@@ -296,6 +285,7 @@ def _make_dedupe_key(entry: Dict[str, Any]) -> Tuple[Any, ...]:
         entry.get("description", ""),
         entry.get("name", ""),
     )
+
 
 def _select_ranked_entries(
     entries: List[Dict[str, Any]],
@@ -308,13 +298,17 @@ def _select_ranked_entries(
     debug_context: str = "",
     expanded_tags: Optional[Set[str]] = None,
     min_score: Optional[int] = None,
+    char_budget: Optional[int] = None,  # ТП-1: мягкий лимит символов
 ) -> List[Dict[str, Any]]:
     """
     Общая функция ранжирования записей.
 
     - candidate_limit: сколько записей рассматривать (None = все).
-    - min_score: минимальный балл, чтобы попасть в ranked-путь.
-      По умолчанию None -- все записи проходят.
+    - min_score: минимальный балл для ranked-пути (None = все проходят).
+    - char_budget: мягкий лимит символов суммарного размера выдачи.
+      Записи добавляются по убыванию score; как только накопленный
+      размер превысит бюджет — выдача останавливается. Первая запись
+      всегда включается (минимум 1).
     - debug_context: метка для диагностики.
     """
     if not entries:
@@ -343,7 +337,7 @@ def _select_ranked_entries(
                 )
             return []
 
-        # Fallback: только записи с тегами, иначе молчим (ФП-2 fix)
+        # fallback: только записи с tag overlap, иначе молчим (ФП-2)
         fallback_candidates: List[Tuple[int, int, int, Dict[str, Any]]] = []
         for idx, entry in enumerate(candidates):
             entry_tags = entry.get("tags", [])
@@ -366,41 +360,44 @@ def _select_ranked_entries(
 
         fallback_candidates.sort(key=lambda x: (x[0], x[1], x[2]), reverse=True)
 
-        if debug_context:
-            logging.debug(
-                f"[{debug_context}] Fallback (tag-only): "
-                f"{len(fallback_candidates)} candidates with tag overlap, "
-                f"top overlap={fallback_candidates[0][0]}"
-            )
-
         result: List[Dict[str, Any]] = []
         seen_keys: Set[Tuple[Any, ...]] = set()
+        chars_used = 0
         for _, _, _, entry in fallback_candidates:
             key = _make_dedupe_key(entry)
             if key in seen_keys:
                 continue
+            entry_chars = _estimate_entry_chars(entry)
+            if char_budget is not None and result and chars_used + entry_chars > char_budget:
+                break
             seen_keys.add(key)
             result.append(entry)
+            chars_used += entry_chars
             if len(result) >= limit:
                 break
         return result
 
     scored.sort(key=lambda x: (x[0], x[1]), reverse=True)
-
     _log_selection_debug(debug_context, candidates, scored, limit)
 
     result: List[Dict[str, Any]] = []
     seen_keys: Set[Tuple[Any, ...]] = set()
+    chars_used = 0
     for _, _, entry in scored:
         key = _make_dedupe_key(entry)
         if key in seen_keys:
             continue
+        entry_chars = _estimate_entry_chars(entry)
+        if char_budget is not None and result and chars_used + entry_chars > char_budget:
+            break
         seen_keys.add(key)
         result.append(entry)
+        chars_used += entry_chars
         if len(result) >= limit:
             break
 
     return result
+
 
 def _select_by_tags_or_all(
     entries: List[Dict[str, Any]],
@@ -408,25 +405,24 @@ def _select_by_tags_or_all(
     limit: int,
     expanded_tags: Optional[Set[str]] = None,
     min_score: Optional[int] = None,
+    char_budget: Optional[int] = None,  # ТП-1
 ) -> List[Dict[str, Any]]:
-    """
-    Обёртка для структурных записей без текстового матчинга:
-    ранжируем только по тегам и информативности.
-    """
-    normalized_text = ""
+    """Обёртка для структурных записей без текстового матчинга."""
     return _select_ranked_entries(
         entries,
-        normalized_text,
-        tags,
-        limit,
+        normalized_text="",
+        wanted_tags=tags,
+        limit=limit,
         scorer=score_structural_entry,
         debug_context="tags_or_all",
         expanded_tags=expanded_tags,
         min_score=min_score,
+        char_budget=char_budget,
     )
 
+
 # ============================================================================
-# Публичные селекторы (API, совместимый с прежним кодом)
+# Публичные селекторы
 # ============================================================================
 
 def select_grammar_rules(
@@ -436,19 +432,16 @@ def select_grammar_rules(
     limit: int = 10,
     candidate_limit: Optional[int] = None,
     min_score: int = 1,
+    char_budget: Optional[int] = None,
 ) -> List[Dict[str, Any]]:
     normalized_text = normalize_text_for_match(text)
     effective_tags = list(tags) or ["grammar"]
     return _select_ranked_entries(
-        kb.grammar_errors,
-        normalized_text,
-        effective_tags,
-        limit,
-        scorer=score_rule_entry,
-        candidate_limit=candidate_limit,
-        debug_context="grammar",
-        min_score=min_score,
+        kb.grammar_errors, normalized_text, effective_tags, limit,
+        scorer=score_rule_entry, candidate_limit=candidate_limit,
+        debug_context="grammar", min_score=min_score, char_budget=char_budget,
     )
+
 
 def select_style_issues(
     kb: Any,
@@ -457,19 +450,16 @@ def select_style_issues(
     limit: int = 10,
     candidate_limit: Optional[int] = None,
     min_score: int = 1,
+    char_budget: Optional[int] = None,
 ) -> List[Dict[str, Any]]:
     normalized_text = normalize_text_for_match(text)
     effective_tags = list(tags) or ["style"]
     return _select_ranked_entries(
-        kb.stylistic_issues,
-        normalized_text,
-        effective_tags,
-        limit,
-        scorer=score_rule_entry,
-        candidate_limit=candidate_limit,
-        debug_context="style",
-        min_score=min_score,
+        kb.stylistic_issues, normalized_text, effective_tags, limit,
+        scorer=score_rule_entry, candidate_limit=candidate_limit,
+        debug_context="style", min_score=min_score, char_budget=char_budget,
     )
+
 
 def select_logic_issues(
     kb: Any,
@@ -478,6 +468,7 @@ def select_logic_issues(
     limit: int = 8,
     candidate_limit: Optional[int] = None,
     min_score: int = 1,
+    char_budget: Optional[int] = None,
 ) -> List[Dict[str, Any]]:
     normalized_text = normalize_text_for_match(text)
     wanted_tags = list(tags) + ["logic"]
@@ -485,15 +476,11 @@ def select_logic_issues(
         kb.logic_issues if kb.logic_issues else kb.stylistic_issues + kb.grammar_errors
     )
     return _select_ranked_entries(
-        candidates,
-        normalized_text,
-        wanted_tags,
-        limit,
-        scorer=score_rule_entry,
-        candidate_limit=candidate_limit,
-        debug_context="logic",
-        min_score=min_score,
+        candidates, normalized_text, wanted_tags, limit,
+        scorer=score_rule_entry, candidate_limit=candidate_limit,
+        debug_context="logic", min_score=min_score, char_budget=char_budget,
     )
 
-# Экспортируем частично приватный селектор для использования в PromptBuilder
+
+# Экспортируем для PromptBuilder
 select_structural_by_tags_or_all = _select_by_tags_or_all
