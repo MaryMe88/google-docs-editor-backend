@@ -11,6 +11,8 @@ import logging
 import re
 from typing import Any, Dict, Final, Iterable, List, Optional, Set, Tuple
 
+from src.tag_registry import normalize_tag
+
 logger = logging.getLogger(__name__)
 
 # ============================================================================
@@ -142,7 +144,7 @@ def score_rule_entry(
     entry_tags = entry.get("tags", [])
     if not isinstance(entry_tags, (list, tuple)):
         entry_tags = []
-    tag_set = {t.strip().lower() for t in entry_tags if isinstance(t, str)}
+    tag_set = {normalize_tag(t) for t in entry_tags if isinstance(t, str)}
     overlap = len(tag_set & wanted_tags)
     score += overlap * SCORE_WEIGHTS["tag_primary"]
     if overlap > 0:
@@ -220,7 +222,7 @@ def score_structural_entry(
     entry_tags = entry.get("tags", [])
     if not isinstance(entry_tags, (list, tuple)):
         entry_tags = []
-    tag_set = {t.strip().lower() for t in entry_tags if isinstance(t, str)}
+    tag_set = {normalize_tag(t) for t in entry_tags if isinstance(t, str)}
     overlap = len(tag_set & wanted_tags)
     score += overlap * SCORE_WEIGHTS["tag_primary"]
     if overlap > 0:
@@ -298,7 +300,7 @@ def _select_ranked_entries(
     debug_context: str = "",
     expanded_tags: Optional[Set[str]] = None,
     min_score: Optional[int] = None,
-    char_budget: Optional[int] = None,  # ТП-1: мягкий лимит символов
+    char_budget: Optional[int] = None,
 ) -> List[Dict[str, Any]]:
     """
     Общая функция ранжирования записей.
@@ -316,7 +318,7 @@ def _select_ranked_entries(
 
     candidates = entries if candidate_limit is None else entries[:candidate_limit]
 
-    wanted_set = {t.strip().lower() for t in wanted_tags if isinstance(t, str)}
+    wanted_set = {normalize_tag(t) for t in wanted_tags if isinstance(t, str)}
     scored: List[Tuple[int, int, Dict[str, Any]]] = []
     for idx, entry in enumerate(candidates):
         score, tie = scorer(
@@ -343,7 +345,7 @@ def _select_ranked_entries(
             entry_tags = entry.get("tags", [])
             if not isinstance(entry_tags, (list, tuple)):
                 entry_tags = []
-            tag_set = {t.strip().lower() for t in entry_tags if isinstance(t, str)}
+            tag_set = {normalize_tag(t) for t in entry_tags if isinstance(t, str)}
             overlap = len(tag_set & wanted_set)
             if overlap == 0:
                 continue
@@ -405,7 +407,7 @@ def _select_by_tags_or_all(
     limit: int,
     expanded_tags: Optional[Set[str]] = None,
     min_score: Optional[int] = None,
-    char_budget: Optional[int] = None,  # ТП-1
+    char_budget: Optional[int] = None,
 ) -> List[Dict[str, Any]]:
     """Обёртка для структурных записей без текстового матчинга."""
     return _select_ranked_entries(

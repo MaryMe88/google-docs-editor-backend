@@ -2,8 +2,7 @@
 prompt_builder.py
 
 Модуль для сборки финальных промптов из конфигов и базы знаний.
-Следует принципам Clean Code: типизация, одна ответственность на функцию,
-явные зависимости, читаемость.
+
 """
 
 from __future__ import annotations
@@ -26,79 +25,18 @@ from typing import (
     Union,
 )
 
+from src.tag_registry import normalize_tag, normalize_tags, build_known_tags
+
 # Локальный логгер модуля
 logger = logging.getLogger(__name__)
-
-# ============================================================================
-# Нормализация и реестр тегов (патч ТП-4: единый canonical layer)
-# ============================================================================
-
-TAG_ALIASES: Dict[str, str] = {
-    "anti_ai": "antiai",
-    "anti-ai": "antiai",
-    "anti ai": "antiai",
-    "de-ai": "deai",
-    "de ai": "deai",
-    "nora_gal": "noragal",
-    "nora gal": "noragal",
-    "info_style": "infostyle",
-    "info-style": "infostyle",
-    "fact_check": "factcheck",
-    "fact-check": "factcheck",
-    "marketing_push": "marketingpush",
-    "marketing-push": "marketingpush",
-    "non_marketing": "nonmarketing",
-    "non-marketing": "nonmarketing",
-}
-
-
-def normalize_tag(tag: str) -> str:
-    """
-    Приводит тег к канонической форме:
-    trim → lower → унификация разделителей → прогон через alias-словарь.
-    """
-    value = tag.strip().lower()
-    value = value.replace("-", "_").replace(" ", "_")
-    return TAG_ALIASES.get(value, value)
-
-
-def normalize_tags(tags: Iterable[str]) -> List[str]:
-    """Нормализует и дедуплицирует список тегов с сохранением порядка."""
-    result: List[str] = []
-    seen: Set[str] = set()
-    for raw in tags:
-        if not isinstance(raw, str):
-            continue
-        tag = normalize_tag(raw)
-        if tag and tag not in seen:
-            seen.add(tag)
-            result.append(tag)
-    return result
-
-
-def _normalize_entry_tags_inplace(entry: Dict[str, Any]) -> None:
-    """Нормализует поле tags у одной KB-записи inplace."""
-    raw_tags = entry.get("tags")
-    if isinstance(raw_tags, list):
-        entry["tags"] = normalize_tags(raw_tags)
-
-
-def _normalize_entries_tags_inplace(entries: Iterable[Dict[str, Any]]) -> None:
-    """Нормализует tags у списка KB-записей."""
-    for entry in entries:
-        if isinstance(entry, dict):
-            _normalize_entry_tags_inplace(entry)
-
 
 
 # ============================================================================
 # Типы для записей Knowledge Base
 # ============================================================================
 
-
 class RuleEntry(TypedDict, total=False):
     """Запись с правилом исправления (грамматика, стиль, логика)."""
-
     wrong: str
     correct: str
     rule: str
@@ -109,7 +47,6 @@ class RuleEntry(TypedDict, total=False):
 
 class StructuralEntry(TypedDict, total=False):
     """Структурная запись (фреймворк, шаблон, приём)."""
-
     name: str
     description: str
     when_to_use: Union[str, List[str]]
@@ -121,7 +58,6 @@ class StructuralEntry(TypedDict, total=False):
 
 class EditorialTechniqueEntry(TypedDict, total=False):
     """Редакторский приём."""
-
     id: str
     name: str
     category: str
@@ -142,11 +78,9 @@ FlatEntry = Dict[str, Any]  # любой уплощённый словарь
 # Data Models (типы данных для конфигов)
 # ============================================================================
 
-
 @dataclass(frozen=True)
 class CoreConfig:
     """Базовая конфигурация редактора (общая для всех режимов)."""
-
     role: str
     priorities: str
     basic_audit_instructions: List[str]
@@ -156,7 +90,6 @@ class CoreConfig:
 @dataclass(frozen=True)
 class DomainConfig:
     """Конфигурация домена (тип текста: маркетинг, блог и т.п.)."""
-
     name: str
     system_rules: str
     tone: str
@@ -167,7 +100,6 @@ class DomainConfig:
 @dataclass(frozen=True)
 class IntentConfig:
     """Конфигурация цели обработки (точнее, увлекательнее и т.п.)."""
-
     name: str
     instructions: List[str]
 
@@ -175,7 +107,6 @@ class IntentConfig:
 @dataclass(frozen=True)
 class OverlayConfig:
     """Конфигурация надстройки (инфостиль, логика, фактчек и т.п.)."""
-
     name: str
     instructions: List[str]
 
@@ -183,7 +114,6 @@ class OverlayConfig:
 @dataclass(frozen=True)
 class AudienceProfile:
     """Профиль аудитории."""
-
     kind: str  # "b2b" | "b2c" | "mixed" | "custom"
     expertise: str  # "novice" | "pro" | "expert"
     formality: str  # "casual" | "neutral" | "formal"
@@ -208,7 +138,6 @@ class KnowledgeBase:
     - editorial_techniques: редакторские приёмы (Нора Галь, Мильчин и др.)
     - nkrj_structure_patterns: шаблоны структуры по данным НКРЯ
     """
-
     stop_words: Dict[str, List[str]]
     grammar_errors: List[RuleEntry]
     stylistic_issues: List[RuleEntry]
@@ -228,20 +157,10 @@ class KnowledgeBase:
 # Config Loaders (функции загрузки конфигов)
 # ============================================================================
 
-
 def load_json_file(path: Path) -> dict:
-    """
-    Загружает JSON-файл.
-
-    Args:
-        path: Путь к JSON-файлу
-
-    Returns:
-        Распарсенный JSON как словарь
-    """
+    """Загружает JSON-файл."""
     if not path.exists():
         raise FileNotFoundError(f"Config file not found: {path}")
-
     return json.loads(path.read_text(encoding="utf-8"))
 
 
@@ -282,7 +201,6 @@ def load_intent_config(
     """Загружает конфигурацию цели обработки."""
     if intent is None or intent == "neutral":
         return None
-
     data = load_json_file(base_path / "intents" / f"{intent}.json")
     return IntentConfig(
         name=data["name"],
@@ -323,7 +241,6 @@ def load_output_format(
 # Flatten helpers (без дублирования)
 # ============================================================================
 
-
 def _flatten_examples_block(
     items: List[Dict[str, Any]],
     category: str = "",
@@ -336,7 +253,6 @@ def _flatten_examples_block(
         if "examples" in item:
             examples = item.get("examples")
             if not isinstance(examples, list):
-                # нет примеров – оставляем запись как есть
                 flat.append(item)
                 continue
             cat = item.get("category", category)
@@ -354,35 +270,22 @@ def _flatten_examples_block(
 
 
 def _flatten_stylistic_issues(raw: Dict[str, Any]) -> List[FlatEntry]:
-    """
-    Разворачивает stylistic_issues.json в плоский список записей.
-    Поддерживает новый категорийный и старый плоский форматы.
-    """
+    """Разворачивает stylistic_issues.json в плоский список записей."""
     flat: List[FlatEntry] = []
-
-    # Новый формат: stylistic_errors
     flat.extend(_flatten_examples_block(raw.get("stylistic_errors", [])))
-
-    # Старый формат: common_issues
     flat.extend(_flatten_examples_block(raw.get("common_issues", [])))
-
     return flat
 
 
 def _flatten_editorial_techniques(raw: Dict[str, Any]) -> List[EditorialTechniqueEntry]:
-    """
-    Разворачивает editorial_techniques.json в плоский список приёмов.
-    """
+    """Разворачивает editorial_techniques.json в плоский список приёмов."""
     flat: List[EditorialTechniqueEntry] = []
-
     for block in raw.get("editorial_techniques", []):
         category = block.get("category", "")
         block_tags = block.get("tags", [])
         techniques = block.get("techniques", [])
-
         if not isinstance(techniques, list):
             continue
-
         for tech in techniques:
             tech_id = tech.get("id", "")
             name = tech.get("name", "")
@@ -391,7 +294,6 @@ def _flatten_editorial_techniques(raw: Dict[str, Any]) -> List[EditorialTechniqu
             how_to_apply = tech.get("how_to_apply", [])
             tags = list(block_tags) + list(tech.get("tags", []))
             source = tech.get("source", {})
-
             examples = tech.get("examples", [])
             if examples and isinstance(examples, list):
                 example = examples[0]
@@ -402,7 +304,6 @@ def _flatten_editorial_techniques(raw: Dict[str, Any]) -> List[EditorialTechniqu
                 wrong = ""
                 correct = ""
                 explanation = ""
-
             flat.append(
                 {
                     "id": tech_id,
@@ -414,11 +315,10 @@ def _flatten_editorial_techniques(raw: Dict[str, Any]) -> List[EditorialTechniqu
                     "example_wrong": wrong,
                     "example_correct": correct,
                     "example_explanation": explanation,
-                    "tags": normalize_tags(tags) if tags else ["editing", "noragal"],
+                    "tags": normalize_tags(tags) if tags else normalize_tags(["editing", "noragal"]),
                     "source": source,
                 }
             )
-
     return flat
 
 
@@ -426,11 +326,23 @@ def _flatten_editorial_techniques(raw: Dict[str, Any]) -> List[EditorialTechniqu
 # Knowledge Base Loader (упрощён optional loading)
 # ============================================================================
 
+def normalize_entry_tags_inplace(entry: Dict[str, Any]) -> None:
+    """Нормализует поле tags у одной KB-записи inplace."""
+    raw_tags = entry.get("tags")
+    if isinstance(raw_tags, list):
+        entry["tags"] = normalize_tags(raw_tags)
+
+
+def normalize_entries_tags(entries: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """Нормализует tags у каждой записи в списке (изменяет inplace). Возвращает тот же список."""
+    for entry in entries:
+        if isinstance(entry, dict):
+            normalize_entry_tags_inplace(entry)
+    return entries
+
 
 def load_knowledge_base(base_path: Path = Path("knowledge_base")) -> KnowledgeBase:
-    """
-    Загружает базу знаний из папки knowledge_base.
-    """
+    """Загружает базу знаний из папки knowledge_base."""
     stop_words = load_json_file(base_path / "stop_words.json")
     grammar = load_json_file(base_path / "grammar_errors.json")
     style_raw = load_json_file(base_path / "stylistic_issues.json")
@@ -439,52 +351,38 @@ def load_knowledge_base(base_path: Path = Path("knowledge_base")) -> KnowledgeBa
 
     logic_data = _load_optional_json(base_path / "logic_issues.json", {"issues": []})
     domain_glossary = _load_optional_json(base_path / "domain_glossary.json", {})
-    composition_principles_raw = _load_optional_json(
-        base_path / "composition_principles.json", {}
-    )
+    composition_principles_raw = _load_optional_json(base_path / "composition_principles.json", {})
     local_cohesion_raw = _load_optional_json(base_path / "local_cohesion.json", {})
-    composition_errors_raw = _load_optional_json(
-        base_path / "composition_errors.json", {}
-    )
+    composition_errors_raw = _load_optional_json(base_path / "composition_errors.json", {})
     rhetoric_raw = _load_optional_json(base_path / "rhetoric.json", {})
-    editorial_raw = _load_optional_json(
-        base_path / "editorial_techniques.json", {}
-    )
-    structure_data = _load_optional_json(
-        base_path / "nkrj_structure_patterns.json", {}
-    )
+    editorial_raw = _load_optional_json(base_path / "editorial_techniques.json", {})
+    structure_data = _load_optional_json(base_path / "nkrj_structure_patterns.json", {})
 
     kb = KnowledgeBase(
         stop_words=stop_words,
-        grammar_errors=grammar.get("common_mistakes", []),
-        stylistic_issues=_flatten_stylistic_issues(style_raw),
-        logic_issues=logic_data.get("issues", []),
-        storytelling_frameworks=storytelling.get("frameworks", []),
-        marketing_templates=marketing.get("templates", []),
+        grammar_errors=normalize_entries_tags(grammar.get("common_mistakes", [])),
+        stylistic_issues=normalize_entries_tags(_flatten_stylistic_issues(style_raw)),
+        logic_issues=normalize_entries_tags(logic_data.get("issues", [])),
+        storytelling_frameworks=normalize_entries_tags(storytelling.get("frameworks", [])),
+        marketing_templates=normalize_entries_tags(marketing.get("templates", [])),
         domain_glossary=domain_glossary,
-        composition_principles=composition_principles_raw.get(
-            "composition_principles", []
+        composition_principles=normalize_entries_tags(
+            composition_principles_raw.get("composition_principles", [])
         ),
-        local_cohesion=local_cohesion_raw.get("local_cohesion", []),
-        composition_errors=composition_errors_raw.get("composition_errors", []),
-        rhetoric_frameworks=rhetoric_raw.get("frameworks", []),
-        editorial_techniques=_flatten_editorial_techniques(editorial_raw)
-        if editorial_raw
-        else [],
+        local_cohesion=normalize_entries_tags(
+            local_cohesion_raw.get("local_cohesion", [])
+        ),
+        composition_errors=normalize_entries_tags(
+            composition_errors_raw.get("composition_errors", [])
+        ),
+        rhetoric_frameworks=normalize_entries_tags(
+            rhetoric_raw.get("frameworks", [])
+        ),
+        editorial_techniques=normalize_entries_tags(
+            _flatten_editorial_techniques(editorial_raw) if editorial_raw else []
+        ),
         nkrj_structure_patterns=structure_data,
     )
-
-    # Патч ТП-4: нормализуем теги всех KB-записей при загрузке
-    _normalize_entries_tags_inplace(kb.grammar_errors)
-    _normalize_entries_tags_inplace(kb.stylistic_issues)
-    _normalize_entries_tags_inplace(kb.logic_issues)
-    _normalize_entries_tags_inplace(kb.storytelling_frameworks)
-    _normalize_entries_tags_inplace(kb.marketing_templates)
-    _normalize_entries_tags_inplace(kb.composition_principles)
-    _normalize_entries_tags_inplace(kb.local_cohesion)
-    _normalize_entries_tags_inplace(kb.composition_errors)
-    _normalize_entries_tags_inplace(kb.rhetoric_frameworks)
-    _normalize_entries_tags_inplace(kb.editorial_techniques)
 
     return kb
 
@@ -493,12 +391,8 @@ def load_knowledge_base(base_path: Path = Path("knowledge_base")) -> KnowledgeBa
 # Knowledge selection helpers (улучшенные)
 # ============================================================================
 
-
 def _normalize_text_for_match(text: str) -> str:
-    """
-    Приводит текст к нижнему регистру, заменяет 'ё' на 'е',
-    оставляет только буквы, цифры и пробелы, схлопывает пробелы.
-    """
+    """Приводит текст к нижнему регистру, заменяет 'ё' на 'е', оставляет только буквы, цифры и пробелы, схлопывает пробелы."""
     text = text.replace("ё", "е").replace("Ё", "Е")
     text = re.sub(r"[^\w\s]", " ", text)
     text = re.sub(r"\s+", " ", text)
@@ -506,10 +400,7 @@ def _normalize_text_for_match(text: str) -> str:
 
 
 def _contains_pattern(normalized_text: str, pattern: str) -> bool:
-    """
-    Проверяет, содержится ли паттерн в нормализованном тексте.
-    Для однословных паттернов использует границы слова.
-    """
+    """Проверяет, содержится ли паттерн в нормализованном тексте. Для однословных паттернов использует границы слова."""
     if not pattern:
         return False
     norm_pattern = _normalize_text_for_match(pattern)
@@ -518,19 +409,13 @@ def _contains_pattern(normalized_text: str, pattern: str) -> bool:
     if len(norm_pattern) < 2:
         return False
     if " " not in norm_pattern:
-        return (
-            re.search(rf"\b{re.escape(norm_pattern)}\b", normalized_text) is not None
-        )
+        return re.search(rf"\b{re.escape(norm_pattern)}\b", normalized_text) is not None
     else:
         return norm_pattern in normalized_text
 
 
 def _get_entry_match_patterns(entry: RuleEntry) -> List[str]:
-    """
-    Собирает кандидаты для текстового матчинга из полей:
-    wrong, name, rule, description (в указанном порядке).
-    Возвращает уникальные непустые строки после strip().
-    """
+    """Собирает кандидаты для текстового матчинга из полей wrong, name, rule, description."""
     patterns: List[str] = []
     seen = set()
     for field in ("wrong", "name", "rule", "description"):
@@ -563,7 +448,6 @@ def _entry_info_score(entry: Dict[str, Any]) -> int:
 # Scorer'ы
 # ---------------------------------------------------------------------------
 
-
 def _score_rule_entry(
     entry: RuleEntry,
     normalized_text: str,
@@ -571,42 +455,28 @@ def _score_rule_entry(
     idx: int,
     expanded_tags: Optional[Set[str]] = None,
 ) -> Tuple[int, int]:
-    """
-    Скоринг для «правильных» записей (грамматика, стиль, логика).
-    Поля: wrong, correct, rule, description, tags.
-
-    Баллы:
-    - точное совпадение с 'wrong'         -> +1000
-    - совпадение с name/rule/description  -> +200
-    - overlap с primary тегами * 10       -> + overlap * 10
-    - overlap с expanded тегами * 2       -> + overlap_exp * 2
-    - дополнительный +1, если есть primary overlap
-    """
+    """Скоринг для «правильных» записей (грамматика, стиль, логика)."""
     score = 0
-
     match_patterns = _get_entry_match_patterns(entry)
     if match_patterns:
         if _contains_pattern(normalized_text, match_patterns[0]):
-            score += 1000  # wrong match
+            score += 1000
         else:
             for pat in match_patterns[1:]:
                 if _contains_pattern(normalized_text, pat):
                     score += 200
                     break
-
     entry_tags = entry.get("tags", [])
     if not isinstance(entry_tags, (list, tuple)):
         entry_tags = []
-    tag_set = {t.strip().lower() for t in entry_tags if isinstance(t, str)}
+    tag_set = {normalize_tag(t) for t in entry_tags if isinstance(t, str)}
     overlap = len(tag_set & wanted_tags)
     score += overlap * 10
     if overlap > 0:
         score += 1
-
     if expanded_tags:
         overlap_exp = len(tag_set & expanded_tags)
         score += overlap_exp * 2
-
     return (score, -idx)
 
 
@@ -617,19 +487,8 @@ def _score_structural_entry(
     idx: int,
     expanded_tags: Optional[Set[str]] = None,
 ) -> Tuple[int, int]:
-    """
-    Скоринг для структурных записей (storytelling, marketing, rhetoric,
-    composition, editorial). Поля: name, description, when_to_use, steps/sections.
-
-    Баллы:
-    - текстовое совпадение с 'name'       -> +500
-    - иначе совпадение с другими полями   -> +200
-    - overlap primary тегов * 10
-    - overlap expanded тегов * 2
-    - дополнительный +1 при primary overlap
-    """
+    """Скоринг для структурных записей (storytelling, marketing, rhetoric, composition, editorial)."""
     score = 0
-
     patterns: List[str] = []
 
     def _add_field(field: str):
@@ -679,20 +538,17 @@ def _score_structural_entry(
             break
 
     score += match_bonus
-
     entry_tags = entry.get("tags", [])
     if not isinstance(entry_tags, (list, tuple)):
         entry_tags = []
-    tag_set = {t.strip().lower() for t in entry_tags if isinstance(t, str)}
+    tag_set = {normalize_tag(t) for t in entry_tags if isinstance(t, str)}
     overlap = len(tag_set & wanted_tags)
     score += overlap * 10
     if overlap > 0:
         score += 1
-
     if expanded_tags:
         overlap_exp = len(tag_set & expanded_tags)
         score += overlap_exp * 2
-
     return (score, -idx)
 
 
@@ -703,7 +559,6 @@ _score_entry = _score_rule_entry
 # ---------------------------------------------------------------------------
 # Диагностика
 # ---------------------------------------------------------------------------
-
 
 def _log_selection_debug(
     debug_context: str,
@@ -745,7 +600,6 @@ def _log_selection_debug(
 # Основная функция ранжирования
 # ---------------------------------------------------------------------------
 
-
 def _select_ranked_entries(
     entries: List[Dict[str, Any]],
     normalized_text: str,
@@ -758,25 +612,15 @@ def _select_ranked_entries(
     expanded_tags: Optional[Set[str]] = None,
     min_score: Optional[int] = None,
 ) -> List[Dict[str, Any]]:
-    """
-    Общая функция ранжирования записей.
-
-    - candidate_limit: сколько записей рассматривать (None = все).
-    - min_score: минимальный балл, чтобы попасть в ranked‑путь.
-      По умолчанию None – все записи проходят.
-    - debug_context: метка для диагностики.
-    """
+    """Общая функция ранжирования записей."""
     if not entries:
         return []
 
     candidates = entries if candidate_limit is None else entries[:candidate_limit]
-
-    wanted_set = {t.strip().lower() for t in wanted_tags if isinstance(t, str)}
+    wanted_set = {normalize_tag(t) for t in wanted_tags if isinstance(t, str)}
     scored: List[Tuple[int, int, Dict[str, Any]]] = []
     for idx, entry in enumerate(candidates):
-        score, tie = scorer(
-            entry, normalized_text, wanted_set, idx, expanded_tags=expanded_tags
-        )
+        score, tie = scorer(entry, normalized_text, wanted_set, idx, expanded_tags=expanded_tags)
         if require_text_match and score < 1000:
             continue
         if min_score is not None and score < min_score:
@@ -784,25 +628,23 @@ def _select_ranked_entries(
         scored.append((score, tie, entry))
 
     if not scored:
-        # Fallback: сортировка по overlap тегов, info_score, индексу
         fallback_candidates = []
         for idx, entry in enumerate(candidates):
             entry_tags = entry.get("tags", [])
             if not isinstance(entry_tags, (list, tuple)):
                 entry_tags = []
-            tag_set = {t.strip().lower() for t in entry_tags if isinstance(t, str)}
+            tag_set = {normalize_tag(t) for t in entry_tags if isinstance(t, str)}
             overlap = len(tag_set & wanted_set)
+            if wanted_set and overlap == 0:
+                continue
             info = _entry_info_score(entry)
             fallback_candidates.append((overlap, info, -idx, entry))
-
         fallback_candidates.sort(key=lambda x: (x[0], x[1], x[2]), reverse=True)
-
         if debug_context:
             logging.debug(
                 f"[{debug_context}] Fallback: {len(candidates)} candidates, "
                 f"top tag overlap={fallback_candidates[0][0] if fallback_candidates else 0}"
             )
-
         result = []
         seen_keys = set()
         for _, _, _, entry in fallback_candidates:
@@ -816,7 +658,6 @@ def _select_ranked_entries(
         return result
 
     scored.sort(key=lambda x: (x[0], x[1]), reverse=True)
-
     _log_selection_debug(debug_context, candidates, scored, limit)
 
     result = []
@@ -829,7 +670,6 @@ def _select_ranked_entries(
         result.append(entry)
         if len(result) >= limit:
             break
-
     return result
 
 
@@ -845,15 +685,14 @@ def _make_dedupe_key(entry: Dict[str, Any]) -> Tuple[Any, ...]:
 
 
 def _match_tags(entry_tags: Iterable[str], wanted_tags: Iterable[str]) -> bool:
-    entry = {t.strip().lower() for t in (entry_tags or [])}
-    wanted = {t.strip().lower() for t in (wanted_tags or [])}
+    entry = {normalize_tag(t) for t in (entry_tags or [])}
+    wanted = {normalize_tag(t) for t in (wanted_tags or [])}
     return bool(entry & wanted) if wanted else True
 
 
 # ---------------------------------------------------------------------------
 # Публичные селекторы
 # ---------------------------------------------------------------------------
-
 
 def select_grammar_rules(
     kb: KnowledgeBase,
@@ -907,11 +746,7 @@ def select_logic_issues(
 ) -> List[Dict[str, Any]]:
     normalized_text = _normalize_text_for_match(text)
     wanted_tags = list(tags) + ["logic"]
-    candidates = (
-        kb.logic_issues
-        if kb.logic_issues
-        else kb.stylistic_issues + kb.grammar_errors
-    )
+    candidates = kb.logic_issues if kb.logic_issues else kb.stylistic_issues + kb.grammar_errors
     return _select_ranked_entries(
         candidates,
         normalized_text,
@@ -955,25 +790,18 @@ def _safe_float(value: Any) -> Optional[float]:
 # NKRJ нормы
 # ============================================================================
 
-
 def build_nkrj_norms_lines(
     kb: KnowledgeBase,
     limit_sources: int = 4,
 ) -> List[str]:
-    """
-    Превращает nkrj_structure_patterns.json формата Taiga Social Media
-    в компактный набор норм для промпта.
-    """
+    """Превращает nkrj_structure_patterns.json формата Taiga Social Media в компактный набор норм для промпта."""
     raw = kb.nkrj_structure_patterns
     if not raw:
         return []
-
     lines: List[str] = []
-
     corpus = raw.get("corpus")
     if corpus:
         lines.append(f" • Корпус-ориентир: {corpus}.")
-
     aggregate = raw.get("aggregate_norms", {})
     norm_sentence = aggregate.get("norm_sentence_length", {})
     thresholds = aggregate.get("thresholds", {})
@@ -985,109 +813,49 @@ def build_nkrj_norms_lines(
     long_share = _safe_float(norm_sentence.get("long_share"))
 
     if avg is not None:
-        lines.append(
-            " • Ориентир по длине предложения: в среднем около "
-            f"{avg:.2f} слов; держи фразы преимущественно короткими и средними."
-        )
-
+        lines.append(f" • Ориентир по длине предложения: в среднем около {avg:.2f} слов; держи фразы преимущественно короткими и средними.")
     if short_share is not None and medium_share is not None and long_share is not None:
-        lines.append(
-            " • Распределение длины предложений: "
-            f"короткие ≈ {short_share:.1%}, "
-            f"средние ≈ {medium_share:.1%}, "
-            f"длинные ≈ {long_share:.1%}; "
-            "не перегружай текст длинными периодами."
-        )
-
+        lines.append(f" • Распределение длины предложений: короткие ≈ {short_share:.1%}, средние ≈ {medium_share:.1%}, длинные ≈ {long_share:.1%}; не перегружай текст длинными периодами.")
     if variation is not None:
-        lines.append(
-            " • Коэффициент вариативности длины предложений — около "
-            f"{variation:.2f}; избегай монотонного ритма и чередуй длину фраз."
-        )
-
+        lines.append(f" • Коэффициент вариативности длины предложений — около {variation:.2f}; избегай монотонного ритма и чередуй длину фраз.")
     flat_paragraph = _safe_float(aggregate.get("norm_flat_paragraph_share"))
     if flat_paragraph is not None:
-        lines.append(
-            " • Плоские абзацы почти не встречаются: "
-            f"норма flat paragraph share ≈ {flat_paragraph:.2%}; "
-            "абзацы должны двигать мысль, а не быть механически однотипными."
-        )
-
+        lines.append(f" • Плоские абзацы почти не встречаются: норма flat paragraph share ≈ {flat_paragraph:.2%}; абзацы должны двигать мысль, а не быть механически однотипными.")
     passive_rate = _safe_float(aggregate.get("norm_passive_rate"))
     if passive_rate is not None:
-        lines.append(
-            " • Ориентир по пассиву: около "
-            f"{passive_rate:.2f} на 100 строк; предпочитай активные конструкции."
-        )
-
+        lines.append(f" • Ориентир по пассиву: около {passive_rate:.2f} на 100 строк; предпочитай активные конструкции.")
     deepr_rate = _safe_float(aggregate.get("norm_deepr_rate"))
     if deepr_rate is not None:
-        lines.append(
-            " • Глубокие шаблонные клише почти отсутствуют: "
-            f"норма ≈ {deepr_rate:.2f} на 100 строк; "
-            "избегай формульных вводок и пластиковых связок."
-        )
-
+        lines.append(f" • Глубокие шаблонные клише почти отсутствуют: норма ≈ {deepr_rate:.2f} на 100 строк; избегай формульных вводок и пластиковых связок.")
     plasticity_live = _safe_float(thresholds.get("plasticity_index_live"))
     plasticity_grey = _safe_float(thresholds.get("plasticity_index_grey_zone"))
     if plasticity_live is not None and plasticity_grey is not None:
-        lines.append(
-            " • Индекс пластичности: "
-            f"до {plasticity_live:.1f} — живой текст, "
-            f"около {plasticity_grey:.1f} и выше — серая зона / риск искусственности."
-        )
-
+        lines.append(f" • Индекс пластичности: до {plasticity_live:.1f} — живой текст, около {plasticity_grey:.1f} и выше — серая зона / риск искусственности.")
     sentence_variation_min = _safe_float(thresholds.get("sentence_variation_coeff_min"))
     if sentence_variation_min is not None:
-        lines.append(
-            " • Минимально допустимая вариативность длины фраз: "
-            f"{sentence_variation_min:.2f}; "
-            "не делай весь текст одинаково рубленым или одинаково растянутым."
-        )
-
+        lines.append(f" • Минимально допустимая вариативность длины фраз: {sentence_variation_min:.2f}; не делай весь текст одинаково рубленым или одинаково растянутым.")
     short_sentence_share_min = _safe_float(thresholds.get("short_sentence_share_min"))
     if short_sentence_share_min is not None:
-        lines.append(
-            " • Доля коротких предложений должна быть не ниже "
-            f"{short_sentence_share_min:.1%}; "
-            "оставляй в тексте быстрые, простые фразы."
-        )
-
+        lines.append(f" • Доля коротких предложений должна быть не ниже {short_sentence_share_min:.1%}; оставляй в тексте быстрые, простые фразы.")
     flat_alert = _safe_float(thresholds.get("flat_paragraph_share_alert"))
     if flat_alert is not None:
-        lines.append(
-            " • Тревожный порог для плоских абзацев — "
-            f"{flat_alert:.0%}; "
-            "если абзацы становятся однотипными, перестрой композицию."
-        )
-
+        lines.append(f" • Тревожный порог для плоских абзацев — {flat_alert:.0%}; если абзацы становятся однотипными, перестрой композицию.")
     passive_alert = _safe_float(thresholds.get("passive_rate_alert"))
     if passive_alert is not None:
-        lines.append(
-            " • Тревожный порог по пассиву — "
-            f"{passive_alert:.1f} на 100 строк; "
-            "выше этого текст становится тяжёлым и безличным."
-        )
+        lines.append(f" • Тревожный порог по пассиву — {passive_alert:.1f} на 100 строк; выше этого текст становится тяжёлым и безличным.")
 
     sources = raw.get("sources", [])
     if isinstance(sources, list):
         for source_data in sources[:limit_sources]:
             if not isinstance(source_data, dict):
                 continue
-
             source_name = str(source_data.get("source", "")).strip()
             sentence_data = source_data.get("sentence_length", {})
             source_avg = _safe_float(sentence_data.get("avg"))
             source_long = _safe_float(sentence_data.get("long_share"))
-            source_passive = _safe_float(
-                source_data.get("passive_rate_per_100_lines")
-            )
-
+            source_passive = _safe_float(source_data.get("passive_rate_per_100_lines"))
             if source_name and source_avg is not None:
-                line = (
-                    f" • Источник {source_name}: средняя длина предложения "
-                    f"≈ {source_avg:.2f} слов"
-                )
+                line = f" • Источник {source_name}: средняя длина предложения ≈ {source_avg:.2f} слов"
                 if source_long is not None:
                     line += f", длинных предложений ≈ {source_long:.1%}"
                 if source_passive is not None:
@@ -1105,15 +873,9 @@ def build_nkrj_norms_lines(
                 score = _safe_float(value)
                 if score is not None and score > 0:
                     marker_examples.append(f"{marker} ({score:.3f})")
-
     if marker_examples:
         unique_markers = list(dict.fromkeys(marker_examples))
-        lines.append(
-            " • Маркеры пластика, которые стоит особенно контролировать: "
-            + ", ".join(unique_markers[:8])
-            + "."
-        )
-
+        lines.append(" • Маркеры пластика, которые стоит особенно контролировать: " + ", ".join(unique_markers[:8]) + ".")
     return lines
 
 
@@ -1121,22 +883,16 @@ def build_nkrj_norms_lines(
 # Утилиты
 # ============================================================================
 
-
 def _has_mode(
     intent: Optional[str],
     overlays: Sequence[str],
     aliases: Iterable[str],
 ) -> bool:
-    """
-    Проверяет, активирован ли режим по intent или overlay.
-    Поддерживает алиасы, чтобы не зависеть от точного имени режима.
-    """
-    normalized_aliases = {alias.strip().lower() for alias in aliases}
-    values = {item.strip().lower() for item in overlays}
-
-    if intent:
-        values.add(intent.strip().lower())
-
+    """Проверяет, активирован ли режим по intent или overlay. Поддерживает алиасы."""
+    normalized_aliases = {normalize_tag(alias) for alias in aliases if isinstance(alias, str)}
+    values = {normalize_tag(item) for item in overlays if isinstance(item, str)}
+    if isinstance(intent, str):
+        values.add(normalize_tag(intent))
     return bool(values & normalized_aliases)
 
 
@@ -1193,6 +949,8 @@ CANONICAL_TAGS: Dict[str, Dict[str, Any]] = {
     },
 }
 
+KNOWN_TAGS: Set[str] = build_known_tags(CANONICAL_TAGS)
+
 KNOWN_INTENTS: Set[str] = {
     "storytelling",
     "noragal",
@@ -1206,40 +964,11 @@ KNOWN_OVERLAYS: Set[str] = {
     "marketingpush",
 }
 
-
-def _iter_canonical_tag_values(data: Any) -> Iterable[str]:
-    """Итерирует по всем строковым значениям из структуры CANONICAL_TAGS."""
-    if isinstance(data, dict):
-        for value in data.values():
-            yield from _iter_canonical_tag_values(value)
-    elif isinstance(data, list):
-        for item in data:
-            if isinstance(item, str):
-                yield item
+# Мягкий режим проверки тегов: False = только предупреждения, True = исключения
+KB_TAGS_STRICT_VALIDATION: bool = False
 
 
-def _build_known_kb_tags() -> Set[str]:
-    """
-    Собирает множество допустимых тегов из CANONICAL_TAGS, alias-ключей и значений.
-    Вычисляется один раз при загрузке модуля.
-    """
-    known: Set[str] = set()
-    for raw in _iter_canonical_tag_values(CANONICAL_TAGS):
-        known.add(normalize_tag(raw))
-    for raw in TAG_ALIASES:
-        known.add(normalize_tag(raw))
-    for raw in TAG_ALIASES.values():
-        known.add(normalize_tag(raw))
-    return known
-
-
-KNOWN_KB_TAGS: Set[str] = _build_known_kb_tags()
-
-
-def _get_canonical_tags_for_category(
-    category: str,
-    value: str,
-) -> List[str]:
+def _get_canonical_tags_for_category(category: str, value: str) -> List[str]:
     """Возвращает объединённый список тегов (primary + expanded) в нормализованном виде."""
     norm_value = normalize_tag(value)
     data = CANONICAL_TAGS.get(category, {}).get(norm_value)
@@ -1247,7 +976,7 @@ def _get_canonical_tags_for_category(
         return normalize_tags(data.get("primary", []) + data.get("expanded", []))
     if isinstance(data, list):
         return normalize_tags(data)
-    return [norm_value]
+    return normalize_tags([norm_value])
 
 
 def _get_primary_tags_for_category(category: str, value: str) -> List[str]:
@@ -1255,7 +984,7 @@ def _get_primary_tags_for_category(category: str, value: str) -> List[str]:
     data = CANONICAL_TAGS.get(category, {}).get(norm_value)
     if isinstance(data, dict):
         return normalize_tags(data.get("primary", []))
-    return normalize_tags(data) if isinstance(data, list) else [norm_value]
+    return normalize_tags(data) if isinstance(data, list) else normalize_tags([norm_value])
 
 
 def _get_expanded_tags_for_category(category: str, value: str) -> List[str]:
@@ -1270,17 +999,13 @@ def _get_expanded_tags_for_category(category: str, value: str) -> List[str]:
 # Prompt Builder (сборщик промпта)
 # ============================================================================
 
-
 class PromptBuilder:
-    """
-    Собирает финальный промпт из конфигов, базы знаний и параметров запроса.
-    """
+    """Собирает финальный промпт из конфигов, базы знаний и параметров запроса."""
 
     def __init__(
         self,
         config_path: Path = Path("config"),
         kb_path: Path = Path("knowledge_base"),
-        # Лимиты для knowledge блоков (управление полнотой)
         grammar_limit: int = 10,
         style_limit: int = 10,
         logic_limit: int = 8,
@@ -1294,7 +1019,6 @@ class PromptBuilder:
         glossary_limit: int = 10,
         stop_words_category_limit: int = 8,
         stop_words_items_limit: int = 5,
-        # Ограничения на число кандидатов (None = без ограничений)
         grammar_candidate_limit: Optional[int] = None,
         style_candidate_limit: Optional[int] = None,
         logic_candidate_limit: Optional[int] = None,
@@ -1305,8 +1029,6 @@ class PromptBuilder:
     ) -> None:
         self.config_path = config_path
         self.kb_path = kb_path
-
-        # Лимиты выдачи
         self.grammar_limit = grammar_limit
         self.style_limit = style_limit
         self.logic_limit = logic_limit
@@ -1320,27 +1042,19 @@ class PromptBuilder:
         self.glossary_limit = glossary_limit
         self.stop_words_category_limit = stop_words_category_limit
         self.stop_words_items_limit = stop_words_items_limit
-
-        # Лимиты кандидатов
         self.grammar_candidate_limit = grammar_candidate_limit
         self.style_candidate_limit = style_candidate_limit
         self.logic_candidate_limit = logic_candidate_limit
         self.storytelling_candidate_limit = storytelling_candidate_limit
         self.marketing_candidate_limit = marketing_candidate_limit
         self.rhetoric_candidate_limit = rhetoric_candidate_limit
-
-        # Диагностика (безопасная: не меняет глобальный уровень)
         self.enable_selection_diagnostics = enable_selection_diagnostics
-
-        # Кэши конфигов
         self._core_cache: Optional[CoreConfig] = None
         self._domain_cache: Dict[str, DomainConfig] = {}
         self._output_format_cache: Dict[str, str] = {}
         self._overlay_cache: Dict[str, OverlayConfig] = {}
         self._intent_cache: Dict[str, IntentConfig] = {}
         self._kb_cache: Optional[KnowledgeBase] = None
-
-        # Кэши доступных intents/overlays из файловой системы
         self._available_intents_cache: Optional[Set[str]] = None
         self._available_overlays_cache: Optional[Set[str]] = None
 
@@ -1370,16 +1084,12 @@ class PromptBuilder:
 
     def _get_output_format(self, mode: str) -> str:
         if mode not in self._output_format_cache:
-            self._output_format_cache[mode] = load_output_format(
-                mode, self.config_path
-            )
+            self._output_format_cache[mode] = load_output_format(mode, self.config_path)
         return self._output_format_cache[mode]
 
     def _get_overlay_config(self, overlay: str) -> OverlayConfig:
         if overlay not in self._overlay_cache:
-            self._overlay_cache[overlay] = load_overlay_config(
-                overlay, self.config_path
-            )
+            self._overlay_cache[overlay] = load_overlay_config(overlay, self.config_path)
         return self._overlay_cache[overlay]
 
     def _get_intent_config(self, intent: Optional[str]) -> Optional[IntentConfig]:
@@ -1398,27 +1108,21 @@ class PromptBuilder:
         return self._kb_cache
 
     def _get_available_intents(self) -> Set[str]:
-        """Возвращает множество имён интентов, для которых есть JSON-файлы (с кэшированием)."""
         if self._available_intents_cache is None:
             intents_dir = self.config_path / "intents"
             if not intents_dir.exists():
                 self._available_intents_cache = set()
             else:
-                self._available_intents_cache = {
-                    p.stem for p in intents_dir.glob("*.json")
-                }
+                self._available_intents_cache = {p.stem for p in intents_dir.glob("*.json")}
         return self._available_intents_cache
 
     def _get_available_overlays(self) -> Set[str]:
-        """Возвращает множество имён оверлеев, для которых есть JSON-файлы (с кэшированием)."""
         if self._available_overlays_cache is None:
             overlays_dir = self.config_path / "overlays"
             if not overlays_dir.exists():
                 self._available_overlays_cache = set()
             else:
-                self._available_overlays_cache = {
-                    p.stem for p in overlays_dir.glob("*.json")
-                }
+                self._available_overlays_cache = {p.stem for p in overlays_dir.glob("*.json")}
         return self._available_overlays_cache
 
     # -------------------------------------------------------------------------
@@ -1435,33 +1139,19 @@ class PromptBuilder:
         include_knowledge: bool = True,
     ) -> str:
         parts: List[str] = []
-
         parts.append(self._build_core_block())
         parts.append(self._build_domain_block(domain))
-
         if intent:
             intent_block = self._build_intent_block(intent)
             if intent_block:
                 parts.append(intent_block)
-
         parts.append(self._build_audience_block(audience))
-
         if overlays:
             parts.append(self._build_overlays_block(overlays))
-
         if include_knowledge:
-            parts.append(
-                self._build_knowledge_block(
-                    text=text,
-                    domain=domain,
-                    intent=intent,
-                    overlays=overlays,
-                )
-            )
-
+            parts.append(self._build_knowledge_block(text=text, domain=domain, intent=intent, overlays=overlays))
         parts.append(self._build_output_format_block(output_mode))
         parts.append(self._build_text_block(text))
-
         return "\n\n".join(parts)
 
     # -------------------------------------------------------------------------
@@ -1469,12 +1159,8 @@ class PromptBuilder:
     # -------------------------------------------------------------------------
     def _build_core_block(self) -> str:
         core = self._get_core_config()
-
-        instructions = "\n".join(
-            f"- {instr}" for instr in core.basic_audit_instructions
-        )
+        instructions = "\n".join(f"- {instr}" for instr in core.basic_audit_instructions)
         forbidden = "\n".join(f"❌ {rule}" for rule in core.forbidden)
-
         return f"""{core.role}
 
 {core.priorities}
@@ -1494,10 +1180,7 @@ class PromptBuilder:
         intent_cfg = self._get_intent_config(intent)
         if intent_cfg is None:
             return ""
-
-        instructions = "\n".join(
-            f"- {instr}" for instr in intent_cfg.instructions
-        )
+        instructions = "\n".join(f"- {instr}" for instr in intent_cfg.instructions)
         return f"""Цель обработки: {intent_cfg.name}
 
 Требования:
@@ -1505,60 +1188,21 @@ class PromptBuilder:
 
     def _build_audience_block(self, audience: Optional[AudienceProfile]) -> str:
         if audience is None:
-            return (
-                "Аудитория: не указана. "
-                "Используй нейтральный профессиональный тон."
-            )
-
-        # Для стандартных профилей без кастомного описания – компактный формат
+            return "Аудитория: не указана. Используй нейтральный профессиональный тон."
         if not audience.description:
-            kind_display = {
-                "b2b": "B2B",
-                "b2c": "B2C",
-                "mixed": "смешанная",
-                "custom": "особая",
-            }.get(audience.kind, audience.kind)
-
-            expertise_display = {
-                "novice": "новички",
-                "pro": "эксперты",
-                "expert": "глубокие эксперты",
-            }.get(audience.expertise, audience.expertise)
-
-            formality_display = {
-                "casual": "расслабленный",
-                "neutral": "нейтральный",
-                "formal": "официальный",
-            }.get(audience.formality, audience.formality)
-
-            return (
-                f"Аудитория: {kind_display}, "
-                f"{expertise_display}, "
-                f"{formality_display} тон."
-            )
-
-        # Полный формат для кастомных профилей
-        description_line = (
-            f"\n- Описание: {audience.description}"
-            if audience.description
-            else ""
-        )
-        return (
-            "Аудитория:\n"
-            f"- Тип: {audience.kind}\n"
-            f"- Уровень экспертизы: {audience.expertise}\n"
-            f"- Формальность: {audience.formality}{description_line}"
-        )
+            kind_display = {"b2b": "B2B", "b2c": "B2C", "mixed": "смешанная", "custom": "особая"}.get(audience.kind, audience.kind)
+            expertise_display = {"novice": "новички", "pro": "эксперты", "expert": "глубокие эксперты"}.get(audience.expertise, audience.expertise)
+            formality_display = {"casual": "расслабленный", "neutral": "нейтральный", "formal": "официальный"}.get(audience.formality, audience.formality)
+            return f"Аудитория: {kind_display}, {expertise_display}, {formality_display} тон."
+        description_line = f"\n- Описание: {audience.description}" if audience.description else ""
+        return f"Аудитория:\n- Тип: {audience.kind}\n- Уровень экспертизы: {audience.expertise}\n- Формальность: {audience.formality}{description_line}"
 
     def _build_overlays_block(self, overlays: Sequence[str]) -> str:
         parts: List[str] = ["Дополнительные режимы:"]
         for overlay in overlays:
             cfg = self._get_overlay_config(overlay)
-            instructions = "\n".join(
-                f" - {instr}" for instr in cfg.instructions
-            )
+            instructions = "\n".join(f" - {instr}" for instr in cfg.instructions)
             parts.append(f"\n• {cfg.name}:\n{instructions}")
-
         return "\n".join(parts)
 
     # -------------------------------------------------------------------------
@@ -1571,17 +1215,9 @@ class PromptBuilder:
         intent: Optional[str],
         overlays: Sequence[str],
     ) -> Dict[str, Any]:
-        """
-        Централизованно определяет:
-        - итоговый список primary тегов для knowledge base
-        - список expanded тегов
-        - включён ли storytelling (с учётом allow_storytelling домена)
-        - включён ли marketing (с учётом allow_marketing домена)
-        """
+        """Централизованно определяет теги, сторителлинг и маркетинг."""
         primary_tags: List[str] = []
         expanded_tags: List[str] = []
-
-        # Домен
         primary_tags.extend(_get_primary_tags_for_category("domains", domain))
         expanded_tags.extend(_get_expanded_tags_for_category("domains", domain))
 
@@ -1589,61 +1225,33 @@ class PromptBuilder:
         available_overlays = self._get_available_overlays()
 
         if intent is not None:
-            primary_tags.extend(
-                _get_primary_tags_for_category("intents", intent)
-            )
-            expanded_tags.extend(
-                _get_expanded_tags_for_category("intents", intent)
-            )
+            primary_tags.extend(_get_primary_tags_for_category("intents", intent))
+            expanded_tags.extend(_get_expanded_tags_for_category("intents", intent))
             norm_intent = normalize_tag(intent)
-            if norm_intent not in KNOWN_INTENTS and norm_intent not in {
-                normalize_tag(x) for x in available_intents
-            }:
-                logger.warning(
-                    "Unknown intent '%s' passed to PromptBuilder", intent
-                )
+            normalized_available_intents = {normalize_tag(x) for x in available_intents}
+        if norm_intent not in KNOWN_INTENTS and norm_intent not in normalized_available_intents:
+                logger.warning("Unknown intent '%s' passed to PromptBuilder", intent)
 
         for ov in overlays:
-            primary_tags.extend(
-                _get_primary_tags_for_category("overlays", ov)
-            )
-            expanded_tags.extend(
-                _get_expanded_tags_for_category("overlays", ov)
-            )
+            primary_tags.extend(_get_primary_tags_for_category("overlays", ov))
+            expanded_tags.extend(_get_expanded_tags_for_category("overlays", ov))
             norm_ov = normalize_tag(ov)
-            if norm_ov not in KNOWN_OVERLAYS and norm_ov not in {
-                normalize_tag(x) for x in available_overlays
-            }:
-                logger.warning(
-                    "Unknown overlay '%s' passed to PromptBuilder", ov
-                )
+            normalized_available_overlays = {normalize_tag(x) for x in available_overlays}
+        if norm_ov not in KNOWN_OVERLAYS and norm_ov not in normalized_available_overlays:
+                logger.warning("Unknown overlay '%s' passed to PromptBuilder", ov)
 
-        # Нормализация и дедупликация через canonical layer (патч ТП-4)
-        primary_set = {
-            normalize_tag(t) for t in primary_tags if isinstance(t, str)
-        }
-        expanded_set = {
-            normalize_tag(t) for t in expanded_tags if isinstance(t, str)
-        }
-        expanded_set -= primary_set  # не дублируем primary в expanded
+        primary_set = {normalize_tag(t) for t in primary_tags if isinstance(t, str)}
+        expanded_set = {normalize_tag(t) for t in expanded_tags if isinstance(t, str)}
+        expanded_set -= primary_set
 
-        storytelling_requested = _has_mode(
-            intent, overlays, {"storytelling", "story", "narrative"}
-        )
-        marketing_requested = _has_mode(
-            intent, overlays, {"marketingpush", "marketing", "sales"}
-        )
+        storytelling_requested = _has_mode(intent, overlays, {"storytelling", "story", "narrative"})
+        marketing_requested = _has_mode(intent, overlays, {"marketingpush", "marketing", "sales"})
 
         return {
             "tags": list(primary_set),
             "expanded_tags": list(expanded_set),
-            "storytelling_enabled": (
-                domain_cfg.allow_storytelling and storytelling_requested
-            ),
-            "marketing_enabled": (
-                domain_cfg.allow_marketing
-                and (domain == "marketing" or marketing_requested)
-            ),
+            "storytelling_enabled": domain_cfg.allow_storytelling and storytelling_requested,
+            "marketing_enabled": domain_cfg.allow_marketing and (domain == "marketing" or marketing_requested),
         }
 
     # -------------------------------------------------------------------------
@@ -1656,7 +1264,6 @@ class PromptBuilder:
         tags: List[str],
         expanded_tags: Set[str],
     ) -> str:
-        """Грамматика, стилистика и логика."""
         grammar_sample = _select_ranked_entries(
             kb.grammar_errors,
             _normalize_text_for_match(text),
@@ -1680,9 +1287,7 @@ class PromptBuilder:
             min_score=1,
         )
         logic_sample = _select_ranked_entries(
-            kb.logic_issues
-            if kb.logic_issues
-            else kb.stylistic_issues + kb.grammar_errors,
+            kb.logic_issues if kb.logic_issues else kb.stylistic_issues + kb.grammar_errors,
             _normalize_text_for_match(text),
             list(tags) + ["logic"],
             self.logic_limit,
@@ -1694,30 +1299,17 @@ class PromptBuilder:
         )
 
         grammar_lines: List[str] = [
-            (
-                f" • {err.get('wrong', '')} → "
-                f"{err.get('correct', '').strip()} "
-                f"({err.get('rule', '').strip()})"
-            )
-            for err in grammar_sample
-            if err.get("wrong") and err.get("correct")
+            f" • {err.get('wrong', '')} → {err.get('correct', '').strip()} ({err.get('rule', '').strip()})"
+            for err in grammar_sample if err.get("wrong") and err.get("correct")
         ] or [" • (нет примеров в базе)"]
 
         style_lines: List[str] = [
-            (
-                f" • {issue.get('wrong', '')} → "
-                f"{issue.get('correct', '').strip()} "
-                f"({issue.get('rule', '').strip()})"
-            )
-            for issue in style_sample
-            if issue.get("wrong")
+            f" • {issue.get('wrong', '')} → {issue.get('correct', '').strip()} ({issue.get('rule', '').strip()})"
+            for issue in style_sample if issue.get("wrong")
         ] or [" • (нет примеров в базе)"]
 
         logic_lines: List[str] = [
-            (
-                f" • {item.get('name', item.get('wrong', 'Проблема'))}: "
-                f"{item.get('rule', item.get('description', '')).strip()}"
-            )
+            f" • {item.get('name', item.get('wrong', 'Проблема'))}: {item.get('rule', item.get('description', '')).strip()}"
             for item in logic_sample
         ] or [" • (нет логических правил в базе)"]
 
@@ -1731,54 +1323,29 @@ class PromptBuilder:
         )
 
     def _build_composition_cohesion_errors_block(
-        self,
-        kb: KnowledgeBase,
-        tags: List[str],
-        expanded_tags: Set[str],
+        self, kb: KnowledgeBase, tags: List[str], expanded_tags: Set[str]
     ) -> str:
-        """Композиция, локальная связность, композиционные ошибки."""
         composition_principles_sample = _select_by_tags_or_all(
-            kb.composition_principles,
-            tags=tags + ["composition"],
-            limit=self.composition_limit,
-            expanded_tags=expanded_tags,
-            min_score=1,
+            kb.composition_principles, tags=tags + ["composition"], limit=self.composition_limit, expanded_tags=expanded_tags, min_score=1
         )
         composition_principles_lines: List[str] = [
-            (
-                f" • {entry.get('name', '')}: "
-                f"{entry.get('rule', entry.get('description', '')).strip()}"
-            )
+            f" • {entry.get('name', '')}: {entry.get('rule', entry.get('description', '')).strip()}"
             for entry in composition_principles_sample
         ] or [" • (нет принципов композиции в базе)"]
 
         local_cohesion_sample = _select_by_tags_or_all(
-            kb.local_cohesion,
-            tags=tags + ["cohesion"],
-            limit=self.cohesion_limit,
-            expanded_tags=expanded_tags,
-            min_score=1,
+            kb.local_cohesion, tags=tags + ["cohesion"], limit=self.cohesion_limit, expanded_tags=expanded_tags, min_score=1
         )
         local_cohesion_lines: List[str] = [
-            (
-                f" • {entry.get('name', '')}: "
-                f"{entry.get('rule', entry.get('description', '')).strip()}"
-            )
+            f" • {entry.get('name', '')}: {entry.get('rule', entry.get('description', '')).strip()}"
             for entry in local_cohesion_sample
         ] or [" • (нет приёмов локальной связности в базе)"]
 
         composition_errors_sample = _select_by_tags_or_all(
-            kb.composition_errors,
-            tags=tags + ["composition"],
-            limit=self.composition_errors_limit,
-            expanded_tags=expanded_tags,
-            min_score=1,
+            kb.composition_errors, tags=tags + ["composition"], limit=self.composition_errors_limit, expanded_tags=expanded_tags, min_score=1
         )
         composition_errors_lines: List[str] = [
-            (
-                f" • {entry.get('name', '')}: "
-                f"{entry.get('rule', entry.get('description', '')).strip()}"
-            )
+            f" • {entry.get('name', '')}: {entry.get('rule', entry.get('description', '')).strip()}"
             for entry in composition_errors_sample
         ] or [" • (нет примеров композиционных ошибок в базе)"]
 
@@ -1792,11 +1359,9 @@ class PromptBuilder:
         )
 
     def _build_nkrj_block(self, kb: KnowledgeBase) -> str:
-        """Блок норм НКРЯ, если есть."""
         nkrj_norms_lines = build_nkrj_norms_lines(kb)
         if not nkrj_norms_lines:
             return ""
-
         return (
             "\n\nНормы живого текста по корпусу Taiga Social Media "
             "(используй как статистический ориентир, а не как жёсткий шаблон):\n"
@@ -1804,19 +1369,11 @@ class PromptBuilder:
         )
 
     def _build_storytelling_block(
-        self,
-        kb: KnowledgeBase,
-        text: str,
-        tags: List[str],
-        expanded_tags: Set[str],
-        storytelling_enabled: bool,
+        self, kb: KnowledgeBase, text: str, tags: List[str], expanded_tags: Set[str], storytelling_enabled: bool
     ) -> str:
-        """Фреймворки сторителлинга, если разрешено."""
         if not storytelling_enabled or not kb.storytelling_frameworks:
             return ""
-
         normalized_text = _normalize_text_for_match(text)
-
         frameworks_sample = _select_ranked_entries(
             kb.storytelling_frameworks,
             normalized_text,
@@ -1829,42 +1386,23 @@ class PromptBuilder:
             debug_context="storytelling",
             min_score=1,
         )
-
         framework_lines: List[str] = []
         for fw in frameworks_sample:
             name = fw.get("name", "")
             steps = fw.get("steps", [])
-            step_names = [
-                step.get("name", "")
-                for step in steps
-                if isinstance(step, dict) and step.get("name")
-            ]
-            if not name or not step_names:
-                continue
-            framework_lines.append(f" • {name}: " + " → ".join(step_names))
-
+            step_names = [step.get("name", "") for step in steps if isinstance(step, dict) and step.get("name")]
+            if name and step_names:
+                framework_lines.append(f" • {name}: " + " → ".join(step_names))
         if not framework_lines:
             return ""
-
-        return (
-            "\n\nФреймворки сторителлинга (для структуры рассказа):\n"
-            + "\n".join(framework_lines)
-        )
+        return "\n\nФреймворки сторителлинга (для структуры рассказа):\n" + "\n".join(framework_lines)
 
     def _build_marketing_block(
-        self,
-        kb: KnowledgeBase,
-        text: str,
-        tags: List[str],
-        expanded_tags: Set[str],
-        marketing_enabled: bool,
+        self, kb: KnowledgeBase, text: str, tags: List[str], expanded_tags: Set[str], marketing_enabled: bool
     ) -> str:
-        """Маркетинговые шаблоны, если разрешено."""
         if not marketing_enabled or not kb.marketing_templates:
             return ""
-
         normalized_text = _normalize_text_for_match(text)
-
         templates_sample = _select_ranked_entries(
             kb.marketing_templates,
             normalized_text,
@@ -1877,43 +1415,24 @@ class PromptBuilder:
             debug_context="marketing",
             min_score=1,
         )
-
         template_lines: List[str] = []
         for tpl in templates_sample:
             name = tpl.get("name", "")
             sections = tpl.get("sections", [])
-            section_names = [
-                sec.get("name", "")
-                for sec in sections
-                if isinstance(sec, dict) and sec.get("name")
-            ]
-            if not name or not section_names:
-                continue
-            template_lines.append(f" • {name}: " + ", ".join(section_names))
-
+            section_names = [sec.get("name", "") for sec in sections if isinstance(sec, dict) and sec.get("name")]
+            if name and section_names:
+                template_lines.append(f" • {name}: " + ", ".join(section_names))
         if not template_lines:
             return ""
-
-        return (
-            "\n\nМаркетинговые шаблоны (структура текста по типу):\n"
-            + "\n".join(template_lines)
-        )
+        return "\n\nМаркетинговые шаблоны (структура текста по типу):\n" + "\n".join(template_lines)
 
     def _build_rhetoric_editorial_glossary_block(
-        self,
-        kb: KnowledgeBase,
-        domain: str,
-        text: str,
-        tags: List[str],
-        expanded_tags: Set[str],
+        self, kb: KnowledgeBase, domain: str, text: str, tags: List[str], expanded_tags: Set[str]
     ) -> str:
-        """Риторика, редакторские приёмы и глоссарий."""
         parts: List[str] = []
-
         # Риторика
         if kb.rhetoric_frameworks:
             normalized_text = _normalize_text_for_match(text)
-
             rhetoric_sample = _select_ranked_entries(
                 kb.rhetoric_frameworks,
                 normalized_text,
@@ -1930,30 +1449,15 @@ class PromptBuilder:
             for fw in rhetoric_sample:
                 name = fw.get("name", "")
                 steps = fw.get("steps", [])
-                step_names = [
-                    step.get("name", "")
-                    for step in steps
-                    if isinstance(step, dict) and step.get("name")
-                ]
+                step_names = [step.get("name", "") for step in steps if isinstance(step, dict) and step.get("name")]
                 if name and step_names:
-                    rhetoric_lines.append(
-                        f" • {name}: " + " → ".join(step_names)
-                    )
-
+                    rhetoric_lines.append(f" • {name}: " + " → ".join(step_names))
             if rhetoric_lines:
-                parts.append(
-                    "Риторические топосы и приёмы аргументации:\n"
-                    + "\n".join(rhetoric_lines)
-                )
-
+                parts.append("Риторические топосы и приёмы аргументации:\n" + "\n".join(rhetoric_lines))
         # Редакторские приёмы
         if kb.editorial_techniques:
             editorial_sample = _select_by_tags_or_all(
-                kb.editorial_techniques,
-                tags=tags + ["editing"],
-                limit=self.editorial_limit,
-                expanded_tags=expanded_tags,
-                min_score=1,
+                kb.editorial_techniques, tags=tags + ["editing"], limit=self.editorial_limit, expanded_tags=expanded_tags, min_score=1
             )
             editorial_lines: List[str] = []
             for tech in editorial_sample:
@@ -1963,7 +1467,6 @@ class PromptBuilder:
                 wrong = tech.get("example_wrong", "")
                 correct = tech.get("example_correct", "")
                 explanation = tech.get("example_explanation", "")
-
                 line = f" • {name}"
                 if category:
                     line += f" ({category})"
@@ -1975,19 +1478,12 @@ class PromptBuilder:
                         pair += f" ({explanation.strip()})"
                     line += f". {pair}"
                 editorial_lines.append(line)
-
             if editorial_lines:
-                parts.append(
-                    "Редакторские приёмы (по Норе Галь и другим редакторам):\n"
-                    + "\n".join(editorial_lines)
-                )
-
-        # Глоссарий (контекстный отбор)
+                parts.append("Редакторские приёмы (по Норе Галь и другим редакторам):\n" + "\n".join(editorial_lines))
+        # Глоссарий
         if kb.domain_glossary:
             relevant_terms: Dict[str, str] = {}
-            wanted_tags_set = {t.lower() for t in tags}
-
-            # Сначала точные термины из текста
+            wanted_tags_set = {normalize_tag(t) for t in tags if isinstance(t, str)}
             normalized_text = _normalize_text_for_match(text)
             for dom, dom_terms in kb.domain_glossary.items():
                 if isinstance(dom_terms, dict):
@@ -1998,99 +1494,83 @@ class PromptBuilder:
                                 break
                 if len(relevant_terms) >= self.glossary_limit:
                     break
-
-            # Потом доменные термины по тегам
             if len(relevant_terms) < self.glossary_limit:
-                domains_to_check = [domain] + [
-                    d for d in kb.domain_glossary.keys() if d != domain
-                ]
+                domains_to_check = [domain] + [d for d in kb.domain_glossary.keys() if d != domain]
                 for dom in domains_to_check:
                     if dom in kb.domain_glossary:
                         dom_terms = kb.domain_glossary[dom]
                         if isinstance(dom_terms, dict):
-                            if dom == domain or any(
-                                t in wanted_tags_set for t in [dom.lower()]
-                            ):
+                            if dom == domain or any(t in wanted_tags_set for t in [dom.lower()]):
                                 for term, definition in dom_terms.items():
                                     if term not in relevant_terms:
                                         relevant_terms[term] = definition
                     if len(relevant_terms) >= self.glossary_limit:
                         break
-
             if relevant_terms:
-                sample_items = list(relevant_terms.items())[
-                    : self.glossary_limit
-                ]
-                term_lines = [
-                    f" • {key}: {value}" for key, value in sample_items
-                ]
-                parts.append(
-                    "Глоссарий (релевантные термины):\n"
-                    + "\n".join(term_lines)
-                )
-
+                sample_items = list(relevant_terms.items())[: self.glossary_limit]
+                term_lines = [f" • {key}: {value}" for key, value in sample_items]
+                parts.append("Глоссарий (релевантные термины):\n" + "\n".join(term_lines))
         if not parts:
             return ""
-
         return "\n\n" + "\n\n".join(parts)
 
-    # -------------------------------------------------------------------------
-    # Стоп-слова (компактный, с учётом тегов запроса)
-    # -------------------------------------------------------------------------
-    def _build_stop_words_block(
-        self, kb: KnowledgeBase, primary_tags: List[str]
-    ) -> str:
-        """Формирует компактный блок стоп-слов по категориям,
-        отдавая приоритет категориям, пересекающимся с primary-тегами."""
-        stop_words_dict = kb.stop_words
-        if not isinstance(stop_words_dict, dict) or not stop_words_dict:
-            return "Стоп-слова и нежелательные конструкции: (нет данных)"
+# -------------------------------------------------------------------------
+# Стоп-слова
+# -------------------------------------------------------------------------
+def _build_stop_words_block(self, kb: KnowledgeBase, primary_tags: List[str]) -> str:
+    stop_words_dict = kb.stop_words
+    if not isinstance(stop_words_dict, dict) or not stop_words_dict:
+        return "Стоп-слова и нежелательные конструкции: (нет данных)"
 
-        tag_set = {t.lower() for t in primary_tags if isinstance(t, str)}
-        priority_categories: List[Tuple[str, List[str]]] = []
-        other_categories: List[Tuple[str, List[str]]] = []
+    tag_set = {normalize_tag(t) for t in primary_tags if isinstance(t, str)}
 
-        for category, words in stop_words_dict.items():
-            if not isinstance(category, str) or not isinstance(
-                words, (list, tuple)
-            ):
+    priority_categories: List[Tuple[str, List[str]]] = []
+    other_categories: List[Tuple[str, List[str]]] = []
+
+    for category, words in stop_words_dict.items():
+        if not isinstance(category, str) or not isinstance(words, (list, tuple)):
+            continue
+
+        category_norm = normalize_tag(category)
+        if category_norm in tag_set:
+            priority_categories.append((category, list(words)))
+        else:
+            other_categories.append((category, list(words)))
+
+    ordered_categories = priority_categories + sorted(
+        other_categories,
+        key=lambda x: x[0].lower(),
+    )
+
+    lines: List[str] = []
+    for category, words in ordered_categories[: self.stop_words_category_limit]:
+        clean_words: List[str] = []
+        seen = set()
+
+        for w in words:
+            if not isinstance(w, str):
                 continue
-            category_lower = category.strip().lower()
-            if category_lower in tag_set:
-                priority_categories.append((category, list(words)))
-            else:
-                other_categories.append((category, list(words)))
+            stripped = w.strip()
+            if stripped and stripped not in seen:
+                seen.add(stripped)
+                clean_words.append(stripped)
 
-        ordered_categories = priority_categories + sorted(
-            other_categories, key=lambda x: x[0].lower()
-        )
+        if not clean_words:
+            continue
 
-        lines: List[str] = []
-        for category, words in ordered_categories[: self.stop_words_category_limit]:
-            clean_words: List[str] = []
-            seen = set()
-            for w in words:
-                if not isinstance(w, str):
-                    continue
-                stripped = w.strip()
-                if stripped and stripped not in seen:
-                    seen.add(stripped)
-                    clean_words.append(stripped)
+        limited_words = clean_words[: self.stop_words_items_limit]
+        quoted_words = [f'"{w}"' for w in limited_words]
 
-            if not clean_words:
-                continue
+        if len(clean_words) > self.stop_words_items_limit:
+            quoted_words.append("…")
 
-            limited_words = clean_words[: self.stop_words_items_limit]
-            quoted_words = [f'"{w}"' for w in limited_words]
-            if len(clean_words) > self.stop_words_items_limit:
-                quoted_words.append("…")
-            lines.append(f"  • {category}: {', '.join(quoted_words)}")
+        lines.append(f"  • {category}: {', '.join(quoted_words)}")
 
-        if not lines:
-            return "Стоп-слова и нежелательные конструкции: (нет данных)"
+    if not lines:
+        return "Стоп-слова и нежелательные конструкции: (нет данных)"
 
-        header = "Стоп-слова и нежелательные конструкции (удаляй или переписывай):"
-        return header + "\n" + "\n".join(lines)
+    header = "Стоп-слова и нежелательные конструкции (удаляй или переписывай):"
+    return header + "\n" + "\n".join(lines)
 
     # -------------------------------------------------------------------------
     # Основной метод сборки knowledge блока
@@ -2104,10 +1584,7 @@ class PromptBuilder:
     ) -> str:
         kb = self._get_knowledge_base()
         domain_cfg = self._get_domain_config(domain)
-
-        features = self._resolve_prompt_features(
-            domain_cfg, domain, intent, overlays
-        )
+        features = self._resolve_prompt_features(domain_cfg, domain, intent, overlays)
         tags = features["tags"]
         expanded_tags = set(features["expanded_tags"])
         storytelling_enabled = features["storytelling_enabled"]
@@ -2116,30 +1593,15 @@ class PromptBuilder:
         if self.enable_selection_diagnostics:
             logger.debug(f"Resolved tags: {tags}")
             logger.debug(f"Expanded tags: {expanded_tags}")
-            logger.debug(
-                f"Storytelling enabled: {storytelling_enabled}, Marketing enabled: {marketing_enabled}"
-            )
+            logger.debug(f"Storytelling enabled: {storytelling_enabled}, Marketing enabled: {marketing_enabled}")
 
         stop_words_block = self._build_stop_words_block(kb, tags)
-
-        grammar_style_logic = self._build_grammar_style_logic_block(
-            kb, text, tags, expanded_tags
-        )
-        composition_cohesion = self._build_composition_cohesion_errors_block(
-            kb, tags, expanded_tags
-        )
+        grammar_style_logic = self._build_grammar_style_logic_block(kb, text, tags, expanded_tags)
+        composition_cohesion = self._build_composition_cohesion_errors_block(kb, tags, expanded_tags)
         nkrj_block = self._build_nkrj_block(kb)
-        storytelling_block = self._build_storytelling_block(
-            kb, text, tags, expanded_tags, storytelling_enabled
-        )
-        marketing_block = self._build_marketing_block(
-            kb, text, tags, expanded_tags, marketing_enabled
-        )
-        rhetoric_editorial_glossary = (
-            self._build_rhetoric_editorial_glossary_block(
-                kb, domain, text, tags, expanded_tags
-            )
-        )
+        storytelling_block = self._build_storytelling_block(kb, text, tags, expanded_tags, storytelling_enabled)
+        marketing_block = self._build_marketing_block(kb, text, tags, expanded_tags, marketing_enabled)
+        rhetoric_editorial_glossary = self._build_rhetoric_editorial_glossary_block(kb, domain, text, tags, expanded_tags)
 
         return (
             "База знаний:\n\n"
@@ -2167,7 +1629,6 @@ _DEFAULT_BUILDER: Optional[PromptBuilder] = None
 
 
 def _get_default_builder() -> PromptBuilder:
-    """Возвращает единственный экземпляр PromptBuilder (ленивая инициализация)."""
     global _DEFAULT_BUILDER
     if _DEFAULT_BUILDER is None:
         _DEFAULT_BUILDER = PromptBuilder()
@@ -2183,29 +1644,13 @@ def build_prompt(
     output_mode: str = "text_only",
 ) -> str:
     audience_map = {
-        "b2b": AudienceProfile(
-            kind="b2b",
-            expertise="pro",
-            formality="neutral",
-        ),
-        "b2c": AudienceProfile(
-            kind="b2c",
-            expertise="novice",
-            formality="casual",
-        ),
-        "mixed": AudienceProfile(
-            kind="mixed",
-            expertise="pro",
-            formality="neutral",
-        ),
+        "b2b": AudienceProfile(kind="b2b", expertise="pro", formality="neutral"),
+        "b2c": AudienceProfile(kind="b2c", expertise="novice", formality="casual"),
+        "mixed": AudienceProfile(kind="mixed", expertise="pro", formality="neutral"),
     }
-
     if audience_type not in audience_map:
-        logger.warning(
-            f"Unknown audience_type '{audience_type}', falling back to 'b2b'"
-        )
+        logger.warning(f"Unknown audience_type '{audience_type}', falling back to 'b2b'")
     audience = audience_map.get(audience_type, audience_map["b2b"])
-
     builder = _get_default_builder()
     return builder.build(
         text=text,
@@ -2218,105 +1663,66 @@ def build_prompt(
 
 
 # ============================================================================
-# Валидация конфигов и knowledge base (для вызова при старте приложения)
+# Валидация конфигов и knowledge base
 # ============================================================================
 
-
-def _validate_stop_words_structure(stop_words: Any) -> None:
-    """Проверяет, что stop_words – словарь со значениями-списками (или кортежами) строк."""
-    if not isinstance(stop_words, dict):
-        raise ValueError("stop_words must be a dict")
-    for category, words in stop_words.items():
-        if not isinstance(category, str):
-            raise ValueError(
-                f"stop_words category key must be str, got {type(category)}"
-            )
-        if not isinstance(words, (list, tuple)):
-            raise ValueError(
-                f"stop_words['{category}'] must be a list or tuple, got {type(words)}"
-            )
-        for i, w in enumerate(words):
-            if not isinstance(w, str):
-                raise ValueError(
-                    f"stop_words['{category}'][{i}] must be str, got {type(w)}"
-                )
-
-
-def _validate_entry_tags(
+def validate_entry_tags(
     entry: Dict[str, Any],
     entry_name: str,
     index: int,
-    known_tags: Set[str],
-    strict: bool = False,
+    strict: bool = True,
 ) -> None:
     """
-    Проверяет поле tags у одной KB-записи:
+    Проверяет поле tags у KB-записи:
     - tags должен быть list[str]
     - неизвестные теги → warning (strict=False) или ValueError (strict=True)
-    """
-    if "tags" not in entry:
-        return
 
+    Note: strict=False is currently used as a soft migration mode (only logs warnings).
+    """
+    if "tags" not in entry or entry["tags"] is None:
+        return
     tags = entry["tags"]
     if not isinstance(tags, list):
-        raise ValueError(
-            f"{entry_name}[{index}].tags must be a list, got {type(tags)}"
-        )
-
+        raise ValueError(f"{entry_name}[{index}].tags must be a list, got {type(tags)}")
     unknown: List[str] = []
     for j, tag in enumerate(tags):
         if not isinstance(tag, str):
-            raise ValueError(
-                f"{entry_name}[{index}].tags[{j}] must be str, got {type(tag)}"
-            )
+            raise ValueError(f"{entry_name}[{index}].tags[{j}] must be str, got {type(tag)}")
         norm = normalize_tag(tag)
-        if norm not in known_tags:
+        if norm not in KNOWN_TAGS:
             unknown.append(norm)
-
     if unknown:
-        message = (
-            f"{entry_name}[{index}] contains unknown tags: {sorted(set(unknown))}"
-        )
+        message = f"{entry_name}[{index}] contains unknown tags: {sorted(set(unknown))}"
         if strict:
             raise ValueError(message)
         logger.warning(message)
 
 
-def _validate_rule_entries(
-    entries: List[Dict[str, Any]], name: str, sample_size: int = 5
-) -> None:
-    """
-    Проверяет первые sample_size элементов списка entries:
-    - каждый элемент должен быть словарём;
-    - ключи wrong, correct, rule, description, name, category (если есть) должны быть строками;
-    - ключ tags (если есть) должен быть списком, а все его элементы – строками;
-    - хотя бы одно из полей wrong, rule, description, name не должно быть пустым.
-    """
+def _validate_stop_words_structure(stop_words: Any) -> None:
+    if not isinstance(stop_words, dict):
+        raise ValueError("stop_words must be a dict")
+    for category, words in stop_words.items():
+        if not isinstance(category, str):
+            raise ValueError(f"stop_words category key must be str, got {type(category)}")
+        if not isinstance(words, (list, tuple)):
+            raise ValueError(f"stop_words['{category}'] must be a list or tuple, got {type(words)}")
+        for i, w in enumerate(words):
+            if not isinstance(w, str):
+                raise ValueError(f"stop_words['{category}'][{i}] must be str, got {type(w)}")
+
+
+def _validate_rule_entries(entries: List[Dict[str, Any]], name: str, sample_size: int = 5) -> None:
     if not isinstance(entries, list):
         raise ValueError(f"{name} must be a list")
     for i, entry in enumerate(entries[:sample_size]):
         if not isinstance(entry, dict):
-            raise ValueError(
-                f"{name}[{i}] must be a dict, got {type(entry)}"
-            )
-
-        for str_key in (
-            "wrong",
-            "correct",
-            "rule",
-            "description",
-            "name",
-            "category",
-        ):
+            raise ValueError(f"{name}[{i}] must be a dict, got {type(entry)}")
+        for str_key in ("wrong", "correct", "rule", "description", "name", "category"):
             if str_key in entry:
                 val = entry[str_key]
                 if not isinstance(val, str):
-                    raise ValueError(
-                        f"{name}[{i}].{str_key} must be str, got {type(val)}"
-                    )
-
-        _validate_entry_tags(entry, name, i, KNOWN_KB_TAGS, strict=False)
-
+                    raise ValueError(f"{name}[{i}].{str_key} must be str, got {type(val)}")
+        validate_entry_tags(entry, name, i, strict=KB_TAGS_STRICT_VALIDATION)
         has_info = False
         for info_key in ("wrong", "rule", "description", "name"):
             val = entry.get(info_key)
@@ -2324,39 +1730,21 @@ def _validate_rule_entries(
                 has_info = True
                 break
         if not has_info:
-            raise ValueError(
-                f"{name}[{i}] must contain non-empty 'wrong', 'rule', 'description', or 'name'"
-            )
+            raise ValueError(f"{name}[{i}] must contain non-empty 'wrong', 'rule', 'description', or 'name'")
 
 
-def _validate_named_entries(
-    entries: List[Dict[str, Any]], name: str, sample_size: int = 5
-) -> None:
-    """
-    Проверяет первые sample_size элементов списка entries, подходящих для composition/editorial блоков:
-    - каждый элемент должен быть словарём;
-    - ключи name, rule, description, category (если есть) должны быть строками;
-    - ключ tags (если есть) должен быть списком строк;
-    - хотя бы одно из полей name, rule, description не должно быть пустым.
-    """
+def _validate_named_entries(entries: List[Dict[str, Any]], name: str, sample_size: int = 5) -> None:
     if not isinstance(entries, list):
         raise ValueError(f"{name} must be a list")
     for i, entry in enumerate(entries[:sample_size]):
         if not isinstance(entry, dict):
-            raise ValueError(
-                f"{name}[{i}] must be a dict, got {type(entry)}"
-            )
-
+            raise ValueError(f"{name}[{i}] must be a dict, got {type(entry)}")
         for str_key in ("name", "rule", "description", "category"):
             if str_key in entry:
                 val = entry[str_key]
                 if not isinstance(val, str):
-                    raise ValueError(
-                        f"{name}[{i}].{str_key} must be str, got {type(val)}"
-                    )
-
-        _validate_entry_tags(entry, name, i, KNOWN_KB_TAGS, strict=False)
-
+                    raise ValueError(f"{name}[{i}].{str_key} must be str, got {type(val)}")
+        validate_entry_tags(entry, name, i, strict=KB_TAGS_STRICT_VALIDATION)
         has_info = False
         for info_key in ("name", "rule", "description"):
             val = entry.get(info_key)
@@ -2364,61 +1752,36 @@ def _validate_named_entries(
                 has_info = True
                 break
         if not has_info:
-            raise ValueError(
-                f"{name}[{i}] must contain non-empty 'name', 'rule', or 'description'"
-            )
+            raise ValueError(f"{name}[{i}] must contain non-empty 'name', 'rule', or 'description'")
 
 
-def _validate_structural_entries(
-    entries: List[Dict[str, Any]], name: str, sample_size: int = 5
-) -> None:
-    """Проверяет структурные записи (storytelling, marketing, rhetoric, composition, editorial)."""
+def _validate_structural_entries(entries: List[Dict[str, Any]], name: str, sample_size: int = 5) -> None:
     if not isinstance(entries, list):
         raise ValueError(f"{name} must be a list")
     for i, entry in enumerate(entries[:sample_size]):
         if not isinstance(entry, dict):
-            raise ValueError(
-                f"{name}[{i}] must be a dict, got {type(entry)}"
-            )
+            raise ValueError(f"{name}[{i}] must be a dict, got {type(entry)}")
         if "name" not in entry or not isinstance(entry["name"], str) or not entry["name"].strip():
             raise ValueError(f"{name}[{i}] must have a non-empty 'name'")
         for container_key in ("steps", "sections"):
             container = entry.get(container_key)
             if container is not None and not isinstance(container, list):
-                raise ValueError(
-                    f"{name}[{i}].{container_key} must be a list if present"
-                )
-        _validate_entry_tags(entry, name, i, KNOWN_KB_TAGS, strict=False)
+                raise ValueError(f"{name}[{i}].{container_key} must be a list if present")
+        validate_entry_tags(entry, name, i, strict=KB_TAGS_STRICT_VALIDATION)
 
 
-def _validate_logic_entries(
-    entries: List[Dict[str, Any]], name: str, sample_size: int = 5
-) -> None:
-    """
-    Проверяет первые sample_size элементов списка logic_issues:
-    - каждый элемент должен быть словарём;
-    - ключи name, wrong, rule, description, category (если есть) должны быть строками;
-    - ключ tags (если есть) должен быть списком строк;
-    - хотя бы одно из полей name, wrong, rule, description не должно быть пустым.
-    """
+def _validate_logic_entries(entries: List[Dict[str, Any]], name: str, sample_size: int = 5) -> None:
     if not isinstance(entries, list):
         raise ValueError(f"{name} must be a list")
     for i, entry in enumerate(entries[:sample_size]):
         if not isinstance(entry, dict):
-            raise ValueError(
-                f"{name}[{i}] must be a dict, got {type(entry)}"
-            )
-
+            raise ValueError(f"{name}[{i}] must be a dict, got {type(entry)}")
         for str_key in ("name", "wrong", "rule", "description", "category"):
             if str_key in entry:
                 val = entry[str_key]
                 if not isinstance(val, str):
-                    raise ValueError(
-                        f"{name}[{i}].{str_key} must be str, got {type(val)}"
-                    )
-
-        _validate_entry_tags(entry, name, i, KNOWN_KB_TAGS, strict=False)
-
+                    raise ValueError(f"{name}[{i}].{str_key} must be str, got {type(val)}")
+        validate_entry_tags(entry, name, i, strict=KB_TAGS_STRICT_VALIDATION)
         has_info = False
         for info_key in ("name", "wrong", "rule", "description"):
             val = entry.get(info_key)
@@ -2426,31 +1789,22 @@ def _validate_logic_entries(
                 has_info = True
                 break
         if not has_info:
-            raise ValueError(
-                f"{name}[{i}] must contain non-empty 'name', 'wrong', 'rule', or 'description'"
-            )
+            raise ValueError(f"{name}[{i}] must contain non-empty 'name', 'wrong', 'rule', or 'description'")
 
 
 def _validate_list_of_dicts(entries: List[Any], name: str) -> None:
-    """Проверяет, что список состоит из словарей."""
     if not isinstance(entries, list):
         raise ValueError(f"{name} must be a list")
     for i, entry in enumerate(entries):
         if not isinstance(entry, dict):
-            raise ValueError(
-                f"{name}[{i}] must be a dict, got {type(entry)}"
-            )
+            raise ValueError(f"{name}[{i}] must be a dict, got {type(entry)}")
 
 
 def validate_configs_and_kb(
     config_path: Path = Path("config"),
     kb_path: Path = Path("knowledge_base"),
 ) -> None:
-    """
-    Проверяет загрузку конфигов и KB, а также базовую работоспособность селекторов.
-    Выбрасывает исключение при обнаружении критических проблем.
-    """
-    # 1. Core config
+    """Проверяет загрузку конфигов и KB, а также базовую работоспособность селекторов."""
     try:
         core = load_core_config(config_path)
         if not core.role:
@@ -2458,12 +1812,9 @@ def validate_configs_and_kb(
     except Exception as e:
         raise RuntimeError(f"Core config validation failed: {e}") from e
 
-    # 2. Domain config – первый попавшийся (с сортировкой для стабильности)
     domains_dir = config_path / "domains"
     try:
-        domain_files = (
-            sorted(domains_dir.glob("*.json")) if domains_dir.exists() else []
-        )
+        domain_files = sorted(domains_dir.glob("*.json")) if domains_dir.exists() else []
         if domain_files:
             first_domain = domain_files[0].stem
             domain_cfg = load_domain_config(first_domain, config_path)
@@ -2472,12 +1823,9 @@ def validate_configs_and_kb(
     except Exception as e:
         raise RuntimeError(f"Domain config validation failed: {e}") from e
 
-    # 3. Intent config – первый попавшийся
     intents_dir = config_path / "intents"
     try:
-        intent_files = (
-            sorted(intents_dir.glob("*.json")) if intents_dir.exists() else []
-        )
+        intent_files = sorted(intents_dir.glob("*.json")) if intents_dir.exists() else []
         if intent_files:
             first_intent = intent_files[0].stem
             intent_cfg = load_intent_config(first_intent, config_path)
@@ -2486,12 +1834,9 @@ def validate_configs_and_kb(
     except Exception as e:
         raise RuntimeError(f"Intent config validation failed: {e}") from e
 
-    # 4. Overlay config – первый попавшийся (используем отдельную функцию)
     overlays_dir = config_path / "overlays"
     try:
-        overlay_files = (
-            sorted(overlays_dir.glob("*.json")) if overlays_dir.exists() else []
-        )
+        overlay_files = sorted(overlays_dir.glob("*.json")) if overlays_dir.exists() else []
         if overlay_files:
             first_overlay = overlay_files[0].stem
             overlay_cfg = load_overlay_config(first_overlay, config_path)
@@ -2500,7 +1845,6 @@ def validate_configs_and_kb(
     except Exception as e:
         raise RuntimeError(f"Overlay config validation failed: {e}") from e
 
-    # 5. Output format
     try:
         fmt = load_output_format("text_only", config_path)
         if not isinstance(fmt, str):
@@ -2508,18 +1852,13 @@ def validate_configs_and_kb(
     except Exception as e:
         raise RuntimeError(f"Output format validation failed: {e}") from e
 
-    # 6. Knowledge base – загружаем и проверяем структуру
     try:
         kb = load_knowledge_base(kb_path)
-
         _validate_stop_words_structure(kb.stop_words)
-
         _validate_rule_entries(kb.grammar_errors, "grammar_errors")
         _validate_rule_entries(kb.stylistic_issues, "stylistic_issues")
-
         if kb.logic_issues:
             _validate_logic_entries(kb.logic_issues, "logic_issues")
-
         if kb.storytelling_frameworks:
             _validate_structural_entries(kb.storytelling_frameworks, "storytelling_frameworks")
         if kb.marketing_templates:
@@ -2534,29 +1873,19 @@ def validate_configs_and_kb(
             _validate_structural_entries(kb.composition_errors, "composition_errors")
         if kb.editorial_techniques:
             _validate_structural_entries(kb.editorial_techniques, "editorial_techniques")
-
     except Exception as e:
-        raise RuntimeError(
-            f"Knowledge base validation failed: {e}"
-        ) from e
+        raise RuntimeError(f"Knowledge base validation failed: {e}") from e
 
-    # 7. Smoke-тесты селекторов на dummy-данных
     dummy_text = "тестовый текст"
     dummy_tags = ["marketing", "test"]
-
     try:
         _ = select_grammar_rules(kb, dummy_text, dummy_tags, limit=1)
         _ = select_style_issues(kb, dummy_text, dummy_tags, limit=1)
         _ = select_logic_issues(kb, dummy_text, dummy_tags, limit=1)
-        _ = _select_by_tags_or_all(
-            kb.composition_principles, dummy_tags, limit=1
-        )
+        _ = _select_by_tags_or_all(kb.composition_principles, dummy_tags, limit=1)
     except Exception as e:
-        raise RuntimeError(
-            f"Knowledge selectors smoke test failed: {e}"
-        ) from e
+        raise RuntimeError(f"Knowledge selectors smoke test failed: {e}") from e
 
-    # 8. NKRJ блок (опционально, но с отловом ошибок)
     try:
         _ = build_nkrj_norms_lines(kb)
     except Exception as e:
@@ -2568,7 +1897,6 @@ def validate_configs_and_kb(
 # ============================================================================
 # Self-test ТП-4 (запускается при python prompt_builder.py --self-test)
 # ============================================================================
-
 
 def _self_test_tag_normalization() -> None:
     """Быстрая проверка нормализации тегов и canonical layer."""
@@ -2585,30 +1913,29 @@ def _self_test_tag_normalization() -> None:
     assert result == ["antiai", "humanize"], f"dedup + normalize failed: {result}"
 
     entry: Dict[str, Any] = {"tags": ["anti_ai", "humanize", "anti-ai"]}
-    _normalize_entry_tags_inplace(entry)
+    normalize_entry_tags_inplace(entry)
     assert entry["tags"] == ["antiai", "humanize"], f"inplace normalize failed: {entry['tags']}"
 
     primary = _get_primary_tags_for_category("domains", "deai")
     assert "deai" in primary, f"domain deai primary not found: {primary}"
-
     expanded = _get_expanded_tags_for_category("domains", "deai")
     assert "antiai" in expanded, f"domain deai expanded missing antiai: {expanded}"
 
     primary_noragal = _get_primary_tags_for_category("intents", "noragal")
     assert "noragal" in primary_noragal, f"intent noragal not found: {primary_noragal}"
 
-    assert "antiai" in KNOWN_KB_TAGS, "antiai not in KNOWN_KB_TAGS"
-    assert "noragal" in KNOWN_KB_TAGS, "noragal not in KNOWN_KB_TAGS"
-    assert "marketingpush" in KNOWN_KB_TAGS, "marketingpush not in KNOWN_KB_TAGS"
+    assert "antiai" in KNOWN_TAGS, "antiai not in KNOWN_TAGS"
+    assert "noragal" in KNOWN_TAGS, "noragal not in KNOWN_TAGS"
+    assert "marketingpush" in KNOWN_TAGS, "marketingpush not in KNOWN_TAGS"
+    assert "factcheck" in KNOWN_TAGS, "factcheck not in KNOWN_TAGS"
+    assert "infostyle" in KNOWN_TAGS, "infostyle not in KNOWN_TAGS"
 
-    _validate_entry_tags(
+    validate_entry_tags(
         {"tags": ["antiai", "humanize"]},
         entry_name="test",
         index=0,
-        known_tags=KNOWN_KB_TAGS,
         strict=True,
     )
-
     print("✓ ТП-4 self-test passed")
 
 
