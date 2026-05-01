@@ -1,394 +1,160 @@
-"""
-llm_client.py
-
-Модуль для взаимодействия с LLM API.
-Поддерживает нескольких провайдеров через абстракцию,
-обработку ошибок, retry-логику и логирование.
-"""
-
 from __future__ import annotations
 
-import asyncio
-import logging
+import json
 import os
-from abc import ABC, abstractmethod
+import urllib.error
+import urllib.request
 from dataclasses import dataclass
 from enum import Enum
-from typing import Any, Dict, Optional, Type
+from typing import Any, Dict, List, Optional
 
-import httpx
-from dotenv import load_dotenv
 
-load_dotenv()
-logger = logging.getLogger(__name__)
+class LLMError(RuntimeError):
+    pass
 
 
 class LLMProvider(str, Enum):
-    """Поддерживаемые провайдеры LLM."""
-
-    PERPLEXITY = "perplexity"
-    OPENAI = "openai"
     OPENROUTER = "openrouter"
-    ANTHROPIC = "anthropic"
+    OPENAI = "openai"
+    PERPLEXITY = "perplexity"
 
 
 @dataclass(frozen=True)
-class LLMConfig:
-    """Конфигурация для LLM-клиента."""
-
-    provider: LLMProvider
-    model: str
-    api_key: str
-    temperature: float = 0.3
-    max_tokens: int = 4000
-    timeout: float = 60.0
-    max_retries: int = 3
-    retry_delay: float = 1.0
-
-
-@dataclass(frozen=True)
-class LLMResponse:
-    """Ответ от LLM."""
-
-    content: str
-    model: str
+class LLMResult:
+    text: str
     provider: str
-    tokens_used: Optional[int] = None
-    finish_reason: Optional[str] = None
+    model: str
+    usage: Dict[str, Any]
+    raw_response: Dict[str, Any]
 
 
-class LLMError(Exception):
-    """Базовое исключение для ошибок LLM."""
-
-
-class LLMAPIError(LLMError):
-    """Ошибка API (4xx, 5xx)."""
-
-    def __init__(self, message: str, status_code: Optional[int] = None):
-        super().__init__(message)
-        self.status_code = status_code
-
-
-class LLMTimeoutError(LLMError):
-    """Таймаут при запросе к LLM."""
-
-
-class LLMRateLimitError(LLMError):
-    """Превышен лимит запросов."""
-
-
-class BaseLLMClient(ABC):
-    """Абстрактный базовый класс для LLM-клиентов."""
-
-    def __init__(self, config: LLMConfig):
-        self.config = config
-        self._client = httpx.AsyncClient(timeout=config.timeout)
-
-    async def __aenter__(self):
-        return self
-
-    async def __aexit__(self, exc_type, exc_val, exc_tb):
-        await self._client.aclose()
-
-    async def close(self) -> None:
-        await self._client.aclose()
-
-    async def generate(self, prompt: str) -> LLMResponse:
-        attempt = 0
-        last_error: Optional[Exception] = None
-
-        while attempt < self.config.max_retries:
-            try:
-                logger.info(
-                    "LLM request attempt %s/%s",
-                    attempt + 1,
-                    self.config.max_retries,
-                    extra={
-                        "provider": self.config.provider.value,
-                        "model": self.config.model,
-                        "prompt_length": len(prompt),
-                    },
-                )
-
-                response = await self._call_api(prompt)
-
-                logger.info(
-                    "LLM request successful",
-                    extra={
-                        "provider": self.config.provider.value,
-                        "model": self.config.model,
-                        "response_length": len(response.content),
-                        "tokens_used": response.tokens_used,
-                    },
-                )
-                return response
-
-            except LLMRateLimitError as error:
-                last_error = error
-                delay = self.config.retry_delay * (2 ** attempt)
-                logger.warning(
-                    "Rate limit hit, retrying in %ss",
-                    delay,
-                    extra={"attempt": attempt + 1},
-                )
-                await asyncio.sleep(delay)
-
-            except (LLMTimeoutError, httpx.TimeoutException) as error:
-                last_error = error
-                logger.warning(
-                    "Timeout, retrying in %ss",
-                    self.config.retry_delay,
-                    extra={"attempt": attempt + 1},
-                )
-                await asyncio.sleep(self.config.retry_delay)
-
-            except LLMAPIError as error:
-                last_error = error
-                if error.status_code and 500 <= error.status_code < 600:
-                    logger.warning(
-                        "Server error %s, retrying",
-                        error.status_code,
-                        extra={"attempt": attempt + 1},
-                    )
-                    await asyncio.sleep(self.config.retry_delay)
-                else:
-                    raise
-
-            attempt += 1
-
-        logger.error(
-            "All %s attempts failed",
-            self.config.max_retries,
-            extra={"last_error": str(last_error)},
-        )
-        raise LLMError(f"Failed after {self.config.max_retries} attempts") from last_error
-
-    @abstractmethod
-    async def _call_api(self, prompt: str) -> LLMResponse:
-        raise NotImplementedError
+class OpenAICompatibleClient:
+    def __init__(self, provider: LLMProvider, api_key: Optional[str] = None) -> None:
+        self.provider = provider
+        self.api_key = api_key or os.getenv(self._env_var_name(provider), "")
+        self.base_url = self._base_url(provider)
+        if not self.api_key:
+            raise LLMError(
+                f"API key for provider '{provider.value}' is missing. "
+                f"Set {self._env_var_name(provider)} or pass api_key explicitly."
+            )
 
     @staticmethod
-    def _extract_error_message(response: httpx.Response) -> str:
-        try:
-            error_data = response.json()
-            error = error_data.get("error")
-            if isinstance(error, dict):
-                return error.get("message", str(error))
-            if error is not None:
-                return str(error)
-            return response.text
-        except Exception:  # noqa: BLE001
-            return response.text
-
-
-class PerplexityClient(BaseLLMClient):
-    """Клиент для Perplexity API."""
-
-    API_URL = "https://api.perplexity.ai/chat/completions"
-
-    async def _call_api(self, prompt: str) -> LLMResponse:
-        headers = {
-            "Authorization": f"Bearer {self.config.api_key}",
-            "Content-Type": "application/json",
+    def _env_var_name(provider: LLMProvider) -> str:
+        mapping = {
+            LLMProvider.OPENROUTER: "OPENROUTER_API_KEY",
+            LLMProvider.OPENAI: "OPENAI_API_KEY",
+            LLMProvider.PERPLEXITY: "PERPLEXITY_API_KEY",
         }
+        return mapping[provider]
+
+    @staticmethod
+    def _base_url(provider: LLMProvider) -> str:
+        mapping = {
+            LLMProvider.OPENROUTER: "https://openrouter.ai/api/v1/chat/completions",
+            LLMProvider.OPENAI: "https://api.openai.com/v1/chat/completions",
+            LLMProvider.PERPLEXITY: "https://api.perplexity.ai/chat/completions",
+        }
+        return mapping[provider]
+
+    @staticmethod
+    def _default_model(provider: LLMProvider) -> str:
+        mapping = {
+            LLMProvider.OPENROUTER: "openrouter/auto",
+            LLMProvider.OPENAI: "gpt-4.1-mini",
+            LLMProvider.PERPLEXITY: "sonar",
+        }
+        return mapping[provider]
+
+    def generate(
+        self,
+        prompt: str,
+        model: Optional[str] = None,
+        temperature: float = 0.3,
+        system_prompt: Optional[str] = None,
+        timeout: int = 90,
+    ) -> LLMResult:
+        messages: List[Dict[str, str]] = []
+        if system_prompt:
+            messages.append({"role": "system", "content": system_prompt})
+        messages.append({"role": "user", "content": prompt})
+
         payload = {
-            "model": self.config.model,
-            "messages": [{"role": "user", "content": prompt}],
-            "temperature": self.config.temperature,
-            "max_tokens": self.config.max_tokens,
+            "model": model or self._default_model(self.provider),
+            "messages": messages,
+            "temperature": temperature,
         }
+        data = json.dumps(payload).encode("utf-8")
 
-        try:
-            response = await self._client.post(self.API_URL, json=payload, headers=headers)
-            if response.status_code == 429:
-                raise LLMRateLimitError("Rate limit exceeded")
-            if response.status_code >= 400:
-                raise LLMAPIError(
-                    f"API error: {self._extract_error_message(response)}",
-                    status_code=response.status_code,
-                )
-            data = response.json()
-            return self._parse_response(data)
-        except httpx.TimeoutException as error:
-            raise LLMTimeoutError("Request timed out") from error
-        except httpx.HTTPError as error:
-            raise LLMAPIError(f"HTTP error: {error}") from error
-
-    def _parse_response(self, data: Dict[str, Any]) -> LLMResponse:
-        try:
-            return LLMResponse(
-                content=data["choices"][0]["message"]["content"],
-                model=self.config.model,
-                provider=self.config.provider.value,
-                tokens_used=data.get("usage", {}).get("total_tokens"),
-                finish_reason=data["choices"][0].get("finish_reason"),
-            )
-        except (KeyError, IndexError) as error:
-            raise LLMError(f"Failed to parse response: {error}") from error
-
-
-class OpenAIClient(BaseLLMClient):
-    """Клиент для OpenAI API."""
-
-    API_URL = "https://api.openai.com/v1/chat/completions"
-
-    async def _call_api(self, prompt: str) -> LLMResponse:
         headers = {
-            "Authorization": f"Bearer {self.config.api_key}",
+            "Authorization": f"Bearer {self.api_key}",
             "Content-Type": "application/json",
         }
-        payload = {
-            "model": self.config.model,
-            "messages": [{"role": "user", "content": prompt}],
-            "temperature": self.config.temperature,
-            "max_tokens": self.config.max_tokens,
-        }
+        if self.provider is LLMProvider.OPENROUTER:
+            headers["HTTP-Referer"] = "https://localhost"
+            headers["X-Title"] = "text-editor-api"
 
-        try:
-            response = await self._client.post(self.API_URL, json=payload, headers=headers)
-            if response.status_code == 429:
-                raise LLMRateLimitError("Rate limit exceeded")
-            if response.status_code >= 400:
-                raise LLMAPIError(
-                    f"API error: {self._extract_error_message(response)}",
-                    status_code=response.status_code,
-                )
-            data = response.json()
-            return self._parse_response(data)
-        except httpx.TimeoutException as error:
-            raise LLMTimeoutError("Request timed out") from error
-        except httpx.HTTPError as error:
-            raise LLMAPIError(f"HTTP error: {error}") from error
-
-    def _parse_response(self, data: Dict[str, Any]) -> LLMResponse:
-        try:
-            return LLMResponse(
-                content=data["choices"][0]["message"]["content"],
-                model=self.config.model,
-                provider=self.config.provider.value,
-                tokens_used=data.get("usage", {}).get("total_tokens"),
-                finish_reason=data["choices"][0].get("finish_reason"),
-            )
-        except (KeyError, IndexError) as error:
-            raise LLMError(f"Failed to parse response: {error}") from error
-
-
-class OpenRouterClient(BaseLLMClient):
-    """Клиент для OpenRouter API."""
-
-    API_URL = "https://openrouter.ai/api/v1/chat/completions"
-
-    async def _call_api(self, prompt: str) -> LLMResponse:
-        headers = {
-            "Authorization": f"Bearer {self.config.api_key}",
-            "Content-Type": "application/json",
-            "HTTP-Referer": os.getenv("OPENROUTER_SITE_URL", "https://example.com"),
-            "X-Title": os.getenv("OPENROUTER_APP_NAME", "text-editor-docs"),
-        }
-        payload: Dict[str, Any] = {
-            "model": self.config.model,
-            "messages": [
-                {"role": "system", "content": "You are a helpful writing assistant."},
-                {"role": "user", "content": prompt},
-            ],
-            "temperature": self.config.temperature,
-            "max_tokens": self.config.max_tokens,
-        }
-
-        try:
-            response = await self._client.post(self.API_URL, json=payload, headers=headers)
-            if response.status_code == 429:
-                raise LLMRateLimitError("Rate limit exceeded")
-            if response.status_code >= 400:
-                raise LLMAPIError(
-                    f"API error: {self._extract_error_message(response)}",
-                    status_code=response.status_code,
-                )
-            data = response.json()
-            return self._parse_response(data)
-        except httpx.TimeoutException as error:
-            raise LLMTimeoutError("Request timed out") from error
-        except httpx.HTTPError as error:
-            raise LLMAPIError(f"HTTP error: {error}") from error
-
-    def _parse_response(self, data: Dict[str, Any]) -> LLMResponse:
-        try:
-            return LLMResponse(
-                content=data["choices"][0]["message"]["content"],
-                model=self.config.model,
-                provider=self.config.provider.value,
-                tokens_used=data.get("usage", {}).get("total_tokens"),
-                finish_reason=data["choices"][0].get("finish_reason"),
-            )
-        except (KeyError, IndexError) as error:
-            raise LLMError(f"Failed to parse response: {error}") from error
-
-
-def create_llm_client(
-    provider: LLMProvider = LLMProvider.PERPLEXITY,
-    model: Optional[str] = None,
-    api_key: Optional[str] = None,
-    temperature: float = 0.3,
-    max_tokens: int = 4000,
-    timeout: float = 60.0,
-    max_retries: int = 3,
-) -> BaseLLMClient:
-    """Фабрика LLM-клиентов."""
-    default_models = {
-        LLMProvider.PERPLEXITY: "sonar-pro",
-        LLMProvider.OPENAI: "gpt-4o-mini",
-        LLMProvider.OPENROUTER: "openrouter/auto",
-        LLMProvider.ANTHROPIC: "claude-3-5-sonnet-20241022",
-    }
-    env_keys = {
-        LLMProvider.PERPLEXITY: "PERPLEXITY_API_KEY",
-        LLMProvider.OPENAI: "OPENAI_API_KEY",
-        LLMProvider.OPENROUTER: "OPENROUTER_API_KEY",
-        LLMProvider.ANTHROPIC: "ANTHROPIC_API_KEY",
-    }
-    client_classes: Dict[LLMProvider, Type[BaseLLMClient]] = {
-        LLMProvider.PERPLEXITY: PerplexityClient,
-        LLMProvider.OPENAI: OpenAIClient,
-        LLMProvider.OPENROUTER: OpenRouterClient,
-    }
-
-    if provider not in client_classes:
-        raise ValueError(
-            f"Unsupported provider: {provider.value}. Supported: "
-            f"{', '.join(item.value for item in client_classes)}"
+        request = urllib.request.Request(
+            self.base_url,
+            data=data,
+            headers=headers,
+            method="POST",
         )
 
-    resolved_model = model or default_models[provider]
-    resolved_api_key = api_key or os.getenv(env_keys[provider])
-    if not resolved_api_key:
-        raise ValueError(
-            "API key not provided and not found in environment variable "
-            f"{env_keys[provider]}"
+        try:
+            with urllib.request.urlopen(request, timeout=timeout) as response:
+                raw = response.read().decode("utf-8")
+                parsed = json.loads(raw)
+        except urllib.error.HTTPError as exc:
+            body = exc.read().decode("utf-8", errors="replace")
+            raise LLMError(f"HTTP {exc.code} from {self.provider.value}: {body}") from exc
+        except urllib.error.URLError as exc:
+            raise LLMError(f"Network error while calling {self.provider.value}: {exc}") from exc
+        except json.JSONDecodeError as exc:
+            raise LLMError(f"Invalid JSON from {self.provider.value}: {exc}") from exc
+
+        text = self._extract_text(parsed)
+        model_name = str(parsed.get("model") or payload["model"])
+        usage = parsed.get("usage") if isinstance(parsed.get("usage"), dict) else {}
+        return LLMResult(
+            text=text,
+            provider=self.provider.value,
+            model=model_name,
+            usage=usage,
+            raw_response=parsed,
         )
 
-    config = LLMConfig(
-        provider=provider,
-        model=resolved_model,
-        api_key=resolved_api_key,
-        temperature=temperature,
-        max_tokens=max_tokens,
-        timeout=timeout,
-        max_retries=max_retries,
-    )
-    return client_classes[provider](config)
+    @staticmethod
+    def _extract_text(payload: Dict[str, Any]) -> str:
+        choices = payload.get("choices")
+        if not isinstance(choices, list) or not choices:
+            raise LLMError("LLM response does not contain choices")
+        first = choices[0]
+        if not isinstance(first, dict):
+            raise LLMError("LLM response choice is malformed")
+        message = first.get("message")
+        if isinstance(message, dict):
+            content = message.get("content")
+            if isinstance(content, str):
+                return content
+            if isinstance(content, list):
+                chunks: List[str] = []
+                for item in content:
+                    if isinstance(item, dict) and isinstance(item.get("text"), str):
+                        chunks.append(item["text"])
+                if chunks:
+                    return "\n".join(chunks)
+        text = first.get("text")
+        if isinstance(text, str):
+            return text
+        raise LLMError("LLM response does not contain text content")
 
 
-async def generate_text(
-    prompt: str,
-    provider: LLMProvider = LLMProvider.PERPLEXITY,
-    model: Optional[str] = None,
-    temperature: float = 0.3,
-) -> str:
-    """Упрощённый helper для генерации текста."""
-    async with create_llm_client(
-        provider=provider,
-        model=model,
-        temperature=temperature,
-    ) as client:
-        response = await client.generate(prompt)
-    return response.content
+
+def create_llm_client(provider: str, api_key: Optional[str] = None) -> OpenAICompatibleClient:
+    normalized = provider.strip().lower()
+    try:
+        enum_provider = LLMProvider(normalized)
+    except ValueError as exc:
+        raise LLMError(f"Unsupported provider: {provider}") from exc
+    return OpenAICompatibleClient(enum_provider, api_key=api_key)
