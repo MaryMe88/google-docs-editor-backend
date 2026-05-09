@@ -14,6 +14,7 @@ from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional, Sequence, Set, Tuple, TypedDict, Union
 
 from src.tag_registry import build_known_tags, normalize_tag, normalize_tags
+from src.config_types import LimitsConfig
 
 logger = logging.getLogger(__name__)
 
@@ -310,7 +311,6 @@ def load_knowledge_base(base_path: Path = Path("knowledge_base")) -> KnowledgeBa
     style_raw = load_json_file(base_path / "stylistic_issues.json")
     storytelling = load_json_file(base_path / "storytelling_frameworks.json")
     marketing = load_json_file(base_path / "marketing_templates.json")
-
     logic_data = _load_optional_json(base_path / "logic_issues.json", {"issues": []})
     domain_glossary = _load_optional_json(base_path / "domain_glossary.json", {})
     composition_principles_raw = _load_optional_json(base_path / "composition_principles.json", {})
@@ -470,7 +470,7 @@ def _score_structural_entry(
                     if isinstance(step_desc, str) and step_desc.strip():
                         patterns.append(step_desc.strip())
 
-    seen = set()
+    seen: Set[str] = set()
     unique_patterns: List[str] = []
     for pattern in patterns:
         if pattern not in seen:
@@ -588,6 +588,7 @@ def _select_ranked_entries(
             idx,
             expanded_tags=expanded_tags,
         )
+
         if require_text_match and score < 1000:
             continue
         if min_score is not None and score < min_score:
@@ -632,7 +633,7 @@ def _select_ranked_entries(
     scored.sort(key=lambda item: (item[0], item[1]), reverse=True)
     _log_selection_debug(debug_context, candidates, scored, limit)
 
-    result: List[Dict[str, Any]] = []
+    result = []
     seen_keys: Set[Tuple[Any, ...]] = set()
     for _, _, entry in scored:
         key = _make_dedupe_key(entry)
@@ -779,12 +780,14 @@ def build_nkrj_norms_lines(
             f" • Ориентир по длине предложения: в среднем около {avg:.2f} слов; "
             "держи фразы преимущественно короткими и средними."
         )
+
     if short_share is not None and medium_share is not None and long_share is not None:
         lines.append(
             f" • Распределение длины предложений: короткие ≈ {short_share:.1%}, "
             f"средние ≈ {medium_share:.1%}, длинные ≈ {long_share:.1%}; "
             "не перегружай текст длинными периодами."
         )
+
     if variation is not None:
         lines.append(
             f" • Коэффициент вариативности длины предложений — около {variation:.2f}; "
@@ -1019,48 +1022,22 @@ class PromptBuilder:
         self,
         config_path: Path = Path("config"),
         kb_path: Path = Path("knowledge_base"),
-        grammar_limit: int = 10,
-        style_limit: int = 10,
-        logic_limit: int = 8,
-        composition_limit: int = 6,
-        cohesion_limit: int = 6,
-        composition_errors_limit: int = 6,
-        storytelling_limit: int = 4,
-        marketing_limit: int = 4,
-        rhetoric_limit: int = 4,
-        editorial_limit: int = 6,
-        glossary_limit: int = 10,
-        stop_words_category_limit: int = 8,
-        stop_words_items_limit: int = 5,
-        grammar_candidate_limit: Optional[int] = None,
-        style_candidate_limit: Optional[int] = None,
-        logic_candidate_limit: Optional[int] = None,
-        storytelling_candidate_limit: Optional[int] = None,
-        marketing_candidate_limit: Optional[int] = None,
-        rhetoric_candidate_limit: Optional[int] = None,
+        limits: LimitsConfig = LimitsConfig(),
         enable_selection_diagnostics: bool = False,
     ) -> None:
+        """
+        Инициализирует PromptBuilder.
+
+        Args:
+            config_path: Путь к директории конфигов.
+            kb_path: Путь к директории базы знаний.
+            limits: Лимиты выдачи и кандидатов для всех блоков KB.
+                    Пример: PromptBuilder(limits=LimitsConfig(grammar=5, style=5))
+            enable_selection_diagnostics: Включить DEBUG-логирование тегов и режимов.
+        """
         self.config_path = config_path
         self.kb_path = kb_path
-        self.grammar_limit = grammar_limit
-        self.style_limit = style_limit
-        self.logic_limit = logic_limit
-        self.composition_limit = composition_limit
-        self.cohesion_limit = cohesion_limit
-        self.composition_errors_limit = composition_errors_limit
-        self.storytelling_limit = storytelling_limit
-        self.marketing_limit = marketing_limit
-        self.rhetoric_limit = rhetoric_limit
-        self.editorial_limit = editorial_limit
-        self.glossary_limit = glossary_limit
-        self.stop_words_category_limit = stop_words_category_limit
-        self.stop_words_items_limit = stop_words_items_limit
-        self.grammar_candidate_limit = grammar_candidate_limit
-        self.style_candidate_limit = style_candidate_limit
-        self.logic_candidate_limit = logic_candidate_limit
-        self.storytelling_candidate_limit = storytelling_candidate_limit
-        self.marketing_candidate_limit = marketing_candidate_limit
-        self.rhetoric_candidate_limit = rhetoric_candidate_limit
+        self._limits = limits
         self.enable_selection_diagnostics = enable_selection_diagnostics
 
         self._core_cache: Optional[CoreConfig] = None
@@ -1330,6 +1307,7 @@ class PromptBuilder:
             overlays,
             {"storytelling", "story", "narrative"},
         )
+
         marketing_requested = _has_mode(
             intent,
             overlays,
@@ -1355,9 +1333,9 @@ class PromptBuilder:
             kb.grammar_errors,
             _normalize_text_for_match(text),
             tags,
-            self.grammar_limit,
+            self._limits.grammar,
             scorer=_score_rule_entry,
-            candidate_limit=self.grammar_candidate_limit,
+            candidate_limit=self._limits.grammar_candidates,
             debug_context="grammar",
             expanded_tags=expanded_tags if expanded_tags else None,
             min_score=1,
@@ -1367,9 +1345,9 @@ class PromptBuilder:
             kb.stylistic_issues,
             _normalize_text_for_match(text),
             tags,
-            self.style_limit,
+            self._limits.style,
             scorer=_score_rule_entry,
-            candidate_limit=self.style_candidate_limit,
+            candidate_limit=self._limits.style_candidates,
             debug_context="style",
             expanded_tags=expanded_tags if expanded_tags else None,
             min_score=1,
@@ -1379,9 +1357,9 @@ class PromptBuilder:
             kb.logic_issues if kb.logic_issues else kb.stylistic_issues + kb.grammar_errors,
             _normalize_text_for_match(text),
             list(tags) + ["logic"],
-            self.logic_limit,
+            self._limits.logic,
             scorer=_score_rule_entry,
-            candidate_limit=self.logic_candidate_limit,
+            candidate_limit=self._limits.logic_candidates,
             debug_context="logic",
             expanded_tags=expanded_tags if expanded_tags else None,
             min_score=1,
@@ -1425,7 +1403,7 @@ class PromptBuilder:
         composition_principles_sample = _select_by_tags_or_all(
             kb.composition_principles,
             tags=tags + ["composition"],
-            limit=self.composition_limit,
+            limit=self._limits.composition,
             expanded_tags=expanded_tags,
             min_score=1,
         )
@@ -1439,7 +1417,7 @@ class PromptBuilder:
         local_cohesion_sample = _select_by_tags_or_all(
             kb.local_cohesion,
             tags=tags + ["cohesion"],
-            limit=self.cohesion_limit,
+            limit=self._limits.cohesion,
             expanded_tags=expanded_tags,
             min_score=1,
         )
@@ -1453,7 +1431,7 @@ class PromptBuilder:
         composition_errors_sample = _select_by_tags_or_all(
             kb.composition_errors,
             tags=tags + ["composition"],
-            limit=self.composition_errors_limit,
+            limit=self._limits.composition_errors,
             expanded_tags=expanded_tags,
             min_score=1,
         )
@@ -1499,11 +1477,11 @@ class PromptBuilder:
             kb.storytelling_frameworks,
             normalized_text,
             tags + ["storytelling"],
-            self.storytelling_limit,
+            self._limits.storytelling,
             require_text_match=False,
             scorer=_score_structural_entry,
             expanded_tags=expanded_tags if expanded_tags else None,
-            candidate_limit=self.storytelling_candidate_limit,
+            candidate_limit=self._limits.storytelling_candidates,
             debug_context="storytelling",
             min_score=1,
         )
@@ -1517,6 +1495,7 @@ class PromptBuilder:
                 for step in steps
                 if isinstance(step, dict) and step.get("name")
             ]
+
             if name and step_names:
                 framework_lines.append(f" • {name}: " + " → ".join(step_names))
 
@@ -1543,11 +1522,11 @@ class PromptBuilder:
             kb.marketing_templates,
             normalized_text,
             tags + ["marketing"],
-            self.marketing_limit,
+            self._limits.marketing,
             require_text_match=False,
             scorer=_score_structural_entry,
             expanded_tags=expanded_tags if expanded_tags else None,
-            candidate_limit=self.marketing_candidate_limit,
+            candidate_limit=self._limits.marketing_candidates,
             debug_context="marketing",
             min_score=1,
         )
@@ -1561,6 +1540,7 @@ class PromptBuilder:
                 for section in sections
                 if isinstance(section, dict) and section.get("name")
             ]
+
             if name and section_names:
                 template_lines.append(f" • {name}: " + ", ".join(section_names))
 
@@ -1587,11 +1567,11 @@ class PromptBuilder:
                 kb.rhetoric_frameworks,
                 normalized_text,
                 tags + ["rhetoric"],
-                self.rhetoric_limit,
+                self._limits.rhetoric,
                 require_text_match=False,
                 scorer=_score_structural_entry,
                 expanded_tags=expanded_tags if expanded_tags else None,
-                candidate_limit=self.rhetoric_candidate_limit,
+                candidate_limit=self._limits.rhetoric_candidates,
                 debug_context="rhetoric",
                 min_score=1,
             )
@@ -1605,6 +1585,7 @@ class PromptBuilder:
                     for step in steps
                     if isinstance(step, dict) and step.get("name")
                 ]
+
                 if name and step_names:
                     rhetoric_lines.append(f" • {name}: " + " → ".join(step_names))
 
@@ -1617,7 +1598,7 @@ class PromptBuilder:
             editorial_sample = _select_by_tags_or_all(
                 kb.editorial_techniques,
                 tags=tags + ["editing"],
-                limit=self.editorial_limit,
+                limit=self._limits.editorial,
                 expanded_tags=expanded_tags,
                 min_score=1,
             )
@@ -1659,26 +1640,30 @@ class PromptBuilder:
                     for term, definition in dom_terms.items():
                         if _contains_pattern(normalized_text, term):
                             relevant_terms[term] = definition
-                            if len(relevant_terms) >= self.glossary_limit:
-                                break
-                if len(relevant_terms) >= self.glossary_limit:
+                        if len(relevant_terms) >= self._limits.glossary:
+                            break
+                if len(relevant_terms) >= self._limits.glossary:
                     break
 
-            if len(relevant_terms) < self.glossary_limit:
-                domains_to_check = [domain] + [item for item in kb.domain_glossary.keys() if item != domain]
+            if len(relevant_terms) < self._limits.glossary:
+                domains_to_check = [domain] + [
+                    item for item in kb.domain_glossary.keys() if item != domain
+                ]
                 for dom in domains_to_check:
                     if dom in kb.domain_glossary:
                         dom_terms = kb.domain_glossary[dom]
                         if isinstance(dom_terms, dict):
-                            if dom == domain or any(tag in wanted_tags_set for tag in [dom.lower()]):
+                            if dom == domain or any(
+                                tag in wanted_tags_set for tag in [dom.lower()]
+                            ):
                                 for term, definition in dom_terms.items():
                                     if term not in relevant_terms:
                                         relevant_terms[term] = definition
-                                    if len(relevant_terms) >= self.glossary_limit:
+                                    if len(relevant_terms) >= self._limits.glossary:
                                         break
 
             if relevant_terms:
-                sample_items = list(relevant_terms.items())[: self.glossary_limit]
+                sample_items = list(relevant_terms.items())[: self._limits.glossary]
                 term_lines = [f" • {key}: {value}" for key, value in sample_items]
                 parts.append("Глоссарий (релевантные термины):\n" + "\n".join(term_lines))
 
@@ -1712,7 +1697,7 @@ class PromptBuilder:
         )
 
         lines: List[str] = []
-        for category, words in ordered_categories[: self.stop_words_category_limit]:
+        for category, words in ordered_categories[: self._limits.stop_words_category]:
             clean_words: List[str] = []
             seen: Set[str] = set()
             for word in words:
@@ -1726,9 +1711,9 @@ class PromptBuilder:
             if not clean_words:
                 continue
 
-            limited_words = clean_words[: self.stop_words_items_limit]
+            limited_words = clean_words[: self._limits.stop_words_items]
             quoted_words = [f'"{word}"' for word in limited_words]
-            if len(clean_words) > self.stop_words_items_limit:
+            if len(clean_words) > self._limits.stop_words_items:
                 quoted_words.append("…")
             lines.append(f" • {category}: {', '.join(quoted_words)}")
 
@@ -1774,6 +1759,7 @@ class PromptBuilder:
             expanded_tags,
             storytelling_enabled,
         )
+
         marketing_block = self._build_marketing_block(
             kb,
             text,
@@ -1781,6 +1767,7 @@ class PromptBuilder:
             expanded_tags,
             marketing_enabled,
         )
+
         rhetoric_editorial_glossary = self._build_rhetoric_editorial_glossary_block(
             kb,
             domain,
@@ -1888,6 +1875,7 @@ def _validate_stop_words_structure(stop_words: Any) -> None:
             raise ValueError(
                 f"stop_words['{category}'] must be a list or tuple, got {type(words)}"
             )
+
         for i, word in enumerate(words):
             if not isinstance(word, str):
                 raise ValueError(

@@ -14,7 +14,7 @@ from typing import Any, List, Optional, Set, Tuple
 
 from fastapi import FastAPI, HTTPException, status
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel, Field, validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from src.llm_client import LLMError, LLMProvider, create_llm_client
 from src.prompt_builder import AudienceProfile, PromptBuilder
@@ -141,7 +141,8 @@ class AudienceRequest(BaseModel):
     formality: str = Field(default="neutral", description="Формальность: casual, neutral, formal")
     description: str = Field(default="", description="Дополнительное описание")
 
-    @validator("kind")
+    @field_validator("kind")
+    @classmethod
     def validate_kind(cls, value: str) -> str:
         allowed = {"b2b", "b2c", "mixed", "custom"}
         normalized = value.strip().lower()
@@ -149,7 +150,8 @@ class AudienceRequest(BaseModel):
             raise ValueError(f"kind must be one of {sorted(allowed)}")
         return normalized
 
-    @validator("expertise")
+    @field_validator("expertise")
+    @classmethod
     def validate_expertise(cls, value: str) -> str:
         allowed = {"novice", "pro", "expert"}
         normalized = value.strip().lower()
@@ -157,7 +159,8 @@ class AudienceRequest(BaseModel):
             raise ValueError(f"expertise must be one of {sorted(allowed)}")
         return normalized
 
-    @validator("formality")
+    @field_validator("formality")
+    @classmethod
     def validate_formality(cls, value: str) -> str:
         allowed = {"casual", "neutral", "formal"}
         normalized = value.strip().lower()
@@ -170,6 +173,27 @@ class EditRequest(BaseModel):
     """
     Основной запрос на редактирование текста.
     """
+
+    model_config = ConfigDict(
+        json_schema_extra={
+            "example": {
+                "text": "Наш сервис является самым лучшим на рынке.",
+                "domain": "marketing",
+                "intent": "storytelling",
+                "audience": {
+                    "kind": "b2b",
+                    "expertise": "pro",
+                    "formality": "neutral",
+                    "description": "Менеджеры отделов продаж",
+                },
+                "overlays": ["infostyle"],
+                "output_mode": "text_only",
+                "provider": "openrouter",
+                "model": "openrouter/auto",
+                "temperature": 0.3,
+            }
+        }
+    )
 
     text: str = Field(..., min_length=1, description="Текст для редактирования")
     domain: str = Field(
@@ -207,11 +231,13 @@ class EditRequest(BaseModel):
         description="Температура генерации",
     )
 
-    @validator("domain")
+    @field_validator("domain")
+    @classmethod
     def validate_domain(cls, value: str) -> str:
         return value.strip().lower()
 
-    @validator("intent")
+    @field_validator("intent")
+    @classmethod
     def validate_intent(cls, value: Optional[str]) -> Optional[str]:
         if value is None:
             return None
@@ -224,10 +250,10 @@ class EditRequest(BaseModel):
                 f"intent '{value}' not found in config/intents. "
                 f"Available: {sorted(available)}"
             )
-
         return normalized
 
-    @validator("overlays")
+    @field_validator("overlays")
+    @classmethod
     def validate_overlays(cls, value: List[str]) -> List[str]:
         available = get_available_overlays()
         normalized_values = [normalize_tag(item) for item in value]
@@ -238,10 +264,10 @@ class EditRequest(BaseModel):
                 f"overlays {invalid} not found in config/overlays. "
                 f"Available: {sorted(available)}"
             )
-
         return normalized_values
 
-    @validator("output_mode")
+    @field_validator("output_mode")
+    @classmethod
     def validate_output_mode(cls, value: str) -> str:
         allowed = {"text_only", "text_and_report"}
         normalized = value.strip().lower()
@@ -249,33 +275,14 @@ class EditRequest(BaseModel):
             raise ValueError(f"output_mode must be one of {sorted(allowed)}")
         return normalized
 
-    @validator("provider")
+    @field_validator("provider")
+    @classmethod
     def validate_provider(cls, value: str) -> str:
         normalized = value.strip().lower()
         allowed = _supported_providers()
         if normalized not in allowed:
             raise ValueError(f"provider must be one of {sorted(allowed)}")
         return normalized
-
-    class Config:
-        json_schema_extra = {
-            "example": {
-                "text": "Наш сервис является самым лучшим на рынке.",
-                "domain": "marketing",
-                "intent": "storytelling",
-                "audience": {
-                    "kind": "b2b",
-                    "expertise": "pro",
-                    "formality": "neutral",
-                    "description": "Менеджеры отделов продаж",
-                },
-                "overlays": ["infostyle"],
-                "output_mode": "text_only",
-                "provider": "openrouter",
-                "model": "openrouter/auto",
-                "temperature": 0.3,
-            }
-        }
 
 
 class EditResponse(BaseModel):
@@ -444,7 +451,6 @@ async def quick_edit(text: str, audience_type: str = "b2b") -> dict:
         audience=AudienceRequest(kind=audience_type),
         output_mode="text_only",
     )
-
     response = await edit_text(request)
     return {"edited_text": response.edited_text}
 
