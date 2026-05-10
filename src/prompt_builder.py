@@ -605,6 +605,60 @@ def _truncate_entries_by_chars(
     return result
 
 
+# ---------------------------------------------------------------------------
+# ФП-2: Quality-gated fallback — пороги стадий
+# ---------------------------------------------------------------------------
+#
+# Стадии срабатывают последовательно; каждая следующая — мягче предыдущей.
+# Если стадия вернула >= 1 результат — останавливаемся.
+#
+# Stage A  text_match (≥1000) AND tag_overlap (≥10)  → min_score = 1010
+# Stage B  text_match (≥1000) OR  tag_overlap (≥10)  → min_score =  200
+# Stage C  tag_overlap only                           → min_score =   10
+# Stage D  нейтральные записи с высоким info_score   → min_score =    0
+# Stage E  абсолютный fallback — топ-N по info_score → без порога
+#
+_FALLBACK_STAGES: List[Tuple[str, int]] = [
+    ("A: text+tags",  1010),
+    ("B: text|tags",   200),
+    ("C: tags_only",    10),
+    ("D: neutral",       0),
+]
+
+_STAGE_E_LABEL = "E: absolute"
+
+# ---------------------------------------------------------------------------
+# ФП-3: Dual validation — mandatory vs optional блоки KB
+# ---------------------------------------------------------------------------
+#
+# Mandatory: падение блока = падение всего build_prompt() → fail fast.
+# Optional:  падение блока = warning + пустая строка → graceful degradation.
+#
+_MANDATORY_KB_BLOCKS: frozenset = frozenset({"grammar", "style", "logic", "stop_words"})
+_OPTIONAL_KB_BLOCKS: frozenset = frozenset({
+    "storytelling", "marketing", "composition", "cohesion",
+    "composition_errors", "rhetoric", "editorial", "nkrj", "glossary",
+})
+
+
+def _collect_deduped(
+    scored: List[Tuple[int, int, Dict[str, Any]]],
+    limit: int,
+) -> List[Dict[str, Any]]:
+    """Извлекает дедуплицированный список из отсортированного scored."""
+    result: List[Dict[str, Any]] = []
+    seen_keys: Set[Tuple[Any, ...]] = set()
+    for _, _, entry in scored:
+        key = _make_dedupe_key(entry)
+        if key in seen_keys:
+            continue
+        seen_keys.add(key)
+        result.append(entry)
+        if len(result) >= limit:
+            break
+    return result
+
+
 def _select_ranked_entries(
     entries: List[Dict[str, Any]],
     normalized_text: str,
@@ -618,14 +672,27 @@ def _select_ranked_entries(
     min_score: Optional[int] = None,
     char_budget: Optional[int] = None,
 ) -> List[Dict[str, Any]]:
-    """Общая функция ранжирования записей с опциональным символьным бюджетом."""
+    """
+    Ранжирует записи с качественно-уровневым fallback (ФП-2).
+
+    Алгоритм:
+    1. Скоринг всех кандидатов через scorer().
+    2. Попытка Stage A→D с убывающим min_score порогом.
+       Первая стадия, давшая ≥ 1 результат, используется.
+    3. Если все стадии пусты — Stage E: топ-N по info_score без фильтра.
+    4. Символьный бюджет применяется к финальному результату.
+
+    Диагностика: при DEBUG-логировании выводит использованную стадию
+    и причину выбора каждой записи из топ-5.
+    """
     if not entries:
         return []
 
     candidates = entries if candidate_limit is None else entries[:candidate_limit]
     wanted_set = {normalize_tag(tag) for tag in wanted_tags if isinstance(tag, str)}
 
-    scored: List[Tuple[int, int, Dict[str, Any]]] = []
+    # --- Полный скоринг всех кандидатов ---
+    all_scored: List[Tuple[int, int, Dict[str, Any]]] = []
     for idx, entry in enumerate(candidates):
         score, tie = scorer(
             entry,
@@ -636,36 +703,35 @@ def _select_ranked_entries(
         )
         if require_text_match and score < 1000:
             continue
-        if min_score is not None and score < min_score:
-            continue
-        scored.append((score, tie, entry))
+        all_scored.append((score, tie, entry))
 
-    if not scored:
-        fallback_candidates = []
-        for idx, entry in enumerate(candidates):
-            entry_tags = entry.get("tags", [])
-            if not isinstance(entry_tags, (list, tuple)):
-                entry_tags = []
-            tag_set = {normalize_tag(tag) for tag in entry_tags if isinstance(tag, str)}
-            overlap = len(tag_set & wanted_set)
-            if wanted_set and overlap == 0:
-                continue
-            info = _entry_info_score(entry)
-            fallback_candidates.append((overlap, info, -idx, entry))
+    all_scored.sort(key=lambda item: (item[0], item[1]), reverse=True)
 
-        fallback_candidates.sort(key=lambda item: (item[0], item[1], item[2]), reverse=True)
+    # Внешний min_score — «жёсткий» порог вызывающего кода;
+    # перекрывает stage-пороги снизу, но не выше Stage A.
+    effective_floor = min_score if min_score is not None else 0
 
-        if debug_context:
-            logging.debug(
-                "[%s] Fallback: %s candidates, top tag overlap=%s",
-                debug_context,
-                len(candidates),
-                fallback_candidates[0][0] if fallback_candidates else 0,
-            )
+    # --- Stage A→D ---
+    used_stage: Optional[str] = None
+    result: List[Dict[str, Any]] = []
 
-        result: List[Dict[str, Any]] = []
+    for stage_label, stage_threshold in _FALLBACK_STAGES:
+        threshold = max(stage_threshold, effective_floor)
+        filtered = [item for item in all_scored if item[0] >= threshold]
+        if filtered:
+            result = _collect_deduped(filtered, limit)
+            used_stage = stage_label
+            break
+
+    # --- Stage E: абсолютный fallback по info_score ---
+    if not result:
+        stage_e_candidates = [
+            (_entry_info_score(entry), -idx, entry)
+            for idx, entry in enumerate(candidates)
+        ]
+        stage_e_candidates.sort(reverse=True)
         seen_keys: Set[Tuple[Any, ...]] = set()
-        for _, _, _, entry in fallback_candidates:
+        for _, _, entry in stage_e_candidates:
             key = _make_dedupe_key(entry)
             if key in seen_keys:
                 continue
@@ -673,21 +739,45 @@ def _select_ranked_entries(
             result.append(entry)
             if len(result) >= limit:
                 break
-        return _truncate_entries_by_chars(result, char_budget)
+        used_stage = _STAGE_E_LABEL
 
-    scored.sort(key=lambda item: (item[0], item[1]), reverse=True)
-    _log_selection_debug(debug_context, candidates, scored, limit)
+    # --- Диагностика ---
+    if debug_context and logging.getLogger().isEnabledFor(logging.DEBUG):
+        top_items = [(s, e) for s, _, e in all_scored[:5]]
+        top_info = []
+        for score_value, entry in top_items:
+            name = entry.get("name", entry.get("wrong", "?"))[:30]
+            if score_value >= 1010:
+                reason = "text+tags"
+            elif score_value >= 1000:
+                reason = "text_match"
+            elif score_value >= 200:
+                reason = "partial_text"
+            elif score_value >= 10:
+                reason = "tags_only"
+            elif score_value > 0:
+                reason = "weak_signal"
+            else:
+                reason = "neutral"
+            top_info.append((score_value, name, reason))
 
-    result = []
-    seen_keys: Set[Tuple[Any, ...]] = set()
-    for _, _, entry in scored:
-        key = _make_dedupe_key(entry)
-        if key in seen_keys:
-            continue
-        seen_keys.add(key)
-        result.append(entry)
-        if len(result) >= limit:
-            break
+        logging.debug(
+            "[%s] stage=%s | candidates=%s | selected=%s | top=%s",
+            debug_context,
+            used_stage,
+            len(candidates),
+            len(result),
+            top_info,
+        )
+
+        if all_scored and len(result) < limit:
+            missed_count = len(all_scored) - len(result)
+            logging.debug(
+                "[%s] Missed due to stage threshold or limit: %s entries",
+                debug_context,
+                missed_count,
+            )
+
     return _truncate_entries_by_chars(result, char_budget)
 
 
@@ -1883,22 +1973,54 @@ class PromptBuilder:
                 },
             )
 
+        def _safe_optional(block_name: str, builder_fn: Any, *args: Any, **kwargs: Any) -> str:
+            """
+            Вызывает builder_fn для optional-блока.
+            При любой ошибке: WARNING в лог, возврат пустой строки.
+            Mandatory-блоки вызываются напрямую без обёртки — fail fast.
+            """
+            try:
+                return builder_fn(*args, **kwargs)
+            except Exception as exc:
+                logger.warning(
+                    "Optional KB block '%s' failed and will be skipped: %s: %s",
+                    block_name,
+                    type(exc).__name__,
+                    exc,
+                )
+                return ""
+
+        # --- Mandatory блоки: падение = исключение наверх ---
         stop_words_block = self._build_stop_words_block(kb, tags)
         grammar_style_logic = self._build_grammar_style_logic_block(
             kb, text, tags, expanded_tags, budget=budget
         )
-        composition_cohesion = self._build_composition_cohesion_errors_block(
-            kb, tags, expanded_tags, budget=budget
+
+        # --- Optional блоки: падение = warning + пустая строка ---
+        composition_cohesion = _safe_optional(
+            "composition/cohesion",
+            self._build_composition_cohesion_errors_block,
+            kb, tags, expanded_tags, budget=budget,
         )
-        nkrj_block = self._build_nkrj_block(kb, budget=budget)
-        storytelling_block = self._build_storytelling_block(
-            kb, text, tags, expanded_tags, storytelling_enabled, budget=budget
+        nkrj_block = _safe_optional(
+            "nkrj",
+            self._build_nkrj_block,
+            kb, budget=budget,
         )
-        marketing_block = self._build_marketing_block(
-            kb, text, tags, expanded_tags, marketing_enabled, budget=budget
+        storytelling_block = _safe_optional(
+            "storytelling",
+            self._build_storytelling_block,
+            kb, text, tags, expanded_tags, storytelling_enabled, budget=budget,
         )
-        rhetoric_editorial_glossary = self._build_rhetoric_editorial_glossary_block(
-            kb, domain, text, tags, expanded_tags, budget=budget
+        marketing_block = _safe_optional(
+            "marketing",
+            self._build_marketing_block,
+            kb, text, tags, expanded_tags, marketing_enabled, budget=budget,
+        )
+        rhetoric_editorial_glossary = _safe_optional(
+            "rhetoric/editorial/glossary",
+            self._build_rhetoric_editorial_glossary_block,
+            kb, domain, text, tags, expanded_tags, budget=budget,
         )
 
         return (
@@ -2119,8 +2241,29 @@ def _validate_list_of_dicts(entries: List[Any], name: str) -> None:
 def validate_configs_and_kb(
     config_path: Path = Path("config"),
     kb_path: Path = Path("knowledge_base"),
+    mode: str = "strict",
 ) -> None:
-    """Проверяет загрузку конфигов и базы знаний."""
+    """
+    Проверяет загрузку конфигов и базы знаний.
+
+    Args:
+        config_path: Путь к директории конфигов.
+        kb_path:     Путь к директории базы знаний.
+        mode:        Режим валидации:
+                     - "strict"  (default) — любая ошибка бросает RuntimeError.
+                       Используется при старте сервиса (lifespan).
+                     - "soft"    — ошибки в optional-блоках логируются как WARNING,
+                       mandatory-блоки по-прежнему бросают RuntimeError.
+                       Удобно для миграции и hot-reload.
+    """
+    if mode not in ("strict", "soft"):
+        raise ValueError(f"mode must be 'strict' or 'soft', got {mode!r}")
+
+    def _handle_optional_error(block: str, error: Exception) -> None:
+        msg = f"Optional KB block '{block}' validation failed: {error}"
+        if mode == "strict":
+            raise RuntimeError(msg) from error
+        logger.warning("%s — skipping (soft mode)", msg)
     try:
         core = load_core_config(config_path)
         if not core.role:
@@ -2175,22 +2318,25 @@ def validate_configs_and_kb(
         _validate_rule_entries(kb.stylistic_issues, "stylistic_issues")
         if kb.logic_issues:
             _validate_logic_entries(kb.logic_issues, "logic_issues")
-        if kb.storytelling_frameworks:
-            _validate_structural_entries(kb.storytelling_frameworks, "storytelling_frameworks")
-        if kb.marketing_templates:
-            _validate_structural_entries(kb.marketing_templates, "marketing_templates")
-        if kb.rhetoric_frameworks:
-            _validate_structural_entries(kb.rhetoric_frameworks, "rhetoric_frameworks")
-        if kb.composition_principles:
-            _validate_structural_entries(kb.composition_principles, "composition_principles")
-        if kb.local_cohesion:
-            _validate_structural_entries(kb.local_cohesion, "local_cohesion")
-        if kb.composition_errors:
-            _validate_structural_entries(kb.composition_errors, "composition_errors")
-        if kb.editorial_techniques:
-            _validate_structural_entries(kb.editorial_techniques, "editorial_techniques")
     except Exception as error:
-        raise RuntimeError(f"Knowledge base validation failed: {error}") from error
+        raise RuntimeError(f"Knowledge base validation failed (mandatory): {error}") from error
+
+    # --- Optional KB blocks: ошибки обрабатываются по mode ---
+    _optional_kb_checks = [
+        ("storytelling_frameworks", kb.storytelling_frameworks, _validate_structural_entries),
+        ("marketing_templates",     kb.marketing_templates,     _validate_structural_entries),
+        ("rhetoric_frameworks",     kb.rhetoric_frameworks,     _validate_structural_entries),
+        ("composition_principles",  kb.composition_principles,  _validate_structural_entries),
+        ("local_cohesion",          kb.local_cohesion,          _validate_structural_entries),
+        ("composition_errors",      kb.composition_errors,      _validate_structural_entries),
+        ("editorial_techniques",    kb.editorial_techniques,    _validate_structural_entries),
+    ]
+    for block_name, entries, validator in _optional_kb_checks:
+        if entries:
+            try:
+                validator(entries, block_name)
+            except Exception as error:
+                _handle_optional_error(block_name, error)
 
     dummy_text = "тестовый текст"
     dummy_tags = ["marketing", "test"]
