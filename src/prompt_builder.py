@@ -2,6 +2,7 @@
 prompt_builder.py
 
 Модуль для сборки финальных промптов из конфигов и базы знаний.
+Итоговая версия: базовый текущий prompt_builder + адаптация под KnowledgeLevel (ТП-1).
 """
 
 from __future__ import annotations
@@ -15,11 +16,15 @@ from typing import Any, Dict, Iterable, List, Optional, Sequence, Set, Tuple, Ty
 
 from src.tag_registry import build_known_tags, normalize_tag, normalize_tags
 from src.config_types import (
-    LimitsConfig,
-    KnowledgeBudget,
-    KnowledgeBudgetManager,
+    BlockBudget,
     CachePolicy,
     FileCache,
+    KnowledgeBudget,
+    KnowledgeBudgetManager,
+    KnowledgeLevel,
+    KNOWLEDGE_BUDGET_CHARS,
+    LimitsConfig,
+    blocks_allowed_at_level,
 )
 
 logger = logging.getLogger(__name__)
@@ -288,7 +293,9 @@ def _flatten_editorial_techniques(raw: Dict[str, Any]) -> List[EditorialTechniqu
                     "example_wrong": wrong,
                     "example_correct": correct,
                     "example_explanation": explanation,
-                    "tags": normalize_tags(tags) if tags else normalize_tags(["editing", "noragal"]),
+                    "tags": normalize_tags(tags)
+                    if tags
+                    else normalize_tags(["editing", "noragal"]),
                     "source": source,
                 }
             )
@@ -319,7 +326,9 @@ def load_knowledge_base(base_path: Path = Path("knowledge_base")) -> KnowledgeBa
     marketing = load_json_file(base_path / "marketing_templates.json")
     logic_data = _load_optional_json(base_path / "logic_issues.json", {"issues": []})
     domain_glossary = _load_optional_json(base_path / "domain_glossary.json", {})
-    composition_principles_raw = _load_optional_json(base_path / "composition_principles.json", {})
+    composition_principles_raw = _load_optional_json(
+        base_path / "composition_principles.json", {}
+    )
     local_cohesion_raw = _load_optional_json(base_path / "local_cohesion.json", {})
     composition_errors_raw = _load_optional_json(base_path / "composition_errors.json", {})
     rhetoric_raw = _load_optional_json(base_path / "rhetoric.json", {})
@@ -337,7 +346,9 @@ def load_knowledge_base(base_path: Path = Path("knowledge_base")) -> KnowledgeBa
         composition_principles=normalize_entries_tags(
             composition_principles_raw.get("composition_principles", [])
         ),
-        local_cohesion=normalize_entries_tags(local_cohesion_raw.get("local_cohesion", [])),
+        local_cohesion=normalize_entries_tags(
+            local_cohesion_raw.get("local_cohesion", [])
+        ),
         composition_errors=normalize_entries_tags(
             composition_errors_raw.get("composition_errors", [])
         ),
@@ -347,24 +358,6 @@ def load_knowledge_base(base_path: Path = Path("knowledge_base")) -> KnowledgeBa
         ),
         nkrj_structure_patterns=structure_data,
     )
-
-
-# --- KB file list (для mtime multi-check) ---
-_KB_FILES = [
-    "stop_words.json",
-    "grammar_errors.json",
-    "stylistic_issues.json",
-    "storytelling_frameworks.json",
-    "marketing_templates.json",
-    "logic_issues.json",
-    "domain_glossary.json",
-    "composition_principles.json",
-    "local_cohesion.json",
-    "composition_errors.json",
-    "rhetoric.json",
-    "editorial_techniques.json",
-    "nkrj_structure_patterns.json",
-]
 
 
 def _normalize_text_for_match(text: str) -> str:
@@ -567,7 +560,7 @@ def _log_selection_debug(
     )
 
     if len(scored) > limit:
-        missed = scored[limit: limit + 2]
+        missed = scored[limit : limit + 2]
         missed_info = [(item[0], item[2].get("name", "?")[:30]) for item in missed]
         logging.debug("[%s] Missed due to limit: %s", debug_context, missed_info)
 
@@ -575,88 +568,13 @@ def _log_selection_debug(
 def _make_dedupe_key(entry: Dict[str, Any]) -> Tuple[Any, ...]:
     """Строит ключ дедупликации записи."""
     if "id" in entry:
-        return "id", entry["id"]
+        return ("id", entry["id"])
     return (
         entry.get("wrong", ""),
         entry.get("rule", ""),
         entry.get("description", ""),
         entry.get("name", ""),
     )
-
-
-def _truncate_entries_by_chars(
-    entries: List[Dict[str, Any]],
-    char_budget: Optional[int],
-) -> List[Dict[str, Any]]:
-    """
-    Обрезает список записей до символьного бюджета.
-    Гарантирует, что хотя бы одна запись всегда включается.
-    """
-    if char_budget is None or not entries:
-        return entries
-    result: List[Dict[str, Any]] = []
-    used = 0
-    for entry in entries:
-        entry_len = len(str(entry))
-        if result and used + entry_len > char_budget:
-            break
-        result.append(entry)
-        used += entry_len
-    return result
-
-
-# ---------------------------------------------------------------------------
-# ФП-2: Quality-gated fallback — пороги стадий
-# ---------------------------------------------------------------------------
-#
-# Стадии срабатывают последовательно; каждая следующая — мягче предыдущей.
-# Если стадия вернула >= 1 результат — останавливаемся.
-#
-# Stage A  text_match (≥1000) AND tag_overlap (≥10)  → min_score = 1010
-# Stage B  text_match (≥1000) OR  tag_overlap (≥10)  → min_score =  200
-# Stage C  tag_overlap only                           → min_score =   10
-# Stage D  нейтральные записи с высоким info_score   → min_score =    0
-# Stage E  абсолютный fallback — топ-N по info_score → без порога
-#
-_FALLBACK_STAGES: List[Tuple[str, int]] = [
-    ("A: text+tags",  1010),
-    ("B: text|tags",   200),
-    ("C: tags_only",    10),
-    ("D: neutral",       0),
-]
-
-_STAGE_E_LABEL = "E: absolute"
-
-# ---------------------------------------------------------------------------
-# ФП-3: Dual validation — mandatory vs optional блоки KB
-# ---------------------------------------------------------------------------
-#
-# Mandatory: падение блока = падение всего build_prompt() → fail fast.
-# Optional:  падение блока = warning + пустая строка → graceful degradation.
-#
-_MANDATORY_KB_BLOCKS: frozenset = frozenset({"grammar", "style", "logic", "stop_words"})
-_OPTIONAL_KB_BLOCKS: frozenset = frozenset({
-    "storytelling", "marketing", "composition", "cohesion",
-    "composition_errors", "rhetoric", "editorial", "nkrj", "glossary",
-})
-
-
-def _collect_deduped(
-    scored: List[Tuple[int, int, Dict[str, Any]]],
-    limit: int,
-) -> List[Dict[str, Any]]:
-    """Извлекает дедуплицированный список из отсортированного scored."""
-    result: List[Dict[str, Any]] = []
-    seen_keys: Set[Tuple[Any, ...]] = set()
-    for _, _, entry in scored:
-        key = _make_dedupe_key(entry)
-        if key in seen_keys:
-            continue
-        seen_keys.add(key)
-        result.append(entry)
-        if len(result) >= limit:
-            break
-    return result
 
 
 def _select_ranked_entries(
@@ -670,29 +588,15 @@ def _select_ranked_entries(
     debug_context: str = "",
     expanded_tags: Optional[Set[str]] = None,
     min_score: Optional[int] = None,
-    char_budget: Optional[int] = None,
 ) -> List[Dict[str, Any]]:
-    """
-    Ранжирует записи с качественно-уровневым fallback (ФП-2).
-
-    Алгоритм:
-    1. Скоринг всех кандидатов через scorer().
-    2. Попытка Stage A→D с убывающим min_score порогом.
-       Первая стадия, давшая ≥ 1 результат, используется.
-    3. Если все стадии пусты — Stage E: топ-N по info_score без фильтра.
-    4. Символьный бюджет применяется к финальному результату.
-
-    Диагностика: при DEBUG-логировании выводит использованную стадию
-    и причину выбора каждой записи из топ-5.
-    """
+    """Общая функция ранжирования записей."""
     if not entries:
         return []
 
     candidates = entries if candidate_limit is None else entries[:candidate_limit]
     wanted_set = {normalize_tag(tag) for tag in wanted_tags if isinstance(tag, str)}
 
-    # --- Полный скоринг всех кандидатов ---
-    all_scored: List[Tuple[int, int, Dict[str, Any]]] = []
+    scored: List[Tuple[int, int, Dict[str, Any]]] = []
     for idx, entry in enumerate(candidates):
         score, tie = scorer(
             entry,
@@ -703,35 +607,36 @@ def _select_ranked_entries(
         )
         if require_text_match and score < 1000:
             continue
-        all_scored.append((score, tie, entry))
+        if min_score is not None and score < min_score:
+            continue
+        scored.append((score, tie, entry))
 
-    all_scored.sort(key=lambda item: (item[0], item[1]), reverse=True)
+    if not scored:
+        fallback_candidates = []
+        for idx, entry in enumerate(candidates):
+            entry_tags = entry.get("tags", [])
+            if not isinstance(entry_tags, (list, tuple)):
+                entry_tags = []
+            tag_set = {normalize_tag(tag) for tag in entry_tags if isinstance(tag, str)}
+            overlap = len(tag_set & wanted_set)
+            if wanted_set and overlap == 0:
+                continue
+            info = _entry_info_score(entry)
+            fallback_candidates.append((overlap, info, -idx, entry))
 
-    # Внешний min_score — «жёсткий» порог вызывающего кода;
-    # перекрывает stage-пороги снизу, но не выше Stage A.
-    effective_floor = min_score if min_score is not None else 0
+        fallback_candidates.sort(key=lambda item: (item[0], item[1], item[2]), reverse=True)
 
-    # --- Stage A→D ---
-    used_stage: Optional[str] = None
-    result: List[Dict[str, Any]] = []
+        if debug_context:
+            logging.debug(
+                "[%s] Fallback: %s candidates, top tag overlap=%s",
+                debug_context,
+                len(candidates),
+                fallback_candidates[0][0] if fallback_candidates else 0,
+            )
 
-    for stage_label, stage_threshold in _FALLBACK_STAGES:
-        threshold = max(stage_threshold, effective_floor)
-        filtered = [item for item in all_scored if item[0] >= threshold]
-        if filtered:
-            result = _collect_deduped(filtered, limit)
-            used_stage = stage_label
-            break
-
-    # --- Stage E: абсолютный fallback по info_score ---
-    if not result:
-        stage_e_candidates = [
-            (_entry_info_score(entry), -idx, entry)
-            for idx, entry in enumerate(candidates)
-        ]
-        stage_e_candidates.sort(reverse=True)
+        result: List[Dict[str, Any]] = []
         seen_keys: Set[Tuple[Any, ...]] = set()
-        for _, _, entry in stage_e_candidates:
+        for _, _, _, entry in fallback_candidates:
             key = _make_dedupe_key(entry)
             if key in seen_keys:
                 continue
@@ -739,46 +644,22 @@ def _select_ranked_entries(
             result.append(entry)
             if len(result) >= limit:
                 break
-        used_stage = _STAGE_E_LABEL
+        return result
 
-    # --- Диагностика ---
-    if debug_context and logging.getLogger().isEnabledFor(logging.DEBUG):
-        top_items = [(s, e) for s, _, e in all_scored[:5]]
-        top_info = []
-        for score_value, entry in top_items:
-            name = entry.get("name", entry.get("wrong", "?"))[:30]
-            if score_value >= 1010:
-                reason = "text+tags"
-            elif score_value >= 1000:
-                reason = "text_match"
-            elif score_value >= 200:
-                reason = "partial_text"
-            elif score_value >= 10:
-                reason = "tags_only"
-            elif score_value > 0:
-                reason = "weak_signal"
-            else:
-                reason = "neutral"
-            top_info.append((score_value, name, reason))
+    scored.sort(key=lambda item: (item[0], item[1]), reverse=True)
+    _log_selection_debug(debug_context, candidates, scored, limit)
 
-        logging.debug(
-            "[%s] stage=%s | candidates=%s | selected=%s | top=%s",
-            debug_context,
-            used_stage,
-            len(candidates),
-            len(result),
-            top_info,
-        )
-
-        if all_scored and len(result) < limit:
-            missed_count = len(all_scored) - len(result)
-            logging.debug(
-                "[%s] Missed due to stage threshold or limit: %s entries",
-                debug_context,
-                missed_count,
-            )
-
-    return _truncate_entries_by_chars(result, char_budget)
+    result = []
+    seen_keys: Set[Tuple[Any, ...]] = set()
+    for _, _, entry in scored:
+        key = _make_dedupe_key(entry)
+        if key in seen_keys:
+            continue
+        seen_keys.add(key)
+        result.append(entry)
+        if len(result) >= limit:
+            break
+    return result
 
 
 def _match_tags(entry_tags: Iterable[str], wanted_tags: Iterable[str]) -> bool:
@@ -843,7 +724,9 @@ def select_logic_issues(
     """Публичный селектор logic."""
     normalized_text = _normalize_text_for_match(text)
     wanted_tags = list(tags) + ["logic"]
-    candidates = kb.logic_issues if kb.logic_issues else kb.stylistic_issues + kb.grammar_errors
+    candidates = (
+        kb.logic_issues if kb.logic_issues else kb.stylistic_issues + kb.grammar_errors
+    )
     return _select_ranked_entries(
         candidates,
         normalized_text,
@@ -862,7 +745,6 @@ def _select_by_tags_or_all(
     limit: int,
     expanded_tags: Optional[Set[str]] = None,
     min_score: Optional[int] = None,
-    char_budget: Optional[int] = None,
 ) -> List[Dict[str, Any]]:
     """Селектор по тегам для структурных блоков."""
     normalized_text = ""
@@ -875,7 +757,6 @@ def _select_by_tags_or_all(
         debug_context="tags_or_all",
         expanded_tags=expanded_tags,
         min_score=min_score,
-        char_budget=char_budget,
     )
 
 
@@ -976,15 +857,11 @@ def build_nkrj_norms_lines(
 
     flat_alert = _safe_float(thresholds.get("flat_paragraph_share_alert"))
     if flat_alert is not None:
-        lines.append(
-            f" • Тревожный порог для плоских абзацев — {flat_alert:.0%}."
-        )
+        lines.append(f" • Тревожный порог для плоских абзацев — {flat_alert:.0%}.")
 
     passive_alert = _safe_float(thresholds.get("passive_rate_alert"))
     if passive_alert is not None:
-        lines.append(
-            f" • Тревожный порог по пассиву — {passive_alert:.1f} на 100 строк."
-        )
+        lines.append(f" • Тревожный порог по пассиву — {passive_alert:.1f} на 100 строк.")
 
     sources = raw.get("sources", [])
     if isinstance(sources, list):
@@ -997,7 +874,10 @@ def build_nkrj_norms_lines(
             source_long = _safe_float(sentence_data.get("long_share"))
             source_passive = _safe_float(source_data.get("passive_rate_per_100_lines"))
             if source_name and source_avg is not None:
-                line = f" • Источник {source_name}: средняя длина предложения ≈ {source_avg:.2f} слов"
+                line = (
+                    f" • Источник {source_name}: средняя длина предложения ≈ "
+                    f"{source_avg:.2f} слов"
+                )
                 if source_long is not None:
                     line += f", длинных предложений ≈ {source_long:.1%}"
                 if source_passive is not None:
@@ -1033,7 +913,9 @@ def _has_mode(
     aliases: Iterable[str],
 ) -> bool:
     """Проверяет, активирован ли режим по intent/overlay."""
-    normalized_aliases = {normalize_tag(alias) for alias in aliases if isinstance(alias, str)}
+    normalized_aliases = {
+        normalize_tag(alias) for alias in aliases if isinstance(alias, str)
+    }
     values = {normalize_tag(item) for item in overlays if isinstance(item, str)}
     if isinstance(intent, str):
         values.add(normalize_tag(intent))
@@ -1152,6 +1034,31 @@ def _get_expanded_tags_for_category(category: str, value: str) -> List[str]:
     return []
 
 
+def _resolve_token_budget(level: KnowledgeLevel) -> Optional[int]:
+    """
+    Переводит char-budget из config_types.py в token_budget для KnowledgeBudgetManager.
+    В config_types.py KNOWLEDGE_BUDGET_CHARS хранится в символах:
+    KnowledgeLevel -> Optional[int]
+    А KnowledgeBudgetManager принимает token_budget и внутри сам
+    переводит его в символы через * 4.
+    """
+    char_budget = KNOWLEDGE_BUDGET_CHARS.get(level)
+
+    if char_budget is None:
+        return None
+
+    if not isinstance(char_budget, int):
+        raise TypeError(
+            f"KNOWLEDGE_BUDGET_CHARS[{level!r}] must be int | None, "
+            f"got {type(char_budget).__name__}"
+        )
+
+    if char_budget <= 0:
+        return 0
+
+    return max(1, char_budget // 4)
+
+
 class PromptBuilder:
     """Собирает финальный промпт из конфигов, базы знаний и параметров запроса."""
 
@@ -1160,8 +1067,7 @@ class PromptBuilder:
         config_path: Path = Path("config"),
         kb_path: Path = Path("knowledge_base"),
         limits: LimitsConfig = LimitsConfig(),
-        token_budget: Optional[int] = None,
-        cache_policy: Optional[CachePolicy] = None,
+        knowledge_level: KnowledgeLevel = KnowledgeLevel.FULL,
         enable_selection_diagnostics: bool = False,
     ) -> None:
         """
@@ -1171,80 +1077,95 @@ class PromptBuilder:
             config_path: Путь к директории конфигов.
             kb_path: Путь к директории базы знаний.
             limits: Лимиты выдачи и кандидатов для всех блоков KB.
-                    Пример: PromptBuilder(limits=LimitsConfig(grammar=5, style=5))
-            token_budget: Токены под блок «База знаний» (None = без ограничений).
-                          При задании активирует KnowledgeBudgetManager.
-            cache_policy: Политика инвалидации кэша (ФП-1).
-                          None → CachePolicy(check_mtime=True) — только mtime,
-                          без TTL (рекомендуемый дефолт для prod).
-                          Пример: CachePolicy(ttl_seconds=60, check_mtime=True)
+                Пример: PromptBuilder(limits=LimitsConfig(grammar=5, style=5))
+            knowledge_level: Режим включения блоков KB (ТП-1).
+                KnowledgeLevel.FULL (default) — все блоки.
+                KnowledgeLevel.CORE — только grammar/style/logic/stop_words.
+                KnowledgeLevel.STANDARD — без storytelling/marketing/rhetoric/editorial.
+                KnowledgeLevel.NONE — база знаний не включается.
             enable_selection_diagnostics: Включить DEBUG-логирование тегов и режимов.
         """
         self.config_path = config_path
         self.kb_path = kb_path
         self._limits = limits
-        self._budget_manager = KnowledgeBudgetManager(token_budget=token_budget)
-        self._cache_policy = cache_policy if cache_policy is not None else CachePolicy(check_mtime=True)
+        self.knowledge_level = knowledge_level
         self.enable_selection_diagnostics = enable_selection_diagnostics
 
-        # FileCache — единый кэш-менеджер для всех конфигов и KB
+        self._cache_policy = CachePolicy(check_mtime=False, ttl_seconds=None)
         self._cache = FileCache(policy=self._cache_policy)
 
-        # Кэши для доступных intents/overlays (сканирование директорий)
+        token_budget = _resolve_token_budget(self.knowledge_level)
+        self._budget_manager = KnowledgeBudgetManager(token_budget=token_budget)
+        self.knowledge_budget: KnowledgeBudget = self._budget_manager.allocate(
+            limits=self._limits,
+            level=self.knowledge_level,
+        )
+
+        self._core_cache: Optional[CoreConfig] = None
+        self._domain_cache: Dict[str, DomainConfig] = {}
+        self._output_format_cache: Dict[str, str] = {}
+        self._overlay_cache: Dict[str, OverlayConfig] = {}
+        self._intent_cache: Dict[str, IntentConfig] = {}
+        self._kb_cache: Optional[KnowledgeBase] = None
         self._available_intents_cache: Optional[Set[str]] = None
         self._available_overlays_cache: Optional[Set[str]] = None
 
     def reload_configs(self) -> None:
-        """Принудительно сбрасывает весь кэш (все конфиги и KB)."""
-        self._cache.invalidate()
+        """Сбрасывает все кэши."""
+        self._core_cache = None
+        self._domain_cache.clear()
+        self._output_format_cache.clear()
+        self._overlay_cache.clear()
+        self._intent_cache.clear()
+        self._kb_cache = None
         self._available_intents_cache = None
         self._available_overlays_cache = None
-        logger.debug("PromptBuilder: full cache reset via reload_configs()")
+        self._cache.clear()
 
     def _get_core_config(self) -> CoreConfig:
-        path = self.config_path / "core.json"
-        return self._cache.get_or_load("core", path, load_core_config, self.config_path)
+        if self._core_cache is None:
+            self._core_cache = load_core_config(self.config_path)
+        return self._core_cache
 
     def _get_domain_config(self, domain: str) -> DomainConfig:
-        path = self.config_path / "domains" / f"{domain}.json"
-        return self._cache.get_or_load(
-            f"domain:{domain}", path, load_domain_config, domain, self.config_path
-        )
+        if domain not in self._domain_cache:
+            self._domain_cache[domain] = load_domain_config(domain, self.config_path)
+        return self._domain_cache[domain]
 
     def _get_output_format(self, mode: str) -> str:
-        path = self.config_path / "output_format.json"
-        return self._cache.get_or_load(
-            f"output_format:{mode}", path, load_output_format, mode, self.config_path
-        )
+        if mode not in self._output_format_cache:
+            self._output_format_cache[mode] = load_output_format(mode, self.config_path)
+        return self._output_format_cache[mode]
 
     def _get_overlay_config(self, overlay: str) -> OverlayConfig:
-        path = self.config_path / "overlays" / f"{overlay}.json"
-        return self._cache.get_or_load(
-            f"overlay:{overlay}", path, load_overlay_config, overlay, self.config_path
-        )
+        if overlay not in self._overlay_cache:
+            self._overlay_cache[overlay] = load_overlay_config(overlay, self.config_path)
+        return self._overlay_cache[overlay]
 
     def _get_intent_config(self, intent: Optional[str]) -> Optional[IntentConfig]:
         if intent is None or intent == "neutral":
             return None
-        path = self.config_path / "intents" / f"{intent}.json"
-        return self._cache.get_or_load(
-            f"intent:{intent}", path, load_intent_config, intent, self.config_path
-        )
+        if intent not in self._intent_cache:
+            cfg = load_intent_config(intent, self.config_path)
+            if cfg is None:
+                return None
+            self._intent_cache[intent] = cfg
+        return self._intent_cache[intent]
 
     def _get_knowledge_base(self) -> KnowledgeBase:
-        kb_files = [self.kb_path / f for f in _KB_FILES]
-        return self._cache.get_or_load_multi(
-            "kb", kb_files, load_knowledge_base, self.kb_path
-        )
+        if self._kb_cache is None:
+            self._kb_cache = load_knowledge_base(self.kb_path)
+        return self._kb_cache
 
     def _get_available_intents(self) -> Set[str]:
-        # Сканирование директории кэшируем отдельно — без mtime (дёшево)
         if self._available_intents_cache is None:
             intents_dir = self.config_path / "intents"
             if not intents_dir.exists():
                 self._available_intents_cache = set()
             else:
-                self._available_intents_cache = {path.stem for path in intents_dir.glob("*.json")}
+                self._available_intents_cache = {
+                    path.stem for path in intents_dir.glob("*.json")
+                }
         return self._available_intents_cache
 
     def _get_available_overlays(self) -> Set[str]:
@@ -1253,10 +1174,10 @@ class PromptBuilder:
             if not overlays_dir.exists():
                 self._available_overlays_cache = set()
             else:
-                self._available_overlays_cache = {path.stem for path in overlays_dir.glob("*.json")}
+                self._available_overlays_cache = {
+                    path.stem for path in overlays_dir.glob("*.json")
+                }
         return self._available_overlays_cache
-
-    # --- Публичные методы, которые ждут main.py и контрактные тесты ---
 
     def get_core_config(self) -> CoreConfig:
         """Публичный доступ к core config."""
@@ -1273,8 +1194,6 @@ class PromptBuilder:
     def get_available_overlays(self) -> Set[str]:
         """Публичный список доступных overlays."""
         return set(self._get_available_overlays())
-
-    # --- Legacy алиасы для совместимости с кодом/тестами старого стиля ---
 
     def getcoreconfig(self) -> CoreConfig:
         """Legacy alias."""
@@ -1332,7 +1251,7 @@ class PromptBuilder:
         if overlays:
             parts.append(self._build_overlays_block(overlays))
 
-        if include_knowledge:
+        if include_knowledge and self.knowledge_level != KnowledgeLevel.NONE:
             parts.append(
                 self._build_knowledge_block(
                     text=text,
@@ -1348,7 +1267,9 @@ class PromptBuilder:
 
     def _build_core_block(self) -> str:
         core = self._get_core_config()
-        instructions = "\n".join(f"- {instruction}" for instruction in core.basic_audit_instructions)
+        instructions = "\n".join(
+            f"- {instruction}" for instruction in core.basic_audit_instructions
+        )
         forbidden = "\n".join(f"❌ {rule}" for rule in core.forbidden)
         return (
             f"{core.role}\n\n"
@@ -1365,7 +1286,9 @@ class PromptBuilder:
         intent_cfg = self._get_intent_config(intent)
         if intent_cfg is None:
             return ""
-        instructions = "\n".join(f"- {instruction}" for instruction in intent_cfg.instructions)
+        instructions = "\n".join(
+            f"- {instruction}" for instruction in intent_cfg.instructions
+        )
         return f"Цель обработки: {intent_cfg.name}\n\nТребования:\n{instructions}"
 
     def _build_audience_block(self, audience: Optional[AudienceProfile]) -> str:
@@ -1389,9 +1312,14 @@ class PromptBuilder:
                 "neutral": "нейтральный",
                 "formal": "официальный",
             }.get(audience.formality, audience.formality)
-            return f"Аудитория: {kind_display}, {expertise_display}, {formality_display} тон."
+            return (
+                f"Аудитория: {kind_display}, {expertise_display}, "
+                f"{formality_display} тон."
+            )
 
-        description_line = f"\n- Описание: {audience.description}" if audience.description else ""
+        description_line = (
+            f"\n- Описание: {audience.description}" if audience.description else ""
+        )
         return (
             f"Аудитория:\n"
             f"- Тип: {audience.kind}\n"
@@ -1429,20 +1357,32 @@ class PromptBuilder:
             primary_tags.extend(_get_primary_tags_for_category("intents", intent))
             expanded_tags.extend(_get_expanded_tags_for_category("intents", intent))
             norm_intent = normalize_tag(intent)
-            normalized_available_intents = {normalize_tag(item) for item in available_intents}
-            if norm_intent not in KNOWN_INTENTS and norm_intent not in normalized_available_intents:
+            normalized_available_intents = {
+                normalize_tag(item) for item in available_intents
+            }
+            if (
+                norm_intent not in KNOWN_INTENTS
+                and norm_intent not in normalized_available_intents
+            ):
                 logger.warning("Unknown intent '%s' passed to PromptBuilder", intent)
 
         for overlay in overlays:
             primary_tags.extend(_get_primary_tags_for_category("overlays", overlay))
             expanded_tags.extend(_get_expanded_tags_for_category("overlays", overlay))
             norm_overlay = normalize_tag(overlay)
-            normalized_available_overlays = {normalize_tag(item) for item in available_overlays}
-            if norm_overlay not in KNOWN_OVERLAYS and norm_overlay not in normalized_available_overlays:
+            normalized_available_overlays = {
+                normalize_tag(item) for item in available_overlays
+            }
+            if (
+                norm_overlay not in KNOWN_OVERLAYS
+                and norm_overlay not in normalized_available_overlays
+            ):
                 logger.warning("Unknown overlay '%s' passed to PromptBuilder", overlay)
 
         primary_set = {normalize_tag(tag) for tag in primary_tags if isinstance(tag, str)}
-        expanded_set = {normalize_tag(tag) for tag in expanded_tags if isinstance(tag, str)}
+        expanded_set = {
+            normalize_tag(tag) for tag in expanded_tags if isinstance(tag, str)
+        }
         expanded_set -= primary_set
 
         storytelling_requested = _has_mode(
@@ -1459,7 +1399,8 @@ class PromptBuilder:
         return {
             "tags": list(primary_set),
             "expanded_tags": list(expanded_set),
-            "storytelling_enabled": domain_cfg.allow_storytelling and storytelling_requested,
+            "storytelling_enabled": domain_cfg.allow_storytelling
+            and storytelling_requested,
             "marketing_enabled": domain_cfg.allow_marketing
             and (domain == "marketing" or marketing_requested),
         }
@@ -1475,9 +1416,6 @@ class PromptBuilder:
         grammar_limit = budget.grammar.entry_limit if budget else self._limits.grammar
         style_limit = budget.style.entry_limit if budget else self._limits.style
         logic_limit = budget.logic.entry_limit if budget else self._limits.logic
-        grammar_char = budget.grammar.char_budget if budget else None
-        style_char = budget.style.char_budget if budget else None
-        logic_char = budget.logic.char_budget if budget else None
 
         grammar_sample = _select_ranked_entries(
             kb.grammar_errors,
@@ -1489,7 +1427,6 @@ class PromptBuilder:
             debug_context="grammar",
             expanded_tags=expanded_tags if expanded_tags else None,
             min_score=1,
-            char_budget=grammar_char,
         )
 
         style_sample = _select_ranked_entries(
@@ -1502,7 +1439,6 @@ class PromptBuilder:
             debug_context="style",
             expanded_tags=expanded_tags if expanded_tags else None,
             min_score=1,
-            char_budget=style_char,
         )
 
         logic_sample = _select_ranked_entries(
@@ -1515,7 +1451,6 @@ class PromptBuilder:
             debug_context="logic",
             expanded_tags=expanded_tags if expanded_tags else None,
             min_score=1,
-            char_budget=logic_char,
         )
 
         grammar_lines: List[str] = [
@@ -1554,20 +1489,22 @@ class PromptBuilder:
         expanded_tags: Set[str],
         budget: Optional[KnowledgeBudget] = None,
     ) -> str:
-        comp_limit = budget.composition.entry_limit if budget else self._limits.composition
-        coh_limit = budget.cohesion.entry_limit if budget else self._limits.cohesion
-        cerr_limit = budget.composition_errors.entry_limit if budget else self._limits.composition_errors
-        comp_char = budget.composition.char_budget if budget else None
-        coh_char = budget.cohesion.char_budget if budget else None
-        cerr_char = budget.composition_errors.char_budget if budget else None
+        composition_limit = (
+            budget.composition.entry_limit if budget else self._limits.composition
+        )
+        cohesion_limit = budget.cohesion.entry_limit if budget else self._limits.cohesion
+        composition_errors_limit = (
+            budget.composition_errors.entry_limit
+            if budget
+            else self._limits.composition_errors
+        )
 
         composition_principles_sample = _select_by_tags_or_all(
             kb.composition_principles,
             tags=tags + ["composition"],
-            limit=comp_limit,
+            limit=composition_limit,
             expanded_tags=expanded_tags,
             min_score=1,
-            char_budget=comp_char,
         )
 
         composition_principles_lines: List[str] = [
@@ -1579,10 +1516,9 @@ class PromptBuilder:
         local_cohesion_sample = _select_by_tags_or_all(
             kb.local_cohesion,
             tags=tags + ["cohesion"],
-            limit=coh_limit,
+            limit=cohesion_limit,
             expanded_tags=expanded_tags,
             min_score=1,
-            char_budget=coh_char,
         )
 
         local_cohesion_lines: List[str] = [
@@ -1594,10 +1530,9 @@ class PromptBuilder:
         composition_errors_sample = _select_by_tags_or_all(
             kb.composition_errors,
             tags=tags + ["composition"],
-            limit=cerr_limit,
+            limit=composition_errors_limit,
             expanded_tags=expanded_tags,
             min_score=1,
-            char_budget=cerr_char,
         )
 
         composition_errors_lines: List[str] = [
@@ -1615,9 +1550,7 @@ class PromptBuilder:
             + "\n".join(composition_errors_lines)
         )
 
-    def _build_nkrj_block(self, kb: KnowledgeBase, budget: Optional[KnowledgeBudget] = None) -> str:
-        if budget is not None and not budget.nkrj.enabled:
-            return ""
+    def _build_nkrj_block(self, kb: KnowledgeBase) -> str:
         nkrj_norms_lines = build_nkrj_norms_lines(kb)
         if not nkrj_norms_lines:
             return ""
@@ -1638,25 +1571,24 @@ class PromptBuilder:
     ) -> str:
         if not storytelling_enabled or not kb.storytelling_frameworks:
             return ""
-        if budget is not None and not budget.storytelling.enabled:
+        if budget and not budget.storytelling.enabled:
             return ""
 
-        st_limit = budget.storytelling.entry_limit if budget else self._limits.storytelling
-        st_char = budget.storytelling.char_budget if budget else None
-
         normalized_text = _normalize_text_for_match(text)
+        storytelling_limit = (
+            budget.storytelling.entry_limit if budget else self._limits.storytelling
+        )
         frameworks_sample = _select_ranked_entries(
             kb.storytelling_frameworks,
             normalized_text,
             tags + ["storytelling"],
-            st_limit,
+            storytelling_limit,
             require_text_match=False,
             scorer=_score_structural_entry,
             expanded_tags=expanded_tags if expanded_tags else None,
             candidate_limit=self._limits.storytelling_candidates,
             debug_context="storytelling",
             min_score=1,
-            char_budget=st_char,
         )
 
         framework_lines: List[str] = []
@@ -1689,25 +1621,22 @@ class PromptBuilder:
     ) -> str:
         if not marketing_enabled or not kb.marketing_templates:
             return ""
-        if budget is not None and not budget.marketing.enabled:
+        if budget and not budget.marketing.enabled:
             return ""
 
-        mk_limit = budget.marketing.entry_limit if budget else self._limits.marketing
-        mk_char = budget.marketing.char_budget if budget else None
-
         normalized_text = _normalize_text_for_match(text)
+        marketing_limit = budget.marketing.entry_limit if budget else self._limits.marketing
         templates_sample = _select_ranked_entries(
             kb.marketing_templates,
             normalized_text,
             tags + ["marketing"],
-            mk_limit,
+            marketing_limit,
             require_text_match=False,
             scorer=_score_structural_entry,
             expanded_tags=expanded_tags if expanded_tags else None,
             candidate_limit=self._limits.marketing_candidates,
             debug_context="marketing",
             min_score=1,
-            char_budget=mk_char,
         )
 
         template_lines: List[str] = []
@@ -1740,133 +1669,129 @@ class PromptBuilder:
     ) -> str:
         parts: List[str] = []
 
-        if kb.rhetoric_frameworks:
-            rhet_enabled = budget is None or budget.rhetoric.enabled
-            if rhet_enabled:
-                rhet_limit = budget.rhetoric.entry_limit if budget else self._limits.rhetoric
-                rhet_char = budget.rhetoric.char_budget if budget else None
+        if kb.rhetoric_frameworks and (not budget or budget.rhetoric.enabled):
+            normalized_text = _normalize_text_for_match(text)
+            rhetoric_limit = budget.rhetoric.entry_limit if budget else self._limits.rhetoric
+            rhetoric_sample = _select_ranked_entries(
+                kb.rhetoric_frameworks,
+                normalized_text,
+                tags + ["rhetoric"],
+                rhetoric_limit,
+                require_text_match=False,
+                scorer=_score_structural_entry,
+                expanded_tags=expanded_tags if expanded_tags else None,
+                candidate_limit=self._limits.rhetoric_candidates,
+                debug_context="rhetoric",
+                min_score=1,
+            )
 
-                normalized_text = _normalize_text_for_match(text)
-                rhetoric_sample = _select_ranked_entries(
-                    kb.rhetoric_frameworks,
-                    normalized_text,
-                    tags + ["rhetoric"],
-                    rhet_limit,
-                    require_text_match=False,
-                    scorer=_score_structural_entry,
-                    expanded_tags=expanded_tags if expanded_tags else None,
-                    candidate_limit=self._limits.rhetoric_candidates,
-                    debug_context="rhetoric",
-                    min_score=1,
-                    char_budget=rhet_char,
+            rhetoric_lines: List[str] = []
+            for framework in rhetoric_sample:
+                name = framework.get("name", "")
+                steps = framework.get("steps", [])
+                step_names = [
+                    step.get("name", "")
+                    for step in steps
+                    if isinstance(step, dict) and step.get("name")
+                ]
+                if name and step_names:
+                    rhetoric_lines.append(f" • {name}: " + " → ".join(step_names))
+
+            if rhetoric_lines:
+                parts.append(
+                    "Риторические топосы и приёмы аргументации:\n"
+                    + "\n".join(rhetoric_lines)
                 )
 
-                rhetoric_lines: List[str] = []
-                for framework in rhetoric_sample:
-                    name = framework.get("name", "")
-                    steps = framework.get("steps", [])
-                    step_names = [
-                        step.get("name", "")
-                        for step in steps
-                        if isinstance(step, dict) and step.get("name")
-                    ]
-                    if name and step_names:
-                        rhetoric_lines.append(f" • {name}: " + " → ".join(step_names))
+        if kb.editorial_techniques and (not budget or budget.editorial.enabled):
+            editorial_limit = budget.editorial.entry_limit if budget else self._limits.editorial
+            editorial_sample = _select_by_tags_or_all(
+                kb.editorial_techniques,
+                tags=tags + ["editing"],
+                limit=editorial_limit,
+                expanded_tags=expanded_tags,
+                min_score=1,
+            )
 
-                if rhetoric_lines:
-                    parts.append(
-                        "Риторические топосы и приёмы аргументации:\n" + "\n".join(rhetoric_lines)
-                    )
+            editorial_lines: List[str] = []
+            for tech in editorial_sample:
+                name = tech.get("name", "")
+                category = tech.get("category", "")
+                description = tech.get("description", "")
+                wrong = tech.get("example_wrong", "")
+                correct = tech.get("example_correct", "")
+                explanation = tech.get("example_explanation", "")
 
-        if kb.editorial_techniques:
-            ed_enabled = budget is None or budget.editorial.enabled
-            if ed_enabled:
-                ed_limit = budget.editorial.entry_limit if budget else self._limits.editorial
-                ed_char = budget.editorial.char_budget if budget else None
+                line = f" • {name}"
+                if category:
+                    line += f" ({category})"
+                if description:
+                    line += f": {description.strip()}"
+                if wrong or correct:
+                    pair = f"Пример: {wrong} → {correct}"
+                    if explanation:
+                        pair += f" ({explanation.strip()})"
+                    line += f". {pair}"
+                editorial_lines.append(line)
 
-                editorial_sample = _select_by_tags_or_all(
-                    kb.editorial_techniques,
-                    tags=tags + ["editing"],
-                    limit=ed_limit,
-                    expanded_tags=expanded_tags,
-                    min_score=1,
-                    char_budget=ed_char,
+            if editorial_lines:
+                parts.append(
+                    "Редакторские приёмы (по Норе Галь и другим редакторам):\n"
+                    + "\n".join(editorial_lines)
                 )
 
-                editorial_lines: List[str] = []
-                for tech in editorial_sample:
-                    name = tech.get("name", "")
-                    category = tech.get("category", "")
-                    description = tech.get("description", "")
-                    wrong = tech.get("example_wrong", "")
-                    correct = tech.get("example_correct", "")
-                    explanation = tech.get("example_explanation", "")
+        if kb.domain_glossary and (not budget or budget.glossary.enabled):
+            glossary_limit = budget.glossary.entry_limit if budget else self._limits.glossary
+            relevant_terms: Dict[str, str] = {}
+            wanted_tags_set = {normalize_tag(tag) for tag in tags if isinstance(tag, str)}
+            normalized_text = _normalize_text_for_match(text)
 
-                    line = f" • {name}"
-                    if category:
-                        line += f" ({category})"
-                    if description:
-                        line += f": {description.strip()}"
-                    if wrong or correct:
-                        pair = f"Пример: {wrong} → {correct}"
-                        if explanation:
-                            pair += f" ({explanation.strip()})"
-                        line += f". {pair}"
-                    editorial_lines.append(line)
-
-                if editorial_lines:
-                    parts.append(
-                        "Редакторские приёмы (по Норе Галь и другим редакторам):\n"
-                        + "\n".join(editorial_lines)
-                    )
-
-        if kb.domain_glossary:
-            gl_enabled = budget is None or budget.glossary.enabled
-            if gl_enabled:
-                gl_limit = budget.glossary.entry_limit if budget else self._limits.glossary
-
-                relevant_terms: Dict[str, str] = {}
-                wanted_tags_set = {normalize_tag(tag) for tag in tags if isinstance(tag, str)}
-                normalized_text = _normalize_text_for_match(text)
-
-                for _, dom_terms in kb.domain_glossary.items():
-                    if isinstance(dom_terms, dict):
-                        for term, definition in dom_terms.items():
-                            if _contains_pattern(normalized_text, term):
-                                relevant_terms[term] = definition
-                            if len(relevant_terms) >= gl_limit:
+            for _, dom_terms in kb.domain_glossary.items():
+                if isinstance(dom_terms, dict):
+                    for term, definition in dom_terms.items():
+                        if _contains_pattern(normalized_text, term):
+                            relevant_terms[term] = definition
+                            if len(relevant_terms) >= glossary_limit:
                                 break
-                    if len(relevant_terms) >= gl_limit:
-                        break
+                if len(relevant_terms) >= glossary_limit:
+                    break
 
-                if len(relevant_terms) < gl_limit:
-                    domains_to_check = [domain] + [
-                        item for item in kb.domain_glossary.keys() if item != domain
-                    ]
-                    for dom in domains_to_check:
-                        if dom in kb.domain_glossary:
-                            dom_terms = kb.domain_glossary[dom]
-                            if isinstance(dom_terms, dict):
-                                if dom == domain or any(
-                                    tag in wanted_tags_set for tag in [dom.lower()]
-                                ):
-                                    for term, definition in dom_terms.items():
-                                        if term not in relevant_terms:
-                                            relevant_terms[term] = definition
-                                        if len(relevant_terms) >= gl_limit:
+            if len(relevant_terms) < glossary_limit:
+                domains_to_check = [domain] + [
+                    item for item in kb.domain_glossary.keys() if item != domain
+                ]
+                for dom in domains_to_check:
+                    if dom in kb.domain_glossary:
+                        dom_terms = kb.domain_glossary[dom]
+                        if isinstance(dom_terms, dict):
+                            if dom == domain or any(
+                                tag in wanted_tags_set for tag in [dom.lower()]
+                            ):
+                                for term, definition in dom_terms.items():
+                                    if term not in relevant_terms:
+                                        relevant_terms[term] = definition
+                                        if len(relevant_terms) >= glossary_limit:
                                             break
 
-                if relevant_terms:
-                    sample_items = list(relevant_terms.items())[:gl_limit]
-                    term_lines = [f" • {key}: {value}" for key, value in sample_items]
-                    parts.append("Глоссарий (релевантные термины):\n" + "\n".join(term_lines))
+            if relevant_terms:
+                sample_items = list(relevant_terms.items())[:glossary_limit]
+                term_lines = [f" • {key}: {value}" for key, value in sample_items]
+                parts.append("Глоссарий (релевантные термины):\n" + "\n".join(term_lines))
 
         if not parts:
             return ""
 
         return "\n\n" + "\n\n".join(parts)
 
-    def _build_stop_words_block(self, kb: KnowledgeBase, primary_tags: List[str]) -> str:
+    def _build_stop_words_block(
+        self,
+        kb: KnowledgeBase,
+        primary_tags: List[str],
+        budget: Optional[KnowledgeBudget] = None,
+    ) -> str:
+        if budget and not budget.stop_words.enabled:
+            return "Стоп-слова и нежелательные конструкции: (отключено по knowledge level)"
+
         stop_words_dict = kb.stop_words
         if not isinstance(stop_words_dict, dict) or not stop_words_dict:
             return "Стоп-слова и нежелательные конструкции: (нет данных)"
@@ -1875,7 +1800,6 @@ class PromptBuilder:
 
         priority_categories: List[Tuple[str, List[str]]] = []
         other_categories: List[Tuple[str, List[str]]] = []
-
         for category, words in stop_words_dict.items():
             if not isinstance(category, str) or not isinstance(words, (list, tuple)):
                 continue
@@ -1890,8 +1814,11 @@ class PromptBuilder:
             key=lambda item: item[0].lower(),
         )
 
+        stop_words_category_limit = (
+            budget.stop_words.entry_limit if budget else self._limits.stop_words_category
+        )
         lines: List[str] = []
-        for category, words in ordered_categories[: self._limits.stop_words_category]:
+        for category, words in ordered_categories[:stop_words_category_limit]:
             clean_words: List[str] = []
             seen: Set[str] = set()
             for word in words:
@@ -1942,97 +1869,116 @@ class PromptBuilder:
                 marketing_enabled,
             )
 
-        active_blocks: Set[str] = {"grammar", "style", "logic", "stop_words"}
-        if storytelling_enabled:
+        allowed_blocks = blocks_allowed_at_level(self.knowledge_level)
+
+        def _is_active(block: str, extra_condition: bool = True) -> bool:
+            if self.knowledge_level == KnowledgeLevel.FULL:
+                return extra_condition
+            return block in allowed_blocks and extra_condition
+
+        active_blocks: Set[str] = set()
+        if _is_active("grammar"):
+            active_blocks.add("grammar")
+        if _is_active("style"):
+            active_blocks.add("style")
+        if _is_active("logic"):
+            active_blocks.add("logic")
+        if _is_active("stop_words"):
+            active_blocks.add("stop_words")
+        if _is_active("storytelling", storytelling_enabled):
             active_blocks.add("storytelling")
-        if marketing_enabled:
+        if _is_active("marketing", marketing_enabled):
             active_blocks.add("marketing")
-        if kb.composition_principles:
+        if _is_active("composition", bool(kb.composition_principles)):
             active_blocks.add("composition")
-        if kb.local_cohesion:
+        if _is_active("cohesion", bool(kb.local_cohesion)):
             active_blocks.add("cohesion")
-        if kb.composition_errors:
+        if _is_active("composition_errors", bool(kb.composition_errors)):
             active_blocks.add("composition_errors")
-        if kb.rhetoric_frameworks:
+        if _is_active("rhetoric", bool(kb.rhetoric_frameworks)):
             active_blocks.add("rhetoric")
-        if kb.editorial_techniques:
+        if _is_active("editorial", bool(kb.editorial_techniques)):
             active_blocks.add("editorial")
-        if kb.nkrj_structure_patterns:
+        if _is_active("nkrj", bool(kb.nkrj_structure_patterns)):
             active_blocks.add("nkrj")
-        if kb.domain_glossary:
+        if _is_active("glossary", bool(kb.domain_glossary)):
             active_blocks.add("glossary")
 
-        budget = self._budget_manager.allocate(self._limits, active_blocks=active_blocks)
+        budget = self._budget_manager.allocate(
+            self._limits,
+            active_blocks=active_blocks,
+            level=self.knowledge_level,
+        )
 
-        if self.enable_selection_diagnostics:
-            logger.debug(
-                "KnowledgeBudget: %s",
-                {
-                    b: (budget.get(b).char_budget, budget.get(b).entry_limit, budget.get(b).enabled)
-                    for b in active_blocks
-                },
+        parts: List[str] = []
+
+        if budget.stop_words.enabled:
+            parts.append(self._build_stop_words_block(kb, tags, budget))
+
+        if budget.grammar.enabled or budget.style.enabled or budget.logic.enabled:
+            parts.append(
+                self._build_grammar_style_logic_block(
+                    kb,
+                    text,
+                    tags,
+                    expanded_tags,
+                    budget,
+                )
             )
 
-        def _safe_optional(block_name: str, builder_fn: Any, *args: Any, **kwargs: Any) -> str:
-            """
-            Вызывает builder_fn для optional-блока.
-            При любой ошибке: WARNING в лог, возврат пустой строки.
-            Mandatory-блоки вызываются напрямую без обёртки — fail fast.
-            """
-            try:
-                return builder_fn(*args, **kwargs)
-            except Exception as exc:
-                logger.warning(
-                    "Optional KB block '%s' failed and will be skipped: %s: %s",
-                    block_name,
-                    type(exc).__name__,
-                    exc,
+        if (
+            budget.composition.enabled
+            or budget.cohesion.enabled
+            or budget.composition_errors.enabled
+        ):
+            parts.append(
+                self._build_composition_cohesion_errors_block(
+                    kb,
+                    tags,
+                    expanded_tags,
+                    budget,
                 )
-                return ""
+            )
 
-        # --- Mandatory блоки: падение = исключение наверх ---
-        stop_words_block = self._build_stop_words_block(kb, tags)
-        grammar_style_logic = self._build_grammar_style_logic_block(
-            kb, text, tags, expanded_tags, budget=budget
-        )
+        if budget.nkrj.enabled:
+            nkrj_block = self._build_nkrj_block(kb)
+            if nkrj_block:
+                parts.append(nkrj_block.strip())
 
-        # --- Optional блоки: падение = warning + пустая строка ---
-        composition_cohesion = _safe_optional(
-            "composition/cohesion",
-            self._build_composition_cohesion_errors_block,
-            kb, tags, expanded_tags, budget=budget,
+        storytelling_block = self._build_storytelling_block(
+            kb,
+            text,
+            tags,
+            expanded_tags,
+            storytelling_enabled,
+            budget,
         )
-        nkrj_block = _safe_optional(
-            "nkrj",
-            self._build_nkrj_block,
-            kb, budget=budget,
-        )
-        storytelling_block = _safe_optional(
-            "storytelling",
-            self._build_storytelling_block,
-            kb, text, tags, expanded_tags, storytelling_enabled, budget=budget,
-        )
-        marketing_block = _safe_optional(
-            "marketing",
-            self._build_marketing_block,
-            kb, text, tags, expanded_tags, marketing_enabled, budget=budget,
-        )
-        rhetoric_editorial_glossary = _safe_optional(
-            "rhetoric/editorial/glossary",
-            self._build_rhetoric_editorial_glossary_block,
-            kb, domain, text, tags, expanded_tags, budget=budget,
-        )
+        if storytelling_block:
+            parts.append(storytelling_block.strip())
 
-        return (
-            "База знаний:\n\n"
-            f"{stop_words_block}\n\n"
-            f"{grammar_style_logic}\n\n"
-            f"{composition_cohesion}"
-            f"{nkrj_block}"
-            f"{storytelling_block}"
-            f"{marketing_block}"
-            f"{rhetoric_editorial_glossary}"
+        marketing_block = self._build_marketing_block(
+            kb,
+            text,
+            tags,
+            expanded_tags,
+            marketing_enabled,
+            budget,
         )
+        if marketing_block:
+            parts.append(marketing_block.strip())
+
+        rhetoric_editorial_glossary = self._build_rhetoric_editorial_glossary_block(
+            kb,
+            domain,
+            text,
+            tags,
+            expanded_tags,
+            budget,
+        )
+        if rhetoric_editorial_glossary:
+            parts.append(rhetoric_editorial_glossary.strip())
+
+        return "База знаний:\n\n" + "\n\n".join(parts)
 
     def _build_output_format_block(self, mode: str) -> str:
         format_text = self._get_output_format(mode)
@@ -2241,29 +2187,8 @@ def _validate_list_of_dicts(entries: List[Any], name: str) -> None:
 def validate_configs_and_kb(
     config_path: Path = Path("config"),
     kb_path: Path = Path("knowledge_base"),
-    mode: str = "strict",
 ) -> None:
-    """
-    Проверяет загрузку конфигов и базы знаний.
-
-    Args:
-        config_path: Путь к директории конфигов.
-        kb_path:     Путь к директории базы знаний.
-        mode:        Режим валидации:
-                     - "strict"  (default) — любая ошибка бросает RuntimeError.
-                       Используется при старте сервиса (lifespan).
-                     - "soft"    — ошибки в optional-блоках логируются как WARNING,
-                       mandatory-блоки по-прежнему бросают RuntimeError.
-                       Удобно для миграции и hot-reload.
-    """
-    if mode not in ("strict", "soft"):
-        raise ValueError(f"mode must be 'strict' or 'soft', got {mode!r}")
-
-    def _handle_optional_error(block: str, error: Exception) -> None:
-        msg = f"Optional KB block '{block}' validation failed: {error}"
-        if mode == "strict":
-            raise RuntimeError(msg) from error
-        logger.warning("%s — skipping (soft mode)", msg)
+    """Проверяет загрузку конфигов и базы знаний."""
     try:
         core = load_core_config(config_path)
         if not core.role:
@@ -2318,25 +2243,22 @@ def validate_configs_and_kb(
         _validate_rule_entries(kb.stylistic_issues, "stylistic_issues")
         if kb.logic_issues:
             _validate_logic_entries(kb.logic_issues, "logic_issues")
+        if kb.storytelling_frameworks:
+            _validate_structural_entries(kb.storytelling_frameworks, "storytelling_frameworks")
+        if kb.marketing_templates:
+            _validate_structural_entries(kb.marketing_templates, "marketing_templates")
+        if kb.rhetoric_frameworks:
+            _validate_structural_entries(kb.rhetoric_frameworks, "rhetoric_frameworks")
+        if kb.composition_principles:
+            _validate_structural_entries(kb.composition_principles, "composition_principles")
+        if kb.local_cohesion:
+            _validate_structural_entries(kb.local_cohesion, "local_cohesion")
+        if kb.composition_errors:
+            _validate_structural_entries(kb.composition_errors, "composition_errors")
+        if kb.editorial_techniques:
+            _validate_structural_entries(kb.editorial_techniques, "editorial_techniques")
     except Exception as error:
-        raise RuntimeError(f"Knowledge base validation failed (mandatory): {error}") from error
-
-    # --- Optional KB blocks: ошибки обрабатываются по mode ---
-    _optional_kb_checks = [
-        ("storytelling_frameworks", kb.storytelling_frameworks, _validate_structural_entries),
-        ("marketing_templates",     kb.marketing_templates,     _validate_structural_entries),
-        ("rhetoric_frameworks",     kb.rhetoric_frameworks,     _validate_structural_entries),
-        ("composition_principles",  kb.composition_principles,  _validate_structural_entries),
-        ("local_cohesion",          kb.local_cohesion,          _validate_structural_entries),
-        ("composition_errors",      kb.composition_errors,      _validate_structural_entries),
-        ("editorial_techniques",    kb.editorial_techniques,    _validate_structural_entries),
-    ]
-    for block_name, entries, validator in _optional_kb_checks:
-        if entries:
-            try:
-                validator(entries, block_name)
-            except Exception as error:
-                _handle_optional_error(block_name, error)
+        raise RuntimeError(f"Knowledge base validation failed: {error}") from error
 
     dummy_text = "тестовый текст"
     dummy_tags = ["marketing", "test"]

@@ -1,42 +1,155 @@
 """
 config_types.py
 
-Типы данных для конфигурации PromptBuilder.
-Вынесены в отдельный модуль, чтобы не засорять prompt_builder.py.
+Dataclasses, enum'ы и инфраструктурные типы для конфигурирования PromptBuilder.
+
+Содержит:
+  - Domain types        — RuleEntry, KnowledgeBase, CoreConfig и т.д.
+  - LimitsConfig        — лимиты выдачи и кандидатов (ТП-3)
+  - KnowledgeLevel      — режим включения блоков знаний (ТП-1)
+  - KnowledgeBlockPlan  — описание блока для budget-aware сборки (ТП-1)
+  - BlockBudget         — бюджет одного блока KB (ТП-1)
+  - KnowledgeBudget     — совокупный бюджет всех блоков (ТП-1)
+  - KnowledgeBudgetManager — вычисляет бюджет (ТП-1)
+  - CachePolicy         — политика инвалидации кэша (ФП-1)
+  - FileCache           — кэш-менеджер с поддержкой TTL/mtime (ФП-1)
+  - Tag constants       — CANONICAL_TAGS, KNOWN_TAGS, get_*_tags_for_category
 """
 
 from __future__ import annotations
 
 import logging
+import time
 from dataclasses import dataclass, field
-from typing import Dict, List, Optional
+from enum import Enum
+from pathlib import Path
+from typing import (
+    Any, Callable, Dict, Generic, List, Optional, Set, Tuple, TypeVar, Union
+)
+
+try:
+    from typing import TypedDict
+except ImportError:
+    from typing_extensions import TypedDict
 
 logger = logging.getLogger(__name__)
+V = TypeVar("V")
+
+
+# ============================================================================
+# Domain types — TypedDict и dataclass'ы для конфигов и базы знаний
+# ============================================================================
+
+class RuleEntry(TypedDict, total=False):
+    """Запись с правилом исправления (грамматика, стиль, логика)."""
+    wrong: str
+    correct: str
+    rule: str
+    description: str
+    tags: List[str]
+    category: str
+
+
+class StructuralEntry(TypedDict, total=False):
+    """Структурная запись (фреймворк, шаблон, приём)."""
+    name: str
+    description: str
+    when_to_use: Union[str, List[str]]
+    rule: str
+    steps: List[Dict[str, Any]]
+    sections: List[Dict[str, Any]]
+    tags: List[str]
+
+
+class EditorialTechniqueEntry(TypedDict, total=False):
+    """Редакторский приём."""
+    id: str
+    name: str
+    category: str
+    description: str
+    when_to_use: List[str]
+    how_to_apply: List[str]
+    example_wrong: str
+    example_correct: str
+    example_explanation: str
+    tags: List[str]
+    source: Dict[str, Any]
+
+
+FlatEntry = Dict[str, Any]
+
+
+@dataclass(frozen=True)
+class CoreConfig:
+    """Базовая конфигурация редактора."""
+    role: str
+    priorities: str
+    basic_audit_instructions: List[str]
+    forbidden: List[str]
+
+
+@dataclass(frozen=True)
+class DomainConfig:
+    """Конфигурация домена."""
+    name: str
+    system_rules: str
+    tone: str
+    allow_storytelling: bool = True
+    allow_marketing: bool = True
+
+
+@dataclass(frozen=True)
+class IntentConfig:
+    """Конфигурация цели обработки."""
+    name: str
+    instructions: List[str]
+
+
+@dataclass(frozen=True)
+class OverlayConfig:
+    """Конфигурация оверлея."""
+    name: str
+    instructions: List[str]
 
 
 @dataclass(frozen=True)
 class AudienceProfile:
     """Профиль аудитории."""
-
-    kind: str        # "b2b" | "b2c" | "mixed" | "custom"
-    expertise: str   # "novice" | "pro" | "expert"
-    formality: str   # "casual" | "neutral" | "formal"
+    kind: str
+    expertise: str
+    formality: str
     description: str = ""
 
 
-@dataclass
+@dataclass(frozen=True)
+class KnowledgeBase:
+    """База знаний редактора."""
+    stop_words: Dict[str, List[str]]
+    grammar_errors: List[RuleEntry]
+    stylistic_issues: List[RuleEntry]
+    logic_issues: List[RuleEntry]
+    storytelling_frameworks: List[StructuralEntry]
+    marketing_templates: List[StructuralEntry]
+    domain_glossary: Dict[str, Any]
+    composition_principles: List[StructuralEntry]
+    local_cohesion: List[StructuralEntry]
+    composition_errors: List[StructuralEntry]
+    rhetoric_frameworks: List[StructuralEntry]
+    editorial_techniques: List[EditorialTechniqueEntry]
+    nkrj_structure_patterns: Dict[str, Any]
+
+
+# ============================================================================
+# ТП-3: LimitsConfig — лимиты выдачи и кандидатов
+# ============================================================================
+
+@dataclass(frozen=True)
 class LimitsConfig:
     """
-    Лимиты выдачи и кандидатов для всех блоков knowledge base.
-
-    Вынесены из __init__ PromptBuilder, чтобы сигнатура оставалась чистой.
-    Изменяй только нужные поля, остальные берут дефолты:
-
-        limits = LimitsConfig(grammar=5, style=5)
-        builder = PromptBuilder(limits=limits)
+    Лимиты выдачи и кандидатов для всех блоков KB.
+    Параметры *_candidates задают, сколько записей рассматривается
+    перед ранжированием (None = все).
     """
-
-    # --- Лимиты выдачи (сколько записей попадает в промпт) ---
     grammar: int = 10
     style: int = 10
     logic: int = 8
@@ -51,7 +164,6 @@ class LimitsConfig:
     stop_words_category: int = 8
     stop_words_items: int = 5
 
-    # --- Лимиты кандидатов (None = рассматривать все записи KB) ---
     grammar_candidates: Optional[int] = None
     style_candidates: Optional[int] = None
     logic_candidates: Optional[int] = None
@@ -60,460 +172,543 @@ class LimitsConfig:
     rhetoric_candidates: Optional[int] = None
 
 
-# ---------------------------------------------------------------------------
-# KnowledgeBudgetManager — ТП-1: динамическое управление символьным бюджетом
-# ---------------------------------------------------------------------------
+# ============================================================================
+# ТП-1: KnowledgeLevel — режим включения блоков знаний
+# ============================================================================
 
-# Символьный эквивалент одного токена GPT-4 для русского текста.
-# Средняя длина русского слова ~5–6 символов, токен ≈ 4 символа.
-_CHARS_PER_TOKEN: float = 4.0
+class KnowledgeLevel(str, Enum):
+    """
+    Режим включения блоков базы знаний в промпт.
 
-# Приоритеты блоков (чем выше — тем позже урезается при нехватке бюджета).
-# 1 = первым кандидат на урезание, 10 = последним.
-_BLOCK_PRIORITY: Dict[str, int] = {
-    "grammar":            9,
-    "style":              9,
-    "logic":              8,
-    "stop_words":         7,
-    "composition":        6,
-    "cohesion":           6,
-    "composition_errors": 6,
-    "storytelling":       5,
-    "marketing":          5,
-    "rhetoric":           4,
-    "editorial":          4,
-    "nkrj":               3,
-    "glossary":           2,
+    NONE — база знаний не включается совсем.
+    CORE — только обязательные блоки: grammar, style, stop_words.
+    STANDARD — CORE + logic, composition, cohesion, nkrj, glossary.
+    FULL — все доступные блоки, включая storytelling, marketing,
+    rhetoric, editorial.
+    """
+
+    NONE = "none"
+    CORE = "core"
+    STANDARD = "standard"
+    FULL = "full"
+
+
+KNOWLEDGE_BUDGET_CHARS: Dict[KnowledgeLevel, Optional[int]] = {
+    KnowledgeLevel.NONE: 0,
+    KnowledgeLevel.CORE: 4_000,
+    KnowledgeLevel.STANDARD: 10_000,
+    KnowledgeLevel.FULL: None,
 }
 
-# Минимальное кол-во записей, ниже которого блок просто отключается.
-_BLOCK_MIN_ENTRIES: Dict[str, int] = {
-    "grammar":            1,
-    "style":              1,
-    "logic":              1,
-    "stop_words":         1,
-    "composition":        1,
-    "cohesion":           1,
-    "composition_errors": 1,
-    "storytelling":       1,
-    "marketing":          1,
-    "rhetoric":           1,
-    "editorial":          1,
-    "nkrj":               0,  # нет «записей», блок целиком включён/выключен
-    "glossary":           1,
+
+_LEVEL_BLOCKS: Dict[KnowledgeLevel, Set[str]] = {
+    KnowledgeLevel.NONE: set(),
+    KnowledgeLevel.CORE: {"grammar", "style", "stop_words"},
+    KnowledgeLevel.STANDARD: {
+        "grammar",
+        "style",
+        "stop_words",
+        "logic",
+        "composition",
+        "cohesion",
+        "composition_errors",
+        "nkrj",
+        "glossary",
+    },
+    KnowledgeLevel.FULL: {
+        "grammar",
+        "style",
+        "stop_words",
+        "logic",
+        "composition",
+        "cohesion",
+        "composition_errors",
+        "nkrj",
+        "glossary",
+        "storytelling",
+        "marketing",
+        "rhetoric",
+        "editorial",
+    },
 }
+
+
+def blocks_allowed_at_level(level: KnowledgeLevel) -> Set[str]:
+    """Возвращает множество имён блоков, разрешённых на данном уровне."""
+    return _LEVEL_BLOCKS.get(level, set())
+
+
+# ============================================================================
+# ТП-1: KnowledgeBlockPlan
+# ============================================================================
 
 
 @dataclass
+class KnowledgeBlockPlan:
+    """
+    Описание одного блока знаний для budget-aware сборки.
+
+    Атрибуты:
+        name: Идентификатор блока.
+        priority: Порядок включения (меньше = важнее).
+        min_level: Минимальный KnowledgeLevel для включения.
+        mandatory: Если True — включается всегда при level >= min_level.
+        estimated_chars: Оценка размера блока в символах. Вычисляется лениво.
+        builder: Callable без аргументов, возвращающий str блока.
+        enable_condition: Дополнительное runtime-условие включения.
+    """
+
+    name: str
+    priority: int
+    min_level: KnowledgeLevel
+    mandatory: bool = False
+    estimated_chars: int = 0
+    builder: Optional[Callable[[], str]] = field(default=None, repr=False)
+    enable_condition: bool = True
+
+
+# ============================================================================
+# ТП-1: BlockBudget, KnowledgeBudget, KnowledgeBudgetManager
+# ============================================================================
+
+
+@dataclass(frozen=True)
 class BlockBudget:
     """
-    Результат распределения бюджета для одного блока KB.
+    Бюджет одного блока KB.
 
-    Attributes:
-        char_budget: Мягкий символьный лимит для _select_ranked_entries().
-                     None означает «без лимита» (бюджет не задан).
-        entry_limit: Максимальное число записей для этого блока.
-        enabled:     False — блок пропускается целиком (бюджет исчерпан).
+    Атрибуты:
+        entry_limit: Максимальное количество записей для выдачи.
+        char_budget: Мягкий лимит символов (None = без ограничений).
+        enabled: Блок разрешён к включению в промпт.
     """
-    char_budget: Optional[int]
+
     entry_limit: int
+    char_budget: Optional[int]
     enabled: bool = True
 
 
-@dataclass
 class KnowledgeBudget:
     """
-    Полное распределение бюджета по всем блокам KB для одного запроса.
-    Создаётся методом KnowledgeBudgetManager.allocate().
+    Совокупный бюджет всех блоков KB для одного вызова build().
+    Реализован как dict-like объект: budget.get("grammar") -> BlockBudget.
+    Атрибуты grammar, style, logic, ... — шорткаты для читаемости.
     """
-    grammar: BlockBudget
-    style: BlockBudget
-    logic: BlockBudget
-    stop_words: BlockBudget
-    composition: BlockBudget
-    cohesion: BlockBudget
-    composition_errors: BlockBudget
-    storytelling: BlockBudget
-    marketing: BlockBudget
-    rhetoric: BlockBudget
-    editorial: BlockBudget
-    nkrj: BlockBudget
-    glossary: BlockBudget
 
-    def get(self, block: str) -> BlockBudget:
-        """Возвращает BlockBudget по имени блока. KeyError если блок неизвестен."""
-        try:
-            return getattr(self, block)
-        except AttributeError:
-            raise KeyError(f"Unknown block: {block!r}")
+    _BLOCK_NAMES = (
+        "grammar",
+        "style",
+        "logic",
+        "composition",
+        "cohesion",
+        "composition_errors",
+        "storytelling",
+        "marketing",
+        "rhetoric",
+        "editorial",
+        "glossary",
+        "stop_words",
+        "nkrj",
+    )
+
+    def __init__(self, budgets: Dict[str, BlockBudget]) -> None:
+        self._budgets = budgets
+
+    def get(self, block_name: str) -> Optional[BlockBudget]:
+        """Возвращает BlockBudget по имени блока."""
+        return self._budgets.get(block_name)
+
+    def __getattr__(self, name: str) -> BlockBudget:
+        if name.startswith("_"):
+            raise AttributeError(name)
+        budget = self._budgets.get(name)
+        if budget is None:
+            raise AttributeError(f"Block '{name}' not in KnowledgeBudget")
+        return budget
+
+    def __repr__(self) -> str:
+        return f"KnowledgeBudget({self._budgets!r})"
 
 
 class KnowledgeBudgetManager:
     """
-    Динамически распределяет символьный бюджет между блоками KB (ТП-1).
+    Вычисляет KnowledgeBudget из LimitsConfig и KnowledgeLevel.
 
-    Принцип работы:
-    1. Получает `token_budget` — максимальное число токенов, отведённых под
-       весь блок «База знаний» в промпте.
-    2. Переводит токены → символы (×_CHARS_PER_TOKEN).
-    3. Делит символьный бюджет между активными блоками пропорционально
-       `share_weights`, но с гарантиями минимума для высокоприоритетных блоков.
-    4. Возвращает `KnowledgeBudget` — датаклас с `BlockBudget` на каждый блок.
-
-    Если `token_budget` не задан (None), распределение не применяется:
-    все блоки получают `char_budget=None` (без ограничений) — поведение
-    полностью совпадает с предыдущей версией кода.
-
-    Пример:
-        manager = KnowledgeBudgetManager(token_budget=2000)
-        budget = manager.allocate(limits, active_blocks={"grammar", "style", "logic"})
-        # budget.grammar.char_budget → ~3200 символов
-        # budget.nkrj.enabled        → False (блок не запрошен)
+    Если token_budget задан — равномерно распределяет char_budget по блокам.
+    Иначе — char_budget = None (без ограничений), entry_limit из LimitsConfig.
+    Блоки, не разрешённые на текущем KnowledgeLevel, получают enabled=False.
     """
 
-    # Относительные веса блоков при делении бюджета.
-    # Сумма весов активных блоков = 100%, каждый блок получает свою долю.
-    DEFAULT_SHARE_WEIGHTS: Dict[str, float] = {
-        "grammar":            1.5,
-        "style":              1.5,
-        "logic":              1.2,
-        "stop_words":         0.8,
-        "composition":        1.0,
-        "cohesion":           1.0,
-        "composition_errors": 1.0,
-        "storytelling":       1.0,
-        "marketing":          1.0,
-        "rhetoric":           0.8,
-        "editorial":          1.0,
-        "nkrj":               0.6,
-        "glossary":           0.6,
-    }
-
-    # Минимальная доля токенов, резервируемая для грамматики+стиля+логики вместе.
-    _CORE_MIN_SHARE: float = 0.40
-
-    def __init__(
-        self,
-        token_budget: Optional[int] = None,
-        chars_per_token: float = _CHARS_PER_TOKEN,
-        share_weights: Optional[Dict[str, float]] = None,
-    ) -> None:
+    def __init__(self, token_budget: Optional[int] = None) -> None:
         """
         Args:
-            token_budget:   Токены под блок KB. None = без ограничений.
-            chars_per_token: Коэффициент токен→символ (по умолчанию 4.0).
-            share_weights:  Переопределение весов для отдельных блоков.
-                            Передавай только блоки, которые хочешь изменить —
-                            остальные берут DEFAULT_SHARE_WEIGHTS.
+            token_budget: Приблизительный лимит токенов под блок «База знаний».
+                1 токен ≈ 4 символа (heuristic). None = без ограничений.
         """
-        self.token_budget = token_budget
-        self.chars_per_token = chars_per_token
-        self._weights: Dict[str, float] = dict(self.DEFAULT_SHARE_WEIGHTS)
-        if share_weights:
-            self._weights.update(share_weights)
-
-    @property
-    def char_budget_total(self) -> Optional[int]:
-        """Общий символьный бюджет (None если token_budget не задан)."""
-        if self.token_budget is None:
-            return None
-        return int(self.token_budget * self.chars_per_token)
+        self._token_budget = token_budget
+        self._char_budget: Optional[int] = (
+            token_budget * 4 if token_budget is not None else None
+        )
 
     def allocate(
         self,
         limits: LimitsConfig,
-        active_blocks: Optional[set] = None,
+        active_blocks: Optional[Set[str]] = None,
+        level: KnowledgeLevel = KnowledgeLevel.FULL,
     ) -> KnowledgeBudget:
         """
-        Распределяет бюджет по блокам и возвращает KnowledgeBudget.
+        Вычисляет и возвращает KnowledgeBudget.
 
         Args:
-            limits:        LimitsConfig с entry_limit по каждому блоку.
-            active_blocks: Набор имён блоков, которые реально будут
-                           использованы в этом запросе (None = все блоки).
-                           Блоки не из этого набора получают enabled=False.
-
-        Returns:
-            KnowledgeBudget с заполненными BlockBudget для каждого блока.
+            limits: LimitsConfig с лимитами выдачи.
+            active_blocks: Блоки, которые реально будут собираться.
+            level: Текущий KnowledgeLevel для фильтрации блоков.
         """
-        all_blocks = list(_BLOCK_PRIORITY.keys())
+        allowed = blocks_allowed_at_level(level)
+        effective_active = active_blocks or set(KnowledgeBudget._BLOCK_NAMES)
 
-        if active_blocks is None:
-            active_blocks = set(all_blocks)
+        enabled_set = (
+            effective_active & allowed
+            if level != KnowledgeLevel.FULL
+            else effective_active
+        )
 
-        char_total = self.char_budget_total
+        n_enabled = len(enabled_set) or 1
+        per_block_chars: Optional[int] = (
+            self._char_budget // n_enabled if self._char_budget is not None else None
+        )
 
-        # Если бюджет не задан — возвращаем «без ограничений» для всех активных блоков
-        if char_total is None:
-            return self._unlimited_budget(limits, active_blocks, all_blocks)
-
-        # --- Шаг 1: вычисляем веса только активных блоков ---
-        active_weights = {
-            b: self._weights.get(b, 1.0)
-            for b in all_blocks
-            if b in active_blocks
-        }
-        total_weight = sum(active_weights.values()) or 1.0
-
-        # --- Шаг 2: резервируем минимум для core-блоков ---
-        core_blocks = {"grammar", "style", "logic"}
-        core_active = core_blocks & active_blocks
-        core_weight = sum(active_weights.get(b, 0.0) for b in core_active)
-        core_natural_share = core_weight / total_weight
-
-        if core_natural_share < self._CORE_MIN_SHARE and core_active:
-            # Доплачиваем core-блокам до минимума за счёт остальных
-            boost_factor = self._CORE_MIN_SHARE / max(core_natural_share, 1e-9)
-            for b in core_active:
-                active_weights[b] = active_weights[b] * boost_factor
-            total_weight = sum(active_weights.values()) or 1.0
-
-        # --- Шаг 3: раздаём символьные бюджеты ---
-        block_chars: Dict[str, int] = {}
-        for block, weight in active_weights.items():
-            share = weight / total_weight
-            block_chars[block] = max(256, int(char_total * share))
-
-        if logger.isEnabledFor(logging.DEBUG):
-            logger.debug(
-                "KnowledgeBudgetManager: total_chars=%d, active=%s, allocated=%s",
-                char_total,
-                sorted(active_blocks),
-                {k: v for k, v in block_chars.items()},
-            )
-
-        # --- Шаг 4: собираем KnowledgeBudget ---
-        def _make(block: str, entry_limit: int) -> BlockBudget:
-            if block not in active_blocks:
-                return BlockBudget(char_budget=None, entry_limit=entry_limit, enabled=False)
+        def _blk(name: str, entry_limit: int) -> BlockBudget:
+            is_enabled = level == KnowledgeLevel.FULL or name in allowed
             return BlockBudget(
-                char_budget=block_chars.get(block),
                 entry_limit=entry_limit,
-                enabled=True,
+                char_budget=per_block_chars if is_enabled else None,
+                enabled=is_enabled,
             )
 
         return KnowledgeBudget(
-            grammar=_make("grammar", limits.grammar),
-            style=_make("style", limits.style),
-            logic=_make("logic", limits.logic),
-            stop_words=_make("stop_words", limits.stop_words_category),
-            composition=_make("composition", limits.composition),
-            cohesion=_make("cohesion", limits.cohesion),
-            composition_errors=_make("composition_errors", limits.composition_errors),
-            storytelling=_make("storytelling", limits.storytelling),
-            marketing=_make("marketing", limits.marketing),
-            rhetoric=_make("rhetoric", limits.rhetoric),
-            editorial=_make("editorial", limits.editorial),
-            nkrj=_make("nkrj", 0),
-            glossary=_make("glossary", limits.glossary),
+            {
+                "grammar": _blk("grammar", limits.grammar),
+                "style": _blk("style", limits.style),
+                "logic": _blk("logic", limits.logic),
+                "composition": _blk("composition", limits.composition),
+                "cohesion": _blk("cohesion", limits.cohesion),
+                "composition_errors": _blk(
+                    "composition_errors",
+                    limits.composition_errors,
+                ),
+                "storytelling": _blk("storytelling", limits.storytelling),
+                "marketing": _blk("marketing", limits.marketing),
+                "rhetoric": _blk("rhetoric", limits.rhetoric),
+                "editorial": _blk("editorial", limits.editorial),
+                "glossary": _blk("glossary", limits.glossary),
+                "stop_words": _blk("stop_words", limits.stop_words_category),
+                "nkrj": _blk("nkrj", 0),
+            }
         )
 
-    def _unlimited_budget(
-        self,
-        limits: LimitsConfig,
-        active_blocks: set,
-        all_blocks: List[str],
-    ) -> KnowledgeBudget:
-        """Создаёт KnowledgeBudget без символьных ограничений."""
-        def _make(block: str, entry_limit: int) -> BlockBudget:
-            return BlockBudget(
-                char_budget=None,
-                entry_limit=entry_limit,
-                enabled=(block in active_blocks),
-            )
-
-        return KnowledgeBudget(
-            grammar=_make("grammar", limits.grammar),
-            style=_make("style", limits.style),
-            logic=_make("logic", limits.logic),
-            stop_words=_make("stop_words", limits.stop_words_category),
-            composition=_make("composition", limits.composition),
-            cohesion=_make("cohesion", limits.cohesion),
-            composition_errors=_make("composition_errors", limits.composition_errors),
-            storytelling=_make("storytelling", limits.storytelling),
-            marketing=_make("marketing", limits.marketing),
-            rhetoric=_make("rhetoric", limits.rhetoric),
-            editorial=_make("editorial", limits.editorial),
-            nkrj=_make("nkrj", 0),
-            glossary=_make("glossary", limits.glossary),
-        )
-
-
-# ---------------------------------------------------------------------------
-# CachePolicy — ФП-1: mtime/TTL-инвалидация кэша
-# ---------------------------------------------------------------------------
-
-import time
-
+# ============================================================================
+# ФП-1: CachePolicy и FileCache
+# ============================================================================
 
 @dataclass
 class CachePolicy:
     """
-    Политика инвалидации in-memory кэша PromptBuilder.
+    Политика инвалидации кэша.
 
-    Поддерживает два независимых механизма, которые можно комбинировать:
+    Атрибуты:
+        check_mtime:  Инвалидировать при изменении mtime файла.
+        ttl_seconds:  Время жизни кэша в секундах (None = без TTL).
 
-    1. **TTL** (time-to-live, секунды):
-       Запись считается устаревшей, если прошло больше `ttl_seconds` с
-       момента последней загрузки. Полезно для hot-reload в dev-среде
-       без полной перезагрузки сервиса.
-       - `ttl_seconds=None` (по умолчанию) → TTL отключён.
-       - `ttl_seconds=300` → кэш живёт 5 минут.
-
-    2. **mtime** (filesystem modification time):
-       Запись инвалидируется, если файл на диске изменился с момента
-       последней загрузки (сравниваем os.stat().st_mtime).
-       - `check_mtime=True` (по умолчанию) → включено для всех кэшируемых файлов.
-       - `check_mtime=False` → отключить (ускоряет hot-path, но без auto-reload).
-
-    Примеры:
-        # Только TTL, каждые 60 секунд
-        policy = CachePolicy(ttl_seconds=60, check_mtime=False)
-
-        # Только mtime (дефолт — без накладных расходов по времени)
-        policy = CachePolicy(check_mtime=True)
-
-        # TTL + mtime — инвалидируется при любом из условий
-        policy = CachePolicy(ttl_seconds=300, check_mtime=True)
-
-        # Полностью отключить инвалидацию (поведение до ФП-1)
-        policy = CachePolicy(ttl_seconds=None, check_mtime=False)
+    Рекомендуемые режимы:
+        prod:  CachePolicy(check_mtime=True)
+        dev:   CachePolicy(check_mtime=True, ttl_seconds=30)
+        test:  CachePolicy(check_mtime=False, ttl_seconds=None)
     """
-
-    ttl_seconds: Optional[float] = None
     check_mtime: bool = True
+    ttl_seconds: Optional[float] = None
 
 
 @dataclass
-class _CacheEntry:
-    """Внутренняя обёртка для одного закэшированного значения."""
-
-    value: Any
-    loaded_at: float             # time.monotonic() в момент загрузки
-    file_mtime: Optional[float]  # os.stat().st_mtime файла при загрузке
+class _CacheEntry(Generic[V]):
+    """Внутренняя запись кэша."""
+    value: V
+    path: Optional[Path]
+    loaded_at: float
+    mtime_at_load: Optional[float]
 
 
 class FileCache:
     """
-    Generic кэш с mtime/TTL инвалидацией для одного или нескольких файлов.
+    Кэш файловых данных с поддержкой TTL и mtime-инвалидации (ФП-1).
 
-    Используется внутри PromptBuilder для каждого типа конфигов и KB.
-
-    Пример:
-        cache = FileCache(policy=CachePolicy(ttl_seconds=60))
-        value = cache.get_or_load("marketing", path, loader_func)
+    Использование:
+        cache = FileCache(policy=CachePolicy(check_mtime=True))
+        data = cache.get_or_load("key", path, loader_fn, *loader_args)
     """
 
-    def __init__(self, policy: CachePolicy) -> None:
-        self._policy = policy
-        self._entries: Dict[str, _CacheEntry] = {}
+    def __init__(self, policy: Optional[CachePolicy] = None) -> None:
+        self._policy = policy or CachePolicy(check_mtime=True)
+        self._store: Dict[str, _CacheEntry[Any]] = {}
+
+    def _is_valid(self, entry: _CacheEntry[Any]) -> bool:
+        """Проверяет актуальность записи кэша."""
+        now = time.monotonic()
+        if self._policy.ttl_seconds is not None:
+            if now - entry.loaded_at > self._policy.ttl_seconds:
+                return False
+        if self._policy.check_mtime and entry.path is not None:
+            try:
+                current_mtime = entry.path.stat().st_mtime
+                if entry.mtime_at_load is None or current_mtime != entry.mtime_at_load:
+                    return False
+            except OSError:
+                return False
+        return True
 
     def get_or_load(
         self,
         key: str,
-        path: Path,
-        loader: Any,
-        *args: Any,
-        **kwargs: Any,
-    ) -> Any:
+        path: Optional[Path],
+        loader: Callable[..., V],
+        *loader_args: Any,
+    ) -> V:
         """
-        Возвращает закэшированное значение или перезагружает его.
+        Возвращает закэшированное значение или загружает через loader(*loader_args).
 
         Args:
-            key:    Уникальный ключ записи (например, имя домена или "core").
-            path:   Основной файл, чей mtime проверяется. Для KB это может
-                    быть директория — тогда mtime директории не проверяется
-                    (используй multi-file вариант `get_or_load_multi`).
-            loader: Callable без аргументов (или с *args/**kwargs), который
-                    возвращает актуальное значение.
+            key:         Ключ кэша (уникальный идентификатор значения).
+            path:        Путь к файлу для mtime-инвалидации (None = без mtime).
+            loader:      Callable, возвращающий значение.
+            loader_args: Позиционные аргументы для loader.
         """
-        entry = self._entries.get(key)
-        if entry is not None and not self._is_stale(entry, path):
+        entry = self._store.get(key)
+        if entry is not None and self._is_valid(entry):
             return entry.value
 
-        value = loader(*args, **kwargs)
-        mtime = self._read_mtime(path)
-        self._entries[key] = _CacheEntry(
+        value = loader(*loader_args)
+        mtime = None
+        if path is not None and self._policy.check_mtime:
+            try:
+                mtime = path.stat().st_mtime
+            except OSError:
+                pass
+
+        self._store[key] = _CacheEntry(
             value=value,
+            path=path,
             loaded_at=time.monotonic(),
-            file_mtime=mtime,
+            mtime_at_load=mtime,
         )
-        logger.debug("FileCache: loaded '%s' (mtime=%s)", key, mtime)
         return value
 
     def get_or_load_multi(
         self,
         key: str,
         paths: List[Path],
-        loader: Any,
-        *args: Any,
-        **kwargs: Any,
-    ) -> Any:
+        loader: Callable[..., V],
+        *loader_args: Any,
+    ) -> V:
         """
-        Вариант для нескольких файлов — инвалидирует, если изменился
-        хотя бы один. Сравниваем по максимальному mtime среди всех путей.
+        Кэширует результат loader с инвалидацией по нескольким файлам.
+        Инвалидируется если изменился mtime любого из paths.
         """
-        entry = self._entries.get(key)
-        max_mtime = self._max_mtime(paths)
-        if entry is not None and not self._is_stale_multi(entry, max_mtime):
+        entry = self._store.get(key)
+        if entry is not None:
+            if self._policy.ttl_seconds is not None:
+                if time.monotonic() - entry.loaded_at > self._policy.ttl_seconds:
+                    entry = None
+            if entry is not None and self._policy.check_mtime and entry.mtime_at_load is not None:
+                try:
+                    current_max = max(
+                        (p.stat().st_mtime for p in paths if p.exists()),
+                        default=0.0,
+                    )
+                    if current_max != entry.mtime_at_load:
+                        entry = None
+                except OSError:
+                    entry = None
+        if entry is not None:
             return entry.value
 
-        value = loader(*args, **kwargs)
-        self._entries[key] = _CacheEntry(
+        value = loader(*loader_args)
+        try:
+            max_mtime: Optional[float] = max(
+                (p.stat().st_mtime for p in paths if p.exists()),
+                default=None,
+            )
+        except OSError:
+            max_mtime = None
+
+        self._store[key] = _CacheEntry(
             value=value,
+            path=None,
             loaded_at=time.monotonic(),
-            file_mtime=max_mtime,
+            mtime_at_load=max_mtime,
         )
-        logger.debug("FileCache: loaded '%s' (max_mtime=%s)", key, max_mtime)
         return value
 
-    def invalidate(self, key: Optional[str] = None) -> None:
-        """Сбрасывает одну запись (key) или весь кэш (key=None)."""
-        if key is None:
-            self._entries.clear()
-            logger.debug("FileCache: full invalidation")
-        else:
-            self._entries.pop(key, None)
-            logger.debug("FileCache: invalidated '%s'", key)
+    def invalidate(self, key: str) -> None:
+        """Удаляет запись из кэша."""
+        self._store.pop(key, None)
 
-    # --- Internal helpers ---
+    def clear(self) -> None:
+        """Сбрасывает весь кэш."""
+        self._store.clear()
 
-    def _is_stale(self, entry: _CacheEntry, path: Path) -> bool:
-        """Возвращает True если запись устарела."""
-        if self._ttl_expired(entry):
-            return True
-        if self._policy.check_mtime:
-            current_mtime = self._read_mtime(path)
-            if current_mtime != entry.file_mtime:
-                return True
-        return False
 
-    def _is_stale_multi(self, entry: _CacheEntry, max_mtime: Optional[float]) -> bool:
-        if self._ttl_expired(entry):
-            return True
-        if self._policy.check_mtime and max_mtime != entry.file_mtime:
-            return True
-        return False
+# ============================================================================
+# Tag constants и helpers
+# ============================================================================
 
-    def _ttl_expired(self, entry: _CacheEntry) -> bool:
-        if self._policy.ttl_seconds is None:
-            return False
-        age = time.monotonic() - entry.loaded_at
-        return age > self._policy.ttl_seconds
+CANONICAL_TAGS: Dict[str, Dict[str, Any]] = {
+    "domains": {
+        "marketing": {
+            "primary": ["marketing"],
+            "expanded": ["sales", "promo", "conversion"],
+        },
+        "blog": {
+            "primary": ["blog"],
+            "expanded": ["nonmarketing", "article", "educational"],
+        },
+        "deai": {
+            "primary": ["deai"],
+            "expanded": ["antiai", "humanize", "natural"],
+        },
+    },
+    "intents": {
+        "storytelling": {
+            "primary": ["storytelling", "structure"],
+            "expanded": ["narrative", "engagement"],
+        },
+        "noragal": {
+            "primary": ["editing", "noragal"],
+            "expanded": ["brevity", "clarity"],
+        },
+        "deai": {
+            "primary": ["antiai", "humanize"],
+            "expanded": ["authentic"],
+        },
+    },
+    "overlays": {
+        "logic": {
+            "primary": ["logic"],
+            "expanded": ["coherence", "argumentation"],
+        },
+        "factcheck": {
+            "primary": ["factcheck"],
+            "expanded": ["accuracy", "verification"],
+        },
+        "infostyle": {
+            "primary": ["infostyle"],
+            "expanded": ["clarity", "precision"],
+        },
+        "composition": {
+            "primary": ["composition"],
+            "expanded": [],
+        },
+        "cohesion": {
+            "primary": ["cohesion"],
+            "expanded": [],
+        },
+        "rhetoric": {
+            "primary": ["rhetoric"],
+            "expanded": [],
+        },
+        "marketingpush": {
+            "primary": ["marketing"],
+            "expanded": ["persuasion", "cta"],
+        },
+    },
+}
 
-    @staticmethod
-    def _read_mtime(path: Path) -> Optional[float]:
-        try:
-            return path.stat().st_mtime
-        except OSError:
-            return None
+KB_TAGS_STRICT_VALIDATION: bool = False
 
-    @staticmethod
-    def _max_mtime(paths: List[Path]) -> Optional[float]:
-        mtimes = []
-        for p in paths:
-            try:
-                mtimes.append(p.stat().st_mtime)
-            except OSError:
-                pass
-        return max(mtimes) if mtimes else None
+KNOWN_INTENTS: Set[str] = {
+    "storytelling",
+    "noragal",
+    "deai",
+    "neutral",
+}
+
+KNOWN_OVERLAYS: Set[str] = {
+    "logic",
+    "factcheck",
+    "infostyle",
+    "marketingpush",
+    "composition",
+    "cohesion",
+    "rhetoric",
+}
+
+
+def _normalize_tag_local(tag: str) -> str:
+    """Локальная нормализация тега без импорта tag_registry (для bootstrap)."""
+    return tag.lower().replace("-", "_").replace(" ", "_")
+
+
+def _normalize_tags_local(tags: List[str]) -> List[str]:
+    return [_normalize_tag_local(t) for t in tags if isinstance(t, str)]
+
+
+def _build_known_tags_from_canonical() -> Set[str]:
+    """Строит множество всех canonical тегов."""
+    tags: Set[str] = set()
+    for category_data in CANONICAL_TAGS.values():
+        for tag_data in category_data.values():
+            if isinstance(tag_data, dict):
+                for tag_list in tag_data.values():
+                    if isinstance(tag_list, list):
+                        tags.update(
+                            _normalize_tag_local(t)
+                            for t in tag_list
+                            if isinstance(t, str)
+                        )
+    return tags
+
+
+KNOWN_TAGS: Set[str] = _build_known_tags_from_canonical()
+
+
+def get_canonical_tags_for_category(category: str, value: str) -> List[str]:
+    """Возвращает primary + expanded теги для категории/значения."""
+    try:
+        from src.tag_registry import normalize_tag, normalize_tags
+    except ImportError:
+        normalize_tag = _normalize_tag_local
+        normalize_tags = _normalize_tags_local
+    norm_value = normalize_tag(value)
+    data = CANONICAL_TAGS.get(category, {}).get(norm_value)
+    if isinstance(data, dict):
+        return normalize_tags(data.get("primary", []) + data.get("expanded", []))
+    if isinstance(data, list):
+        return normalize_tags(data)
+    return normalize_tags([norm_value])
+
+
+def get_primary_tags_for_category(category: str, value: str) -> List[str]:
+    """Возвращает primary теги."""
+    try:
+        from src.tag_registry import normalize_tag, normalize_tags
+    except ImportError:
+        normalize_tag = _normalize_tag_local
+        normalize_tags = _normalize_tags_local
+    norm_value = normalize_tag(value)
+    data = CANONICAL_TAGS.get(category, {}).get(norm_value)
+    if isinstance(data, dict):
+        return normalize_tags(data.get("primary", []))
+    return normalize_tags(data) if isinstance(data, list) else normalize_tags([norm_value])
+
+
+def get_expanded_tags_for_category(category: str, value: str) -> List[str]:
+    """Возвращает expanded теги."""
+    try:
+        from src.tag_registry import normalize_tag, normalize_tags
+    except ImportError:
+        normalize_tag = _normalize_tag_local
+        normalize_tags = _normalize_tags_local
+    norm_value = normalize_tag(value)
+    data = CANONICAL_TAGS.get(category, {}).get(norm_value)
+    if isinstance(data, dict):
+        return normalize_tags(data.get("expanded", []))
+    return []

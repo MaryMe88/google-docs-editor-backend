@@ -2,9 +2,16 @@
 knowledge_retrieval.py
 
 Логика нормализации текста, скоринга и ранжирования записей базы знаний.
-Включает quality-gated fallback (ФП-2): многоступенчатый поиск A→D,
-который смягчает требования при каждой неудаче, но никогда не возвращает
-«шум» — записи без единой точки пересечения с контекстом запроса.
+Единственный источник истины для всего retrieval.
+
+Содержит:
+  - normalize_text_for_match, _contains_pattern  — нормализация и матчинг
+  - SCORE_WEIGHTS                                 — скоринговые константы
+  - score_rule_entry, score_structural_entry      — scorer'ы
+  - _select_ranked_entries_staged                 — quality-gated fallback (ФП-2)
+  - _select_ranked_entries                        — публичный алиас / обёртка
+  - select_grammar_rules, select_style_issues,
+    select_logic_issues, _select_by_tags_or_all   — публичные селекторы
 """
 
 from __future__ import annotations
@@ -12,15 +19,16 @@ from __future__ import annotations
 import logging
 import re
 from dataclasses import dataclass
-from enum import Enum, auto
-from typing import Any, Dict, Final, Iterable, List, Optional, Set, Tuple
+from enum import Enum
+from typing import Any, Callable, Dict, Final, Iterable, List, Optional, Set, Tuple
 
 from src.tag_registry import normalize_tag
 
 logger = logging.getLogger(__name__)
 
+
 # ============================================================================
-# Нормализация текста и матчинга
+# Нормализация текста
 # ============================================================================
 
 def normalize_text_for_match(text: str) -> str:
@@ -67,7 +75,7 @@ def _get_entry_match_patterns(entry: Dict[str, Any]) -> List[str]:
 
 
 def _entry_info_score(entry: Dict[str, Any]) -> int:
-    """Количество информативных полей в записи (для fallback)."""
+    """Количество информативных полей в записи (для fallback-ранжирования)."""
     score = 0
     for field in ("name", "description", "rule", "wrong", "when_to_use"):
         val = entry.get(field)
@@ -110,13 +118,18 @@ def _estimate_entry_chars(entry: Dict[str, Any]) -> int:
 # ============================================================================
 
 SCORE_WEIGHTS: Final[Dict[str, int]] = {
-    "wrong_exact_match": 1000,
-    "name_exact_match": 500,
-    "partial_text_match": 200,
-    "tag_primary": 10,
-    "tag_primary_bonus": 1,
-    "tag_expanded": 2,
+    "wrong_exact_match":  1000,
+    "name_exact_match":    500,
+    "partial_text_match":  200,
+    "tag_primary":          10,
+    "tag_primary_bonus":     1,
+    "tag_expanded":          2,
 }
+
+# Именованные пороги для использования в _log_selection_debug и внешних потребителях
+SCORE_THRESHOLD_TEXT_MATCH    = SCORE_WEIGHTS["wrong_exact_match"]   # 1000
+SCORE_THRESHOLD_PARTIAL_MATCH = SCORE_WEIGHTS["partial_text_match"]  # 200
+SCORE_THRESHOLD_TAGS          = SCORE_WEIGHTS["tag_primary"]          # 10
 
 
 # ============================================================================
@@ -238,134 +251,191 @@ def score_structural_entry(
     return (score, -idx)
 
 
-# Для обратной совместимости
+# Алиас для обратной совместимости
 _score_entry = score_rule_entry
 
 
 # ============================================================================
-# Quality-gated fallback (ФП-2)
+# ФП-2: Quality-gated fallback — ступенчатая лестница
 # ============================================================================
 
-class FallbackStage(Enum):
+class FallbackStage(str, Enum):
+    """Ступень fallback-лестницы, на которой получен результат."""
+    A = "A"   # text match + tag overlap            — наибольшая уверенность
+    B = "B"   # text match, нет tag overlap
+    C = "C"   # нет text match, есть tag overlap
+    D = "D"   # neutral/global entries с high info score
+    E = "E"   # пусто — silence over noise
+
+
+@dataclass
+class SelectionResult:
     """
-    Стадии quality-gated fallback для _select_ranked_entries().
+    Результат ранжирования с диагностической информацией о ступени fallback.
 
-    A  — строгий поиск: текстовый матч + теги, min_score из аргумента.
-    B  — relaxed: только теги (текстовый матч не обязателен), min_score = tag_primary (11).
-    C  — tag-only: любой ненулевой tag overlap, min_score = 1.
-    D  — emergency: возвращает top-N по info_score без тегового требования.
-         Используется ТОЛЬКО когда wanted_tags пуст или KB пуст.
-    SILENCE — ничего не нашли и возвращать нечего (silence over noise).
+    Атрибуты:
+        entries:  Список отобранных записей KB.
+        stage:    Ступень FallbackStage, на которой получен результат.
+        scores:   Параллельный список итоговых score для каждой записи (0 для D/E).
     """
-    A = auto()
-    B = auto()
-    C = auto()
-    D = auto()
-    SILENCE = auto()
-
-
-@dataclass(frozen=True)
-class FallbackResult:
-    """Результат _select_ranked_entries() с диагностикой стадии."""
     entries: List[Dict[str, Any]]
     stage: FallbackStage
-    stage_name: str
+    scores: List[int]
 
 
-def _run_stage(
-    candidates: List[Dict[str, Any]],
+# Минимальные пороги баллов по стадиям
+_STAGE_A_MIN_SCORE: Final[int] = SCORE_THRESHOLD_TEXT_MATCH + SCORE_THRESHOLD_TAGS  # 1010
+_STAGE_B_MIN_SCORE: Final[int] = SCORE_THRESHOLD_TEXT_MATCH                          # 1000
+_STAGE_C_MIN_SCORE: Final[int] = SCORE_THRESHOLD_TAGS                                # 10
+_STAGE_D_INFO_MIN:  Final[int] = 3  # минимальный info_score для Stage D
+
+
+def _collect_deduped(
+    scored: List[Tuple[int, Any, Dict[str, Any]]],
+    limit: int,
+    char_budget: Optional[int],
+) -> Tuple[List[Dict[str, Any]], List[int]]:
+    """
+    Применяет дедупликацию и char_budget к отсортированному списку scored.
+    Возвращает (entries, score_list).
+    """
+    result: List[Dict[str, Any]] = []
+    score_list: List[int] = []
+    seen_keys: Set[Tuple[Any, ...]] = set()
+    chars_used = 0
+    for score_val, _tie, entry in scored:
+        key = _make_dedupe_key(entry)
+        if key in seen_keys:
+            continue
+        entry_chars = _estimate_entry_chars(entry)
+        if char_budget is not None and result and chars_used + entry_chars > char_budget:
+            break
+        seen_keys.add(key)
+        result.append(entry)
+        score_list.append(score_val)
+        chars_used += entry_chars
+        if len(result) >= limit:
+            break
+    return result, score_list
+
+
+def _select_ranked_entries_staged(
+    entries: List[Dict[str, Any]],
     normalized_text: str,
     wanted_set: Set[str],
+    limit: int,
+    scorer: Callable[..., Tuple[int, int]],
+    candidate_limit: Optional[int],
+    debug_context: str,
     expanded_tags: Optional[Set[str]],
-    limit: int,
-    scorer: Any,
-    require_text_match: bool,
-    min_score: int,
     char_budget: Optional[int],
-    debug_context: str,
-) -> List[Dict[str, Any]]:
+) -> SelectionResult:
     """
-    Одна стадия ранжирования: score → sort → dedupe → budget → limit.
-    Возвращает пустой список если ни одна запись не прошла порог min_score.
+    Ранжирование с quality-gated fallback (ФП-2).
+
+    Лестница ступеней:
+      Stage A — text match + tag overlap  (score >= _STAGE_A_MIN_SCORE)
+      Stage B — text match, нет tag overlap  (score >= _STAGE_B_MIN_SCORE, < A)
+      Stage C — нет text match, есть tag overlap  (score >= _STAGE_C_MIN_SCORE)
+      Stage D — neutral entries с высоким info_score
+      Stage E — пусто (silence over noise)
+
+    На каждой ступени применяются: дедупликация, char_budget, limit.
+    Следующая ступень активируется только если предыдущая дала пустой результат.
     """
-    scored: List[Tuple[int, int, Dict[str, Any]]] = []
+    candidates = entries if candidate_limit is None else entries[:candidate_limit]
+    if not candidates:
+        return SelectionResult([], FallbackStage.E, [])
+
+    # Скорим всех кандидатов один раз
+    scored_all: List[Tuple[int, int, Dict[str, Any]]] = []
     for idx, entry in enumerate(candidates):
-        score, tie = scorer(
-            entry, normalized_text, wanted_set, idx, expanded_tags=expanded_tags
+        score, tie = scorer(entry, normalized_text, wanted_set, idx, expanded_tags=expanded_tags)
+        scored_all.append((score, tie, entry))
+
+    scored_all.sort(key=lambda x: (x[0], x[1]), reverse=True)
+
+    # ── Stage A: text match + tag overlap ────────────────────────────────
+    stage_a = [(s, t, e) for s, t, e in scored_all if s >= _STAGE_A_MIN_SCORE]
+    if stage_a:
+        _log_stage(debug_context, FallbackStage.A, len(stage_a), stage_a[:3])
+        entries_out, scores_out = _collect_deduped(stage_a, limit, char_budget)
+        return SelectionResult(entries_out, FallbackStage.A, scores_out)
+
+    # ── Stage B: text match без tag overlap ──────────────────────────────
+    stage_b = [
+        (s, t, e) for s, t, e in scored_all
+        if _STAGE_B_MIN_SCORE <= s < _STAGE_A_MIN_SCORE
+    ]
+    if stage_b:
+        _log_stage(debug_context, FallbackStage.B, len(stage_b), stage_b[:3])
+        entries_out, scores_out = _collect_deduped(stage_b, limit, char_budget)
+        return SelectionResult(entries_out, FallbackStage.B, scores_out)
+
+    # ── Stage C: tag overlap без text match ──────────────────────────────
+    stage_c = [(s, t, e) for s, t, e in scored_all if s >= _STAGE_C_MIN_SCORE]
+    if stage_c:
+        _log_stage(debug_context, FallbackStage.C, len(stage_c), stage_c[:3])
+        entries_out, scores_out = _collect_deduped(stage_c, limit, char_budget)
+        return SelectionResult(entries_out, FallbackStage.C, scores_out)
+
+    # ── Stage D: neutral entries с высоким info_score ────────────────────
+    # Записи без тегов или с тегом "neutral"/"global" и достаточным info_score
+    stage_d_candidates: List[Tuple[int, int, int, Dict[str, Any]]] = []
+    for idx, entry in enumerate(candidates):
+        entry_tags = entry.get("tags", [])
+        if not isinstance(entry_tags, (list, tuple)):
+            entry_tags = []
+        tag_set = {normalize_tag(t) for t in entry_tags if isinstance(t, str)}
+        # Нейтральность: нет тегов, или есть только generic теги
+        is_neutral = (
+            not tag_set
+            or bool(tag_set & {"neutral", "global", "general", "editing"})
         )
-        if require_text_match and score < SCORE_WEIGHTS["wrong_exact_match"]:
+        if not is_neutral:
             continue
-        if score < min_score:
+        info = _entry_info_score(entry)
+        if info < _STAGE_D_INFO_MIN:
             continue
-        scored.append((score, tie, entry))
+        stage_d_candidates.append((info, -idx, idx, entry))
 
-    if not scored:
-        return []
+    if stage_d_candidates:
+        stage_d_candidates.sort(key=lambda x: (x[0], x[1]), reverse=True)
+        stage_d_scored = [(0, -c[2], c[3]) for c in stage_d_candidates]
+        _log_stage(debug_context, FallbackStage.D, len(stage_d_candidates), stage_d_scored[:3])
+        entries_out, scores_out = _collect_deduped(stage_d_scored, limit, char_budget)
+        return SelectionResult(entries_out, FallbackStage.D, scores_out)
 
-    scored.sort(key=lambda x: (x[0], x[1]), reverse=True)
-    _log_selection_debug(debug_context, candidates, scored, limit)
-
-    result: List[Dict[str, Any]] = []
-    seen_keys: Set[Tuple[Any, ...]] = set()
-    chars_used = 0
-    for _, _, entry in scored:
-        key = _make_dedupe_key(entry)
-        if key in seen_keys:
-            continue
-        entry_chars = _estimate_entry_chars(entry)
-        if char_budget is not None and result and chars_used + entry_chars > char_budget:
-            break
-        seen_keys.add(key)
-        result.append(entry)
-        chars_used += entry_chars
-        if len(result) >= limit:
-            break
-
-    return result
-
-
-def _run_emergency_stage(
-    candidates: List[Dict[str, Any]],
-    limit: int,
-    char_budget: Optional[int],
-    debug_context: str,
-) -> List[Dict[str, Any]]:
-    """
-    Аварийная стадия D: сортировка по info_score без тегового требования.
-    Используется только когда wanted_tags пуст (теги не заданы вообще).
-    """
-    ranked = sorted(
-        enumerate(candidates),
-        key=lambda x: (_entry_info_score(x[1]), -x[0]),
-        reverse=True,
-    )
-
-    result: List[Dict[str, Any]] = []
-    seen_keys: Set[Tuple[Any, ...]] = set()
-    chars_used = 0
-    for _, entry in ranked:
-        key = _make_dedupe_key(entry)
-        if key in seen_keys:
-            continue
-        entry_chars = _estimate_entry_chars(entry)
-        if char_budget is not None and result and chars_used + entry_chars > char_budget:
-            break
-        seen_keys.add(key)
-        result.append(entry)
-        chars_used += entry_chars
-        if len(result) >= limit:
-            break
-
+    # ── Stage E: silence over noise ───────────────────────────────────────
     if debug_context:
         logger.debug(
-            "[%s] Stage D (emergency, no tags): returning %d entries",
-            debug_context, len(result),
+            "[%s] Stage E: no suitable entries found, returning [] (silence over noise).",
+            debug_context,
         )
-    return result
+    return SelectionResult([], FallbackStage.E, [])
+
+
+def _log_stage(
+    debug_context: str,
+    stage: FallbackStage,
+    count: int,
+    top: List[Tuple[int, int, Dict[str, Any]]],
+) -> None:
+    """Логирует на каком stage получен результат и top-3 записи."""
+    if not logger.isEnabledFor(logging.DEBUG):
+        return
+    top_info = []
+    for s, _t, e in top:
+        name = e.get("name", e.get("wrong", "?"))[:30]
+        top_info.append((s, name))
+    logger.debug(
+        "[%s] Stage %s: %d candidates, top=%s",
+        debug_context, stage.value, count, top_info,
+    )
 
 
 # ============================================================================
-# Вспомогательные функции для ranked-выбора
+# Вспомогательные функции
 # ============================================================================
 
 def _log_selection_debug(
@@ -374,38 +444,36 @@ def _log_selection_debug(
     scored: List[Tuple[int, int, Dict[str, Any]]],
     limit: int,
 ) -> None:
-    """Логирует диагностику ранжирования, если уровень DEBUG активен."""
-    if not logging.getLogger().isEnabledFor(logging.DEBUG):
+    """Логирует диагностику ранжирования (для режима без staged-pipeline)."""
+    if not logger.isEnabledFor(logging.DEBUG):
         return
     if not scored:
-        logging.debug(f"[{debug_context}] No scored items (all below threshold).")
+        logger.debug("[%s] No scored items (all below threshold).", debug_context)
         return
     top_info = []
-    for s in scored[:5]:
-        entry = s[2]
-        score_val = s[0]
-        name = entry.get("name", entry.get("wrong", "?"))[:30]
-        if score_val >= SCORE_WEIGHTS["wrong_exact_match"]:
+    for s, _t, e in scored[:5]:
+        name = e.get("name", e.get("wrong", "?"))[:30]
+        if s >= SCORE_THRESHOLD_TEXT_MATCH:
             reason = "text_match"
-        elif score_val >= SCORE_WEIGHTS["partial_text_match"]:
+        elif s >= SCORE_THRESHOLD_PARTIAL_MATCH:
             reason = "partial_text"
-        elif score_val >= SCORE_WEIGHTS["tag_primary"]:
+        elif s >= SCORE_THRESHOLD_TAGS:
             reason = "tags"
         else:
             reason = "fallback"
-        top_info.append((score_val, name, reason))
-    logging.debug(
-        f"[{debug_context}] Candidates: {len(candidates)}, "
-        f"selected: {min(limit, len(scored))}, "
-        f"top scores: {top_info}"
+        top_info.append((s, name, reason))
+    logger.debug(
+        "[%s] Candidates: %d, selected: %d, top scores: %s",
+        debug_context, len(candidates), min(limit, len(scored)), top_info,
     )
     if len(scored) > limit:
         missed = scored[limit: limit + 2]
-        missed_info = [(s[0], s[2].get("name", "?")[:30]) for s in missed]
-        logging.debug(f"[{debug_context}] Missed due to limit: {missed_info}")
+        missed_info = [(s, e.get("name", "?")[:30]) for s, _, e in missed]
+        logger.debug("[%s] Missed due to limit: %s", debug_context, missed_info)
 
 
 def _make_dedupe_key(entry: Dict[str, Any]) -> Tuple[Any, ...]:
+    """Строит ключ дедупликации записи."""
     if "id" in entry:
         return ("id", entry["id"])
     return (
@@ -416,105 +484,75 @@ def _make_dedupe_key(entry: Dict[str, Any]) -> Tuple[Any, ...]:
     )
 
 
+# ============================================================================
+# Публичный API ранжирования
+# ============================================================================
+
 def _select_ranked_entries(
     entries: List[Dict[str, Any]],
     normalized_text: str,
     wanted_tags: Iterable[str],
     limit: int,
     require_text_match: bool = False,
-    scorer: Any = score_rule_entry,
+    scorer: Callable[..., Tuple[int, int]] = score_rule_entry,
     candidate_limit: Optional[int] = None,
     debug_context: str = "",
     expanded_tags: Optional[Set[str]] = None,
     min_score: Optional[int] = None,
     char_budget: Optional[int] = None,
+    return_result: bool = False,
 ) -> List[Dict[str, Any]]:
     """
-    Общая функция ранжирования записей с quality-gated fallback (ФП-2).
+    Ранжирование записей KB с quality-gated fallback (ФП-2).
 
-    Стадии поиска:
-      A  — строгий: min_score из аргумента (по умолчанию tag_primary=11),
-           require_text_match применяется здесь.
-      B  — relaxed: min_score = tag_primary (11), текстовый матч не обязателен.
-      C  — tag-only: min_score = 1 (любой ненулевой tag overlap).
-      D  — emergency (только если wanted_tags пуст): top-N по info_score.
-      SILENCE — возвращаем [] (silence over noise).
+    Интерфейс полностью совместим со старым _select_ranked_entries.
+    Внутри делегирует в _select_ranked_entries_staged.
 
-    - candidate_limit: сколько записей рассматривать (None = все).
-    - min_score: порог для стадии A (None → tag_primary + tag_primary_bonus = 11).
-    - char_budget: мягкий лимит символов суммарного размера выдачи.
-    - debug_context: метка для диагностики.
+    Args:
+        entries:            Список записей KB.
+        normalized_text:    Нормализованный текст запроса.
+        wanted_tags:        Теги для скоринга.
+        limit:              Максимальное количество записей в выдаче.
+        require_text_match: Если True — возвращать только Stage A/B.
+        scorer:             Функция скоринга.
+        candidate_limit:    Сколько записей рассматривать (None = все).
+        debug_context:      Метка для диагностических логов.
+        expanded_tags:      Расширенные теги (меньший вес).
+        min_score:          Минимальный балл (legacy-параметр; заменён staged-логикой,
+                            но учитывается для обратной совместимости при staged=False).
+        char_budget:        Мягкий лимит символов суммарного размера выдачи.
+        return_result:      Если True — возвращает SelectionResult вместо List.
     """
     if not entries:
-        return []
+        return [] if not return_result else SelectionResult([], FallbackStage.E, [])
 
-    candidates = entries if candidate_limit is None else entries[:candidate_limit]
     wanted_set = {normalize_tag(t) for t in wanted_tags if isinstance(t, str)}
 
-    # Порог для стадии A
-    stage_a_min = min_score if min_score is not None else (
-        SCORE_WEIGHTS["tag_primary"] + SCORE_WEIGHTS["tag_primary_bonus"]
+    result = _select_ranked_entries_staged(
+        entries=entries,
+        normalized_text=normalized_text,
+        wanted_set=wanted_set,
+        limit=limit,
+        scorer=scorer,
+        candidate_limit=candidate_limit,
+        debug_context=debug_context,
+        expanded_tags=expanded_tags,
+        char_budget=char_budget,
     )
 
-    # ── Стадия A: строгий поиск ──────────────────────────────────────────────
-    result = _run_stage(
-        candidates, normalized_text, wanted_set, expanded_tags,
-        limit, scorer, require_text_match, stage_a_min,
-        char_budget, f"{debug_context}[A]",
-    )
-    if result:
-        if debug_context:
-            logger.debug("[%s] Stage A hit: %d entries", debug_context, len(result))
-        return result
-
-    # require_text_match=True означает «только при прямом совпадении» —
-    # если стадия A не нашла совпадений, дальнейший fallback не имеет смысла.
-    if require_text_match:
+    # require_text_match: разрешаем только Stage A и B
+    if require_text_match and result.stage not in (FallbackStage.A, FallbackStage.B):
         if debug_context:
             logger.debug(
-                "[%s] require_text_match=True, no text matches — returning []",
-                debug_context,
+                "[%s] require_text_match=True, stage=%s — returning []",
+                debug_context, result.stage.value,
             )
-        return []
+        return [] if not return_result else SelectionResult([], FallbackStage.E, [])
 
-    # ── Стадия B: relaxed (текст не обязателен, теги обязательны) ───────────
-    stage_b_min = SCORE_WEIGHTS["tag_primary"] + SCORE_WEIGHTS["tag_primary_bonus"]  # 11
-    if stage_a_min > stage_b_min:  # имеет смысл только если A был строже
-        result = _run_stage(
-            candidates, normalized_text, wanted_set, expanded_tags,
-            limit, scorer, False, stage_b_min,
-            char_budget, f"{debug_context}[B]",
-        )
-        if result:
-            if debug_context:
-                logger.debug("[%s] Stage B hit: %d entries", debug_context, len(result))
-            return result
+    if return_result:
+        return result  # type: ignore[return-value]
 
-    # ── Стадия C: tag-only (min_score = 1) ──────────────────────────────────
-    if wanted_set:
-        result = _run_stage(
-            candidates, normalized_text, wanted_set, expanded_tags,
-            limit, scorer, False, 1,
-            char_budget, f"{debug_context}[C]",
-        )
-        if result:
-            if debug_context:
-                logger.debug("[%s] Stage C hit: %d entries", debug_context, len(result))
-            return result
-
-    # ── Стадия D: emergency (только если теги не были заданы вообще) ────────
-    if not wanted_set:
-        result = _run_emergency_stage(candidates, limit, char_budget, debug_context)
-        if result:
-            return result
-
-    # ── SILENCE: лучше вернуть пустой список, чем шум ───────────────────────
-    if debug_context:
-        logger.debug(
-            "[%s] All fallback stages exhausted — returning [] (silence over noise).",
-            debug_context,
-        )
-    return []
+    return result.entries
 
 
 def _select_by_tags_or_all(
@@ -534,7 +572,6 @@ def _select_by_tags_or_all(
         scorer=score_structural_entry,
         debug_context="tags_or_all",
         expanded_tags=expanded_tags,
-        min_score=min_score,
         char_budget=char_budget,
     )
 
@@ -552,12 +589,13 @@ def select_grammar_rules(
     min_score: int = 1,
     char_budget: Optional[int] = None,
 ) -> List[Dict[str, Any]]:
+    """Выбирает релевантные правила грамматики из KB."""
     normalized_text = normalize_text_for_match(text)
     effective_tags = list(tags) or ["grammar"]
     return _select_ranked_entries(
         kb.grammar_errors, normalized_text, effective_tags, limit,
         scorer=score_rule_entry, candidate_limit=candidate_limit,
-        debug_context="grammar", min_score=min_score, char_budget=char_budget,
+        debug_context="grammar", char_budget=char_budget,
     )
 
 
@@ -570,12 +608,13 @@ def select_style_issues(
     min_score: int = 1,
     char_budget: Optional[int] = None,
 ) -> List[Dict[str, Any]]:
+    """Выбирает релевантные стилистические проблемы из KB."""
     normalized_text = normalize_text_for_match(text)
     effective_tags = list(tags) or ["style"]
     return _select_ranked_entries(
         kb.stylistic_issues, normalized_text, effective_tags, limit,
         scorer=score_rule_entry, candidate_limit=candidate_limit,
-        debug_context="style", min_score=min_score, char_budget=char_budget,
+        debug_context="style", char_budget=char_budget,
     )
 
 
@@ -588,6 +627,7 @@ def select_logic_issues(
     min_score: int = 1,
     char_budget: Optional[int] = None,
 ) -> List[Dict[str, Any]]:
+    """Выбирает релевантные логические проблемы из KB."""
     normalized_text = normalize_text_for_match(text)
     wanted_tags = list(tags) + ["logic"]
     candidates: List[Dict[str, Any]] = (
@@ -596,9 +636,10 @@ def select_logic_issues(
     return _select_ranked_entries(
         candidates, normalized_text, wanted_tags, limit,
         scorer=score_rule_entry, candidate_limit=candidate_limit,
-        debug_context="logic", min_score=min_score, char_budget=char_budget,
+        debug_context="logic", char_budget=char_budget,
     )
 
 
-# Экспортируем для PromptBuilder
+# Алиасы для обратной совместимости
 select_structural_by_tags_or_all = _select_by_tags_or_all
+_score_entry = score_rule_entry
