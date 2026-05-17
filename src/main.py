@@ -9,6 +9,7 @@ FastAPI сервер для редактора текстов.
 from __future__ import annotations
 
 import logging
+import re
 from contextlib import asynccontextmanager
 from typing import Any, List, Optional, Set, Tuple
 
@@ -24,13 +25,13 @@ logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
 )
+
 logger = logging.getLogger(__name__)
 
 
 def _call_builder_method(builder: PromptBuilder, *names: str) -> Any:
     """
-    Вызывает первый существующий метод у PromptBuilder.
-    Нужен для мягкой совместимости с legacy-именами.
+    Legacy helper для обратной совместимости при чтении intents/overlays.
     """
     for name in names:
         method = getattr(builder, name, None)
@@ -63,10 +64,9 @@ async def lifespan(app: FastAPI):
     try:
         prompt_builder = PromptBuilder()
 
-        # Принудительно прогреваем основные зависимости,
-        # чтобы ошибки конфигов упали на старте, а не в первом запросе.
-        _call_builder_method(prompt_builder, "get_core_config", "getcoreconfig")
-        _call_builder_method(prompt_builder, "get_knowledge_base", "getknowledgebase")
+        # Единый startup-check: валидация + прогрев кэшей,
+        # чтобы ошибки конфигов и KB падали на старте приложения.
+        prompt_builder.startup_check()
 
         app.state.prompt_builder = prompt_builder
         logger.info("PromptBuilder initialized successfully")
@@ -250,6 +250,7 @@ class EditRequest(BaseModel):
                 f"intent '{value}' not found in config/intents. "
                 f"Available: {sorted(available)}"
             )
+
         return normalized
 
     @field_validator("overlays")
@@ -264,6 +265,7 @@ class EditRequest(BaseModel):
                 f"overlays {invalid} not found in config/overlays. "
                 f"Available: {sorted(available)}"
             )
+
         return normalized_values
 
     @field_validator("output_mode")
@@ -455,25 +457,94 @@ async def quick_edit(text: str, audience_type: str = "b2b") -> dict:
     return {"edited_text": response.edited_text}
 
 
+# ---------------------------------------------------------------------------
+# Маркеры для разбора ответа text_and_report.
+# Порядок важен: более специфичные варианты идут первыми.
+# ---------------------------------------------------------------------------
+_TEXT_MARKERS: Tuple[str, ...] = (
+    "===ТЕКСТ===",
+    "=== ТЕКСТ ===",
+    "## ТЕКСТ",
+    "**ТЕКСТ**",
+    "ТЕКСТ:",
+)
+_REPORT_MARKERS: Tuple[str, ...] = (
+    "===ОТЧЁТ===",
+    "=== ОТЧЁТ ===",
+    "===ОТЧЕТ===",
+    "=== ОТЧЕТ ===",
+    "## ОТЧЁТ",
+    "## ОТЧЕТ",
+    "**ОТЧЁТ**",
+    "**ОТЧЕТ**",
+    "ОТЧЁТ:",
+    "ОТЧЕТ:",
+)
+
+
+def _find_marker(content_upper: str, markers: Tuple[str, ...]) -> Optional[str]:
+    """
+    Возвращает первый маркер из списка, найденный в нормализованном тексте.
+    Сравнение идёт в верхнем регистре без учёта пробелов по краям маркера.
+    """
+    for marker in markers:
+        if marker.upper() in content_upper:
+            return marker
+    return None
+
+
 def _parse_text_and_report(content: str) -> Tuple[str, Optional[str]]:
     """
-    Разбирает ответ режима text_and_report.
+    Разбирает ответ LLM в режиме text_and_report.
 
-    Ожидаемый формат:
-    ===ТЕКСТ===
-    ...
-    ===ОТЧЁТ===
-    ...
+    Поддерживаемые форматы (без учёта регистра и лишних пробелов):
+        ===ТЕКСТ=== / === ТЕКСТ === / ## ТЕКСТ / **ТЕКСТ** / ТЕКСТ:
+        ===ОТЧЁТ=== / === ОТЧЁТ === / ## ОТЧЁТ  / **ОТЧЁТ** / ОТЧЁТ:
+        (и варианты без ё: ОТЧЕТ)
+
+    Поведение при отсутствии маркеров:
+        - логируется WARNING с превью ответа;
+        - весь контент возвращается как edited_text, report=None.
     """
-    text_marker = "===ТЕКСТ==="
-    report_marker = "===ОТЧЁТ==="
+    content_upper = content.upper()
 
-    if text_marker in content and report_marker in content:
-        parts = content.split(report_marker, maxsplit=1)
-        text_part = parts[0].replace(text_marker, "").strip()
-        report_part = parts[1].strip() if len(parts) > 1 else None
-        return text_part, report_part
+    text_marker = _find_marker(content_upper, _TEXT_MARKERS)
+    report_marker = _find_marker(content_upper, _REPORT_MARKERS)
 
+    if text_marker and report_marker:
+        # Ищем позиции в оригинальном тексте (case-insensitive через re)
+        text_pat = re.compile(re.escape(text_marker), re.IGNORECASE)
+        report_pat = re.compile(re.escape(report_marker), re.IGNORECASE)
+
+        text_match = text_pat.search(content)
+        report_match = report_pat.search(content)
+
+        if text_match and report_match:
+            text_start = text_match.end()
+            report_start = report_match.start()
+            report_end = report_match.end()
+
+            edited_text = content[text_start:report_start].strip()
+            report = content[report_end:].strip() or None
+            return edited_text, report
+
+    if text_marker and not report_marker:
+        text_pat = re.compile(re.escape(text_marker), re.IGNORECASE)
+        text_match = text_pat.search(content)
+        if text_match:
+            logger.warning(
+                "parse_text_and_report: text marker found but no report marker. "
+                "Returning text only. Preview: %.120s",
+                content,
+            )
+            return content[text_match.end():].strip(), None
+
+    # Маркеров нет — silent fail превращается в явное предупреждение
+    logger.warning(
+        "parse_text_and_report: no markers found in LLM response, "
+        "returning whole response as edited_text. Preview: %.120s",
+        content,
+    )
     return content.strip(), None
 
 

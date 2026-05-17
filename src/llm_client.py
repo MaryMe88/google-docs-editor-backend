@@ -9,7 +9,7 @@ llm_client.py
 
 Поддерживает:
 - единый async-интерфейс
-- retry-логику
+- retry-логику с экспоненциальным backoff и jitter
 - контекстный менеджер async with
 - нормализованный ответ LLMResponse
 """
@@ -19,6 +19,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+import random
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from enum import Enum
@@ -86,6 +87,18 @@ class LLMRateLimitError(LLMError):
     """Rate limit от провайдера."""
 
 
+def _backoff_with_jitter(base_delay: float, attempt: int) -> float:
+    """
+    Экспоненциальный backoff с полным jitter.
+
+    Формула: uniform(0, base_delay * 2^attempt).
+    Full jitter лучше рассеивает повторные запросы при пиковой нагрузке,
+    чем равномерный или additive jitter.
+    """
+    cap = base_delay * (2 ** attempt)
+    return random.uniform(0, cap)
+
+
 class BaseLLMClient(ABC):
     """Базовый async-клиент для LLM."""
 
@@ -104,7 +117,7 @@ class BaseLLMClient(ABC):
         await self.client.aclose()
 
     async def generate(self, prompt: str) -> LLMResponse:
-        """Генерирует ответ с retry-логикой."""
+        """Генерирует ответ с retry-логикой и jitter."""
         attempt = 0
         last_error: Optional[Exception] = None
 
@@ -120,6 +133,7 @@ class BaseLLMClient(ABC):
                         "prompt_length": len(prompt),
                     },
                 )
+
                 response = await self.call_api(prompt)
                 logger.info(
                     "LLM request successful",
@@ -130,13 +144,14 @@ class BaseLLMClient(ABC):
                         "tokens_used": response.tokens_used,
                     },
                 )
+
                 return response
 
             except LLMRateLimitError as error:
                 last_error = error
-                delay = self.config.retry_delay * (2**attempt)
+                delay = _backoff_with_jitter(self.config.retry_delay, attempt)
                 logger.warning(
-                    "Rate limit hit, retrying in %s seconds",
+                    "Rate limit hit, retrying in %.2f seconds",
                     delay,
                     extra={"attempt": attempt + 1},
                 )
@@ -144,22 +159,25 @@ class BaseLLMClient(ABC):
 
             except (LLMTimeoutError, httpx.TimeoutException) as error:
                 last_error = error
+                delay = _backoff_with_jitter(self.config.retry_delay, attempt)
                 logger.warning(
-                    "Timeout, retrying in %s seconds",
-                    self.config.retry_delay,
+                    "Timeout, retrying in %.2f seconds",
+                    delay,
                     extra={"attempt": attempt + 1},
                 )
-                await asyncio.sleep(self.config.retry_delay)
+                await asyncio.sleep(delay)
 
             except LLMAPIError as error:
                 last_error = error
                 if error.status_code and 500 <= error.status_code < 600:
+                    delay = _backoff_with_jitter(self.config.retry_delay, attempt)
                     logger.warning(
-                        "Server error %s, retrying",
+                        "Server error %s, retrying in %.2f seconds",
                         error.status_code,
+                        delay,
                         extra={"attempt": attempt + 1},
                     )
-                    await asyncio.sleep(self.config.retry_delay)
+                    await asyncio.sleep(delay)
                 else:
                     raise
 
@@ -239,6 +257,7 @@ class PerplexityClient(BaseLLMClient):
                 tokens_used=tokens_used,
                 finish_reason=finish_reason,
             )
+
         except (KeyError, IndexError, TypeError) as error:
             raise LLMError(f"Failed to parse response: {error}") from error
 
@@ -321,6 +340,7 @@ class OpenAIClient(BaseLLMClient):
                 tokens_used=tokens_used,
                 finish_reason=finish_reason,
             )
+
         except (KeyError, IndexError, TypeError) as error:
             raise LLMError(f"Failed to parse response: {error}") from error
 
@@ -405,6 +425,7 @@ class OpenRouterClient(BaseLLMClient):
                 tokens_used=tokens_used,
                 finish_reason=finish_reason,
             )
+
         except (KeyError, IndexError, TypeError) as error:
             raise LLMError(f"Failed to parse response: {error}") from error
 
@@ -502,6 +523,7 @@ class AnthropicClient(BaseLLMClient):
                 tokens_used=tokens_used,
                 finish_reason=data.get("stop_reason"),
             )
+
         except (KeyError, IndexError, TypeError) as error:
             raise LLMError(f"Failed to parse response: {error}") from error
 
@@ -557,8 +579,8 @@ def create_llm_client(
 
     if model is None:
         model = default_models.get(provider)
-    if model is None:
-        raise ValueError(f"No default model for provider: {provider}")
+        if model is None:
+            raise ValueError(f"No default model for provider: {provider}")
 
     if api_key is None:
         env_key = env_keys.get(provider)

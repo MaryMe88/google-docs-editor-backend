@@ -1211,6 +1211,24 @@ class PromptBuilder:
         """Legacy alias."""
         return self.get_available_overlays()
 
+    def startup_check(self) -> None:
+        """
+        Выполняет единый startup-check для приложения.
+
+        Что делает:
+        - валидирует конфиги и knowledge base;
+        - прогревает core config;
+        - прогревает knowledge base;
+        - прогревает списки intents и overlays.
+
+        Метод идемпотентен: повторный вызов безопасен.
+        """
+        validate_configs_and_kb(self.config_path, self.kb_path)
+        self._get_core_config()
+        self._get_knowledge_base()
+        self._get_available_intents()
+        self._get_available_overlays()
+
     def build(
         self,
         text: str,
@@ -2058,20 +2076,87 @@ def validate_entry_tags(
 
 
 def _validate_stop_words_structure(stop_words: Any) -> None:
-    """Проверяет stop_words."""
+    """Проверяет структуру stop_words.
+
+    Поддерживает форматы:
+    1) legacy: dict[str, list[str]]
+    2) current: dict с ключом "categories", где значение — list[dict]
+    3) extended: current + ключ "raw_lists", где значение — dict[str, list[str]]
+    """
     if not isinstance(stop_words, dict):
         raise ValueError("stop_words must be a dict")
-    for category, words in stop_words.items():
+
+    for category, value in stop_words.items():
         if not isinstance(category, str):
-            raise ValueError(f"stop_words category key must be str, got {type(category)}")
-        if not isinstance(words, (list, tuple)):
             raise ValueError(
-                f"stop_words['{category}'] must be a list or tuple, got {type(words)}"
+                f"stop_words category key must be str, got {type(category)}"
             )
-        for i, word in enumerate(words):
-            if not isinstance(word, str):
+
+        if category == "categories":
+            if not isinstance(value, list):
+                raise ValueError("stop_words['categories'] must be a list")
+
+            for i, item in enumerate(value):
+                if not isinstance(item, dict):
+                    raise ValueError(
+                        f"stop_words['categories'][{i}] must be dict, got {type(item)}"
+                    )
+
+                description = item.get("description")
+                if description is not None and not isinstance(description, str):
+                    raise ValueError(
+                        f"stop_words['categories'][{i}]['description'] must be str"
+                    )
+
+                examples = item.get("examples")
+                if examples is not None and not isinstance(examples, list):
+                    raise ValueError(
+                        f"stop_words['categories'][{i}]['examples'] must be list"
+                    )
+
+                if isinstance(examples, list):
+                    for j, example in enumerate(examples):
+                        if not isinstance(example, dict):
+                            raise ValueError(
+                                "stop_words['categories']"
+                                f"[{i}]['examples'][{j}] must be dict, "
+                                f"got {type(example)}"
+                            )
+
+            continue
+
+        if category == "raw_lists":
+            if not isinstance(value, dict):
+                raise ValueError("stop_words['raw_lists'] must be a dict")
+
+            for raw_name, raw_words in value.items():
+                if not isinstance(raw_name, str):
+                    raise ValueError("stop_words['raw_lists'] keys must be str")
+
+                if not isinstance(raw_words, (list, tuple)):
+                    raise ValueError(
+                        f"stop_words['raw_lists']['{raw_name}'] must be a list "
+                        f"or tuple, got {type(raw_words)}"
+                    )
+
+                for idx, word in enumerate(raw_words):
+                    if not isinstance(word, str):
+                        raise ValueError(
+                            f"stop_words['raw_lists']['{raw_name}'][{idx}] must be str, "
+                            f"got {type(word)}"
+                        )
+
+            continue
+
+        if not isinstance(value, (list, tuple)):
+            raise ValueError(
+                f"stop_words['{category}'] must be a list or tuple, got {type(value)}"
+            )
+
+        for idx, item in enumerate(value):
+            if not isinstance(item, str):
                 raise ValueError(
-                    f"stop_words['{category}'][{i}] must be str, got {type(word)}"
+                    f"stop_words['{category}'][{idx}] must be str, got {type(item)}"
                 )
 
 
