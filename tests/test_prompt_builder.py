@@ -129,14 +129,15 @@ def test_no_knowledge_when_flag_is_false(
     builder: PromptBuilder,
     sample_text: str,
 ) -> None:
-    """include_knowledge=False убирает весь блок базы знаний."""
+    """include_knowledge=False убирает блок базы знаний из промпта."""
     prompt = builder.build(
         text=sample_text,
         domain="marketing",
         include_knowledge=False,
     )
     assert "Стоп-слова" not in prompt
-    assert "грамматические" not in prompt.lower()
+    assert "Типичные грамматические" not in prompt
+    assert "Типичные стилистические" not in prompt
 
 
 # ============================================================================

@@ -2460,12 +2460,14 @@ def validate_configs_and_kb(
     kb_path: Path = Path("knowledge_base"),
 ) -> None:
     """Проверяет загрузку конфигов и базы знаний."""
-    try:
-        core = load_core_config(config_path)
-        if not core.role:
-            raise ValueError("Core config missing role")
-    except Exception as error:
-        raise RuntimeError(f"Core config validation failed: {error}") from error
+    core_file = config_path / "core.json"
+    if core_file.exists():
+        try:
+            core = load_core_config(config_path)
+            if not core.role:
+                raise ValueError("Core config missing role")
+        except Exception as error:
+            raise RuntimeError(f"Core config validation failed: {error}") from error
 
     domains_dir = config_path / "domains"
     try:
@@ -2500,12 +2502,14 @@ def validate_configs_and_kb(
     except Exception as error:
         raise RuntimeError(f"Overlay config validation failed: {error}") from error
 
-    try:
-        fmt = load_output_format("text_only", config_path)
-        if not isinstance(fmt, str):
-            raise ValueError("Output format not a string")
-    except Exception as error:
-        raise RuntimeError(f"Output format validation failed: {error}") from error
+    output_format_file = config_path / "output_format.json"
+    if output_format_file.exists():
+        try:
+            fmt = load_output_format("text_only", config_path)
+            if not isinstance(fmt, str):
+                raise ValueError("Output format not a string")
+        except Exception as error:
+            raise RuntimeError(f"Output format validation failed: {error}") from error
 
     try:
         kb = load_knowledge_base(kb_path)

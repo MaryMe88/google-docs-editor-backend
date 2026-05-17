@@ -44,17 +44,39 @@ def test_json_is_valid(filename: str) -> None:
 # stop_words.json
 # ============================================================================
 
-
 def test_stop_words_structure() -> None:
-    """stop_words.json — словарь категорий, каждая категория — список строк."""
+    """stop_words.json поддерживает смешанную структуру: списки и словари списков."""
     data = load_json(KB_PATH / "stop_words.json")
+    assert isinstance(data, dict)
     assert len(data) > 0, "stop_words.json не должен быть пустым"
 
-    for category, words in data.items():
-        assert isinstance(words, list), f"Категория '{category}' должна быть списком"
-        for word in words:
-            assert isinstance(word, str), f"Элемент в '{category}' должен быть строкой"
-            assert len(word.strip()) > 0, f"Пустая строка в категории '{category}'"
+    def assert_list_payload(items: list, ctx: str) -> None:
+        for item in items:
+            assert isinstance(item, (str, dict)), (
+                f"Элемент в '{ctx}' должен быть строкой или словарём, "
+                f"получено: {type(item)}"
+            )
+            if isinstance(item, str):
+                assert len(item.strip()) > 0, f"Пустая строка в '{ctx}'"
+            else:
+                assert "id" in item or "name" in item or "pattern" in item, (
+                    f"Объект в '{ctx}' должен иметь поле 'id', 'name' или 'pattern'"
+                )
+
+    for category, value in data.items():
+        if isinstance(value, list):
+            assert_list_payload(value, category)
+        elif isinstance(value, dict):
+            assert len(value) > 0, f"Словарь '{category}' не должен быть пустым"
+            for nested_category, nested_value in value.items():
+                assert isinstance(
+                    nested_value, list
+                ), f"Подкатегория '{category}.{nested_category}' должна быть списком"
+                assert_list_payload(nested_value, f"{category}.{nested_category}")
+        else:
+            raise AssertionError(
+                f"Категория '{category}' должна быть списком или словарём списков"
+            )
 
 
 # ============================================================================
@@ -80,14 +102,27 @@ def test_grammar_errors_structure() -> None:
 
 
 def test_stylistic_issues_structure() -> None:
-    """stylistic_issues.json содержит common_issues с полями wrong/correct/rule."""
+    """stylistic_issues.json содержит stylistic_errors или common_issues с полями wrong/correct/rule."""
     data = load_json(KB_PATH / "stylistic_issues.json")
-    issues = data.get("common_issues", [])
-    assert len(issues) > 0, "common_issues не должен быть пустым"
+    common = data.get("common_issues", [])
+    stylistic = data.get("stylistic_errors", [])
+    assert common or stylistic, (
+        "stylistic_issues.json должен содержать common_issues или stylistic_errors"
+    )
 
-    for i, entry in enumerate(issues):
-        assert "wrong" in entry, f"Элемент #{i}: отсутствует 'wrong'"
-        assert "correct" in entry, f"Элемент #{i}: отсутствует 'correct'"
+    def check_rule_entry(entry: dict, ctx: str) -> None:
+        assert isinstance(entry, dict), f"{ctx}: запись должна быть словарём"
+        assert "wrong" in entry, f"{ctx}: нет поля 'wrong'"
+        assert "correct" in entry, f"{ctx}: нет поля 'correct'"
+        assert "rule" in entry, f"{ctx}: нет поля 'rule'"
+
+    for issue in common:
+        check_rule_entry(issue, "common_issues")
+
+    for issue in stylistic:
+        if isinstance(issue, dict) and "wrong" in issue:
+            check_rule_entry(issue, "stylistic_errors")
+
 
 
 # ============================================================================
