@@ -119,7 +119,7 @@ class AudienceProfile:
     description: str = ""
 
 
-@dataclass(frozen=True)
+@dataclass
 class KnowledgeBase:
     """База знаний редактора."""
 
@@ -139,10 +139,22 @@ class KnowledgeBase:
 
 
 def load_json_file(path: Path) -> dict:
-    """Загружает JSON-файл."""
+    """Загружает JSON-файл с безопасным fallback по кодировкам."""
     if not path.exists():
         raise FileNotFoundError(f"Config file not found: {path}")
-    return json.loads(path.read_text(encoding="utf-8"))
+
+    last_error: Optional[UnicodeDecodeError] = None
+
+    for encoding in ("utf-8", "utf-8-sig", "cp1251"):
+        try:
+            return json.loads(path.read_text(encoding=encoding))
+        except UnicodeDecodeError as error:
+            last_error = error
+
+    if last_error is not None:
+        raise last_error
+
+    raise RuntimeError(f"Unable to decode JSON file: {path}")
 
 
 def _load_optional_json(path: Path, default: Any = None) -> Any:
@@ -466,14 +478,19 @@ def _score_structural_entry(
 
     _add_field("name")
     _add_field("description")
-    _add_field("when_to_use")
     _add_field("rule")
 
     when = entry.get("when_to_use")
-    if isinstance(when, list):
+    if isinstance(when, str):
+        stripped = when.strip()
+        if stripped:
+            patterns.append(stripped)
+    elif isinstance(when, list):
         for item in when:
             if isinstance(item, str):
-                patterns.append(item.strip())
+                stripped = item.strip()
+                if stripped:
+                    patterns.append(stripped)
 
     for container_key in ("steps", "sections"):
         container = entry.get(container_key)
@@ -483,6 +500,7 @@ def _score_structural_entry(
                     step_name = step.get("name")
                     if isinstance(step_name, str) and step_name.strip():
                         patterns.append(step_name.strip())
+
                     step_desc = step.get("description")
                     if isinstance(step_desc, str) and step_desc.strip():
                         patterns.append(step_desc.strip())
@@ -494,14 +512,77 @@ def _score_structural_entry(
             seen.add(pattern)
             unique_patterns.append(pattern)
 
+    name_value = entry.get("name", "")
+    normalized_name = (
+        _normalize_text_for_match(name_value)
+        if isinstance(name_value, str)
+        else ""
+    )
+
+    text_tokens = normalized_text.split()
+
+    def _roots(token: str) -> Set[str]:
+        token = token.strip()
+        if len(token) < 5:
+            return set()
+
+        roots = {token[:3], token[:4], token[:5]}
+        if len(token) >= 6:
+            roots.add(token[:6])
+        return {root for root in roots if len(root) >= 3}
+
+    def _token_match_bonus(pattern: str, is_name: bool) -> int:
+        norm = _normalize_text_for_match(pattern)
+        if not norm:
+            return 0
+
+        pattern_tokens = [token for token in norm.split() if len(token) >= 4]
+        if not pattern_tokens or not text_tokens:
+            return 0
+
+        exact_matches = 0
+        soft_matches = 0
+
+        for p_token in pattern_tokens:
+            exact_found = any(
+                re.search(rf"\b{re.escape(p_token)}\b", normalized_text) is not None
+                for _ in [0]
+            )
+            if exact_found:
+                exact_matches += 1
+                continue
+
+            p_roots = _roots(p_token)
+            if not p_roots:
+                continue
+
+            for t_token in text_tokens:
+                if len(t_token) < 5:
+                    continue
+                if p_roots & _roots(t_token):
+                    soft_matches += 1
+                    break
+
+        if exact_matches == 0 and soft_matches == 0:
+            return 0
+
+        if is_name:
+            return 120 + exact_matches * 30 + soft_matches * 20
+        return 70 + exact_matches * 20 + soft_matches * 15
+
     match_bonus = 0
     for pattern in unique_patterns:
         if _contains_pattern(normalized_text, pattern):
-            if pattern == entry.get("name", "").strip():
-                match_bonus = 500
+            pattern_norm = _normalize_text_for_match(pattern)
+            if pattern_norm == normalized_name:
+                match_bonus = max(match_bonus, 500)
             else:
-                match_bonus = 200
-            break
+                match_bonus = max(match_bonus, 200)
+            continue
+
+        pattern_norm = _normalize_text_for_match(pattern)
+        is_name = pattern_norm == normalized_name
+        match_bonus = max(match_bonus, _token_match_bonus(pattern, is_name))
 
     score += match_bonus
 
@@ -520,7 +601,6 @@ def _score_structural_entry(
         score += overlap_exp * 2
 
     return score, -idx
-
 
 _score_entry = _score_rule_entry
 
@@ -612,40 +692,104 @@ def _select_ranked_entries(
         scored.append((score, tie, entry))
 
     if not scored:
-        fallback_candidates = []
-        for idx, entry in enumerate(candidates):
-            entry_tags = entry.get("tags", [])
-            if not isinstance(entry_tags, (list, tuple)):
-                entry_tags = []
-            tag_set = {normalize_tag(tag) for tag in entry_tags if isinstance(tag, str)}
-            overlap = len(tag_set & wanted_set)
-            if wanted_set and overlap == 0:
-                continue
-            info = _entry_info_score(entry)
-            fallback_candidates.append((overlap, info, -idx, entry))
+        def _entry_tag_set(entry: Dict[str, Any]) -> Set[str]:
+            raw_tags = entry.get("tags")
+            if not isinstance(raw_tags, (list, tuple)):
+                return set()
+            return {
+                normalize_tag(tag)
+                for tag in raw_tags
+                if isinstance(tag, str)
+            }
 
-        fallback_candidates.sort(key=lambda item: (item[0], item[1], item[2]), reverse=True)
+        def _has_text_match(entry: Dict[str, Any]) -> bool:
+            patterns = _get_entry_match_patterns(entry)
+            for pattern in patterns:
+                if isinstance(pattern, str) and _contains_pattern(normalized_text, pattern):
+                    return True
+            return False
 
-        if debug_context:
-            logging.debug(
-                "[%s] Fallback: %s candidates, top tag overlap=%s",
-                debug_context,
-                len(candidates),
-                fallback_candidates[0][0] if fallback_candidates else 0,
+        def _is_neutral_entry(entry: Dict[str, Any]) -> bool:
+            tag_set = _entry_tag_set(entry)
+            return not tag_set or tag_set <= {"neutral", "global", "general"}
+
+        def _collect_stage(
+            stage_name: str,
+            predicate: Any,
+            require_info_score: Optional[int] = None,
+        ) -> List[Dict[str, Any]]:
+            stage_items: List[Tuple[int, int, int, Dict[str, Any]]] = []
+
+            for idx, entry in enumerate(candidates):
+                if not predicate(entry):
+                    continue
+
+                info_score = _entry_info_score(entry)
+                if require_info_score is not None and info_score < require_info_score:
+                    continue
+
+                tag_overlap = len(_entry_tag_set(entry) & wanted_set)
+                stage_items.append((tag_overlap, info_score, -idx, entry))
+
+            stage_items.sort(
+                key=lambda item: (item[0], item[1], item[2]),
+                reverse=True,
             )
 
-        result: List[Dict[str, Any]] = []
-        seen_keys: Set[Tuple[Any, ...]] = set()
-        for _, _, _, entry in fallback_candidates:
-            key = _make_dedupe_key(entry)
-            if key in seen_keys:
-                continue
-            seen_keys.add(key)
-            result.append(entry)
-            if len(result) >= limit:
-                break
-        return result
+            if debug_context:
+                logging.debug(
+                    "[%s] Fallback stage %s: %s candidates",
+                    debug_context,
+                    stage_name,
+                    len(stage_items),
+                )
 
+            result_stage: List[Dict[str, Any]] = []
+            seen_stage: Set[Tuple[Any, ...]] = set()
+
+            for _, _, _, entry in stage_items:
+                key = _make_dedupe_key(entry)
+                if key in seen_stage:
+                    continue
+                seen_stage.add(key)
+                result_stage.append(entry)
+                if len(result_stage) >= limit:
+                    break
+
+            return result_stage
+
+        stage_a = _collect_stage(
+            "A:text+tags",
+            lambda entry: _has_text_match(entry) and bool(_entry_tag_set(entry) & wanted_set),
+        )
+        if stage_a:
+            return stage_a
+
+        stage_b = _collect_stage(
+            "B:text_only",
+            _has_text_match,
+        )
+        if stage_b:
+            return stage_b
+
+        stage_c = _collect_stage(
+            "C:tags_only",
+            lambda entry: bool(_entry_tag_set(entry) & wanted_set),
+        )
+        if stage_c:
+            return stage_c
+
+        stage_d = _collect_stage(
+            "D:neutral_high_info",
+            _is_neutral_entry,
+            require_info_score=2,
+        )
+        if stage_d:
+            return stage_d
+
+        if debug_context:
+            logging.debug("[%s] Fallback stage E: empty", debug_context)
+        return []
     scored.sort(key=lambda item: (item[0], item[1]), reverse=True)
     _log_selection_debug(debug_context, candidates, scored, limit)
 
