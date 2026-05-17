@@ -1931,70 +1931,78 @@ class PromptBuilder:
         parts: List[str] = []
 
         if budget.stop_words.enabled:
-            parts.append(self._build_stop_words_block(kb, tags, budget))
+            stop_words_block = self._build_stop_words_block(kb, tags, budget)
+            if stop_words_block and stop_words_block.strip():
+                parts.append(stop_words_block.strip())
 
         if budget.grammar.enabled or budget.style.enabled or budget.logic.enabled:
-            parts.append(
-                self._build_grammar_style_logic_block(
-                    kb,
-                    text,
-                    tags,
-                    expanded_tags,
-                    budget,
-                )
+            grammar_style_logic_block = self._build_grammar_style_logic_block(
+                kb,
+                text,
+                tags,
+                expanded_tags,
+                budget,
             )
+            if grammar_style_logic_block and grammar_style_logic_block.strip():
+                parts.append(grammar_style_logic_block.strip())
 
         if (
             budget.composition.enabled
             or budget.cohesion.enabled
             or budget.composition_errors.enabled
         ):
-            parts.append(
-                self._build_composition_cohesion_errors_block(
-                    kb,
-                    tags,
-                    expanded_tags,
-                    budget,
-                )
+            composition_block = self._build_composition_cohesion_errors_block(
+                kb,
+                tags,
+                expanded_tags,
+                budget,
             )
+            if composition_block and composition_block.strip():
+                parts.append(composition_block.strip())
 
         if budget.nkrj.enabled:
             nkrj_block = self._build_nkrj_block(kb)
-            if nkrj_block:
+            if nkrj_block and nkrj_block.strip():
                 parts.append(nkrj_block.strip())
 
-        storytelling_block = self._build_storytelling_block(
-            kb,
-            text,
-            tags,
-            expanded_tags,
-            storytelling_enabled,
-            budget,
-        )
-        if storytelling_block:
-            parts.append(storytelling_block.strip())
+        if budget.storytelling.enabled:
+            storytelling_block = self._build_storytelling_block(
+                kb,
+                text,
+                tags,
+                expanded_tags,
+                storytelling_enabled,
+                budget,
+            )
+            if storytelling_block and storytelling_block.strip():
+                parts.append(storytelling_block.strip())
 
-        marketing_block = self._build_marketing_block(
-            kb,
-            text,
-            tags,
-            expanded_tags,
-            marketing_enabled,
-            budget,
-        )
-        if marketing_block:
-            parts.append(marketing_block.strip())
+        if budget.marketing.enabled:
+            marketing_block = self._build_marketing_block(
+                kb,
+                text,
+                tags,
+                expanded_tags,
+                marketing_enabled,
+                budget,
+            )
+            if marketing_block and marketing_block.strip():
+                parts.append(marketing_block.strip())
 
-        rhetoric_editorial_glossary = self._build_rhetoric_editorial_glossary_block(
-            kb,
-            domain,
-            text,
-            tags,
-            expanded_tags,
-            budget,
-        )
-        if rhetoric_editorial_glossary:
-            parts.append(rhetoric_editorial_glossary.strip())
+        if budget.rhetoric.enabled or budget.editorial.enabled or budget.glossary.enabled:
+            rhetoric_editorial_glossary = self._build_rhetoric_editorial_glossary_block(
+                kb,
+                domain,
+                text,
+                tags,
+                expanded_tags,
+                budget,
+            )
+            if rhetoric_editorial_glossary and rhetoric_editorial_glossary.strip():
+                parts.append(rhetoric_editorial_glossary.strip())
+
+        if not parts:
+            return ""
 
         return "База знаний:\n\n" + "\n\n".join(parts)
 
@@ -2076,88 +2084,122 @@ def validate_entry_tags(
 
 
 def _validate_stop_words_structure(stop_words: Any) -> None:
-    """Проверяет структуру stop_words.
+    """
+    Проверяет структуру stop_words.
 
-    Поддерживает форматы:
-    1) legacy: dict[str, list[str]]
-    2) current: dict с ключом "categories", где значение — list[dict]
-    3) extended: current + ключ "raw_lists", где значение — dict[str, list[str]]
+    Поддерживаемые форматы:
+    1. Legacy:
+       {
+           "канцелярит": ["осуществлять", "в рамках"]
+       }
+
+    2. Structured:
+       {
+           "categories": [
+               {
+                   "name": "Канцелярит",
+                   "description": "...",
+                   "examples": [
+                       {"pattern": "...", "replacement": "..."}
+                   ]
+               }
+           ],
+           "raw_lists": {
+               "клише_из_интернета": ["лайфхак", "вау-эффект"]
+           }
+       }
     """
     if not isinstance(stop_words, dict):
         raise ValueError("stop_words must be a dict")
 
-    for category, value in stop_words.items():
+    def _validate_str_list(value: Any, path: str) -> None:
+        if not isinstance(value, (list, tuple)):
+            raise ValueError(f"{path} must be a list or tuple, got {type(value)}")
+        for index, item in enumerate(value):
+            if not isinstance(item, str):
+                raise ValueError(f"{path}[{index}] must be str, got {type(item)}")
+
+    for category, words in stop_words.items():
         if not isinstance(category, str):
             raise ValueError(
                 f"stop_words category key must be str, got {type(category)}"
             )
 
         if category == "categories":
-            if not isinstance(value, list):
-                raise ValueError("stop_words['categories'] must be a list")
+            if not isinstance(words, list):
+                raise ValueError(
+                    "stop_words['categories'] must be a list of category objects"
+                )
 
-            for i, item in enumerate(value):
+            for index, item in enumerate(words):
                 if not isinstance(item, dict):
                     raise ValueError(
-                        f"stop_words['categories'][{i}] must be dict, got {type(item)}"
+                        f"stop_words['categories'][{index}] must be dict, "
+                        f"got {type(item)}"
+                    )
+
+                name = item.get("name")
+                if name is not None and not isinstance(name, str):
+                    raise ValueError(
+                        f"stop_words['categories'][{index}]['name'] must be str "
+                        f"if present, got {type(name)}"
                     )
 
                 description = item.get("description")
                 if description is not None and not isinstance(description, str):
                     raise ValueError(
-                        f"stop_words['categories'][{i}]['description'] must be str"
+                        f"stop_words['categories'][{index}]['description'] must be str "
+                        f"if present, got {type(description)}"
                     )
 
-                examples = item.get("examples")
-                if examples is not None and not isinstance(examples, list):
+                examples = item.get("examples", [])
+                if not isinstance(examples, list):
                     raise ValueError(
-                        f"stop_words['categories'][{i}]['examples'] must be list"
+                        f"stop_words['categories'][{index}]['examples'] must be list, "
+                        f"got {type(examples)}"
                     )
 
-                if isinstance(examples, list):
-                    for j, example in enumerate(examples):
-                        if not isinstance(example, dict):
-                            raise ValueError(
-                                "stop_words['categories']"
-                                f"[{i}]['examples'][{j}] must be dict, "
-                                f"got {type(example)}"
-                            )
+                for ex_index, example in enumerate(examples):
+                    if isinstance(example, str):
+                        continue
 
+                    if not isinstance(example, dict):
+                        raise ValueError(
+                            f"stop_words['categories'][{index}]['examples'][{ex_index}] "
+                            f"must be str or dict, got {type(example)}"
+                        )
+
+                    pattern = example.get("pattern")
+                    if pattern is not None and not isinstance(pattern, str):
+                        raise ValueError(
+                            f"stop_words['categories'][{index}]['examples'][{ex_index}]"
+                            f"['pattern'] must be str if present, got {type(pattern)}"
+                        )
+
+                    replacement = example.get("replacement")
+                    if replacement is not None and not isinstance(replacement, str):
+                        raise ValueError(
+                            f"stop_words['categories'][{index}]['examples'][{ex_index}]"
+                            f"['replacement'] must be str if present, got "
+                            f"{type(replacement)}"
+                        )
             continue
 
         if category == "raw_lists":
-            if not isinstance(value, dict):
-                raise ValueError("stop_words['raw_lists'] must be a dict")
+            if not isinstance(words, dict):
+                raise ValueError(
+                    f"stop_words['raw_lists'] must be dict, got {type(words)}"
+                )
 
-            for raw_name, raw_words in value.items():
+            for raw_name, raw_words in words.items():
                 if not isinstance(raw_name, str):
-                    raise ValueError("stop_words['raw_lists'] keys must be str")
-
-                if not isinstance(raw_words, (list, tuple)):
                     raise ValueError(
-                        f"stop_words['raw_lists']['{raw_name}'] must be a list "
-                        f"or tuple, got {type(raw_words)}"
+                        f"stop_words['raw_lists'] key must be str, got {type(raw_name)}"
                     )
-
-                for idx, word in enumerate(raw_words):
-                    if not isinstance(word, str):
-                        raise ValueError(
-                            f"stop_words['raw_lists']['{raw_name}'][{idx}] must be str, "
-                            f"got {type(word)}"
-                        )
-
+                _validate_str_list(raw_words, f"stop_words['raw_lists']['{raw_name}']")
             continue
 
-        if not isinstance(value, (list, tuple)):
-            raise ValueError(
-                f"stop_words['{category}'] must be a list or tuple, got {type(value)}"
-            )
-
-        for idx, item in enumerate(value):
-            if not isinstance(item, str):
-                raise ValueError(
-                    f"stop_words['{category}'][{idx}] must be str, got {type(item)}"
-                )
+        _validate_str_list(words, f"stop_words['{category}']")
 
 
 def _validate_rule_entries(entries: List[Dict[str, Any]], name: str, sample_size: int = 5) -> None:
