@@ -549,12 +549,14 @@ def _parse_text_and_report(content: str) -> Tuple[str, Optional[str]]:
 
 
 if __name__ == "__main__":
+    import os
     import uvicorn
 
+    port = int(os.getenv("PORT", "8000"))
     uvicorn.run(
         "src.main:app",
         host="0.0.0.0",
-        port=8000,
-        reload=True,
+        port=port,
+        reload=False,
         log_level="info",
     )
