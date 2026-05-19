@@ -70,6 +70,15 @@ class EditorialTechniqueEntry(TypedDict, total=False):
 
 
 FlatEntry = Dict[str, Any]
+from enum import Enum
+
+class FallbackStage(Enum):
+    """Стадия fallback при retrieval KB-записей."""
+    STRONG = "strong"        # text match + tag overlap
+    TEXT_ONLY = "text_only"  # text match, без тегов
+    TAG_ONLY = "tag_only"    # только primary tag overlap, без text match
+    NEUTRAL = "neutral"      # global/neutral записи с high info_score
+    EMPTY = "empty"          # ничего не нашли
 
 
 @dataclass(frozen=True)
@@ -602,6 +611,25 @@ def _score_structural_entry(
 
     return score, -idx
 
+def _classify_entry_stage(
+    score: int,
+    entry_tags: Set[str],
+    wanted_set: Set[str],
+    expanded_set: Optional[Set[str]] = None,
+) -> FallbackStage:
+    """Определяет стадию fallback для записи по её скору и тегам."""
+    has_text_match = score >= 200
+    has_primary_tag = bool(entry_tags & wanted_set)
+    has_expanded_tag = bool(entry_tags & expanded_set) if expanded_set else False
+
+    if has_text_match and (has_primary_tag or has_expanded_tag):
+        return FallbackStage.STRONG
+    if has_text_match:
+        return FallbackStage.TEXT_ONLY
+    if has_primary_tag:
+        return FallbackStage.TAG_ONLY
+    return FallbackStage.NEUTRAL
+
 _score_entry = _score_rule_entry
 
 
@@ -669,141 +697,121 @@ def _select_ranked_entries(
     expanded_tags: Optional[Set[str]] = None,
     min_score: Optional[int] = None,
 ) -> List[Dict[str, Any]]:
-    """Общая функция ранжирования записей."""
+    """Ранжирует записи через staged fallback.
+
+    Порядок стадий:
+    A. STRONG    — текст + теги
+    B. TEXT_ONLY — только текст
+    C. TAG_ONLY  — только primary tags
+    D. NEUTRAL   — fallback по info_score
+    """
     if not entries:
         return []
 
     candidates = entries if candidate_limit is None else entries[:candidate_limit]
     wanted_set = {normalize_tag(tag) for tag in wanted_tags if isinstance(tag, str)}
+    expanded_set = expanded_tags or set()
 
-    scored: List[Tuple[int, int, Dict[str, Any]]] = []
+    scored_all: List[Tuple[int, int, Dict[str, Any]]] = []
     for idx, entry in enumerate(candidates):
         score, tie = scorer(
             entry,
             normalized_text,
             wanted_set,
             idx,
-            expanded_tags=expanded_tags,
+            expanded_tags=expanded_set if expanded_set else None,
         )
-        if require_text_match and score < 1000:
-            continue
-        if min_score is not None and score < min_score:
-            continue
-        scored.append((score, tie, entry))
+        scored_all.append((score, tie, entry))
 
-    if not scored:
-        def _entry_tag_set(entry: Dict[str, Any]) -> Set[str]:
-            raw_tags = entry.get("tags")
-            if not isinstance(raw_tags, (list, tuple)):
-                return set()
-            return {
-                normalize_tag(tag)
-                for tag in raw_tags
-                if isinstance(tag, str)
-            }
+    def _collect(
+        items: List[Tuple[int, int, Dict[str, Any]]],
+        stage: FallbackStage,
+        preserve_order: bool = False,
+    ) -> List[Dict[str, Any]]:
+        if not preserve_order:
+            items.sort(key=lambda item: (item[0], item[1]), reverse=True)
 
-        def _has_text_match(entry: Dict[str, Any]) -> bool:
-            patterns = _get_entry_match_patterns(entry)
-            for pattern in patterns:
-                if isinstance(pattern, str) and _contains_pattern(normalized_text, pattern):
-                    return True
-            return False
+        result: List[Dict[str, Any]] = []
+        seen_keys: Set[Tuple[Any, ...]] = set()
 
-        def _is_neutral_entry(entry: Dict[str, Any]) -> bool:
-            tag_set = _entry_tag_set(entry)
-            return not tag_set or tag_set <= {"neutral", "global", "general"}
+        for _, _, entry in items:
+            key = _make_dedupe_key(entry)
+            if key in seen_keys:
+                continue
+            seen_keys.add(key)
+            result.append(entry)
+            if len(result) >= limit:
+                break
 
-        def _collect_stage(
-            stage_name: str,
-            predicate: Any,
-            require_info_score: Optional[int] = None,
-        ) -> List[Dict[str, Any]]:
-            stage_items: List[Tuple[int, int, int, Dict[str, Any]]] = []
-
-            for idx, entry in enumerate(candidates):
-                if not predicate(entry):
-                    continue
-
-                info_score = _entry_info_score(entry)
-                if require_info_score is not None and info_score < require_info_score:
-                    continue
-
-                tag_overlap = len(_entry_tag_set(entry) & wanted_set)
-                stage_items.append((tag_overlap, info_score, -idx, entry))
-
-            stage_items.sort(
-                key=lambda item: (item[0], item[1], item[2]),
-                reverse=True,
+        if debug_context and result:
+            logging.debug(
+                "[%s] Stage %s: %s candidates → %s selected",
+                debug_context,
+                stage.value,
+                len(items),
+                len(result),
             )
+        return result
 
-            if debug_context:
-                logging.debug(
-                    "[%s] Fallback stage %s: %s candidates",
-                    debug_context,
-                    stage_name,
-                    len(stage_items),
-                )
+    filtered = scored_all
+    if require_text_match:
+        filtered = [(s, t, e) for s, t, e in filtered if s >= 1000]
 
-            result_stage: List[Dict[str, Any]] = []
-            seen_stage: Set[Tuple[Any, ...]] = set()
+    if min_score is not None:
+        filtered = [(s, t, e) for s, t, e in filtered if s >= min_score]
 
-            for _, _, _, entry in stage_items:
-                key = _make_dedupe_key(entry)
-                if key in seen_stage:
-                    continue
-                seen_stage.add(key)
-                result_stage.append(entry)
-                if len(result_stage) >= limit:
-                    break
+    stage_a = []
+    stage_b = []
+    stage_c = []
 
-            return result_stage
+    for s, t, e in filtered:
+        raw_tags = e.get("tags", [])
+        if not isinstance(raw_tags, (list, tuple)):
+            raw_tags = []
+        entry_tags = {normalize_tag(tag) for tag in raw_tags if isinstance(tag, str)}
 
-        stage_a = _collect_stage(
-            "A:text+tags",
-            lambda entry: _has_text_match(entry) and bool(_entry_tag_set(entry) & wanted_set),
-        )
-        if stage_a:
-            return stage_a
+        has_text_match = s >= 200
+        has_primary_tag = bool(entry_tags & wanted_set)
+        has_expanded_tag = bool(entry_tags & expanded_set)
 
-        stage_b = _collect_stage(
-            "B:text_only",
-            _has_text_match,
-        )
-        if stage_b:
-            return stage_b
+        if has_text_match and (has_primary_tag or has_expanded_tag):
+            stage_a.append((s, t, e))
+        elif has_text_match:
+            stage_b.append((s, t, e))
+        elif has_primary_tag:
+            stage_c.append((s, t, e))
 
-        stage_c = _collect_stage(
-            "C:tags_only",
-            lambda entry: bool(_entry_tag_set(entry) & wanted_set),
-        )
-        if stage_c:
-            return stage_c
+    if stage_a:
+        return _collect(stage_a, FallbackStage.STRONG)
 
-        stage_d = _collect_stage(
-            "D:neutral_high_info",
-            _is_neutral_entry,
-            require_info_score=2,
-        )
-        if stage_d:
-            return stage_d
+    if stage_b:
+        return _collect(stage_b, FallbackStage.TEXT_ONLY)
 
-        if debug_context:
-            logging.debug("[%s] Fallback stage E: empty", debug_context)
-        return []
-    scored.sort(key=lambda item: (item[0], item[1]), reverse=True)
-    _log_selection_debug(debug_context, candidates, scored, limit)
+    if stage_c:
+        return _collect(stage_c, FallbackStage.TAG_ONLY)
 
-    result = []
-    seen_keys: Set[Tuple[Any, ...]] = set()
-    for _, _, entry in scored:
-        key = _make_dedupe_key(entry)
-        if key in seen_keys:
+    stage_d_raw: List[Tuple[int, int, int, Dict[str, Any]]] = []
+    for s, t, e in scored_all:
+        info = _entry_info_score(e)
+        if info <= 0:
             continue
-        seen_keys.add(key)
-        result.append(entry)
-        if len(result) >= limit:
-            break
-    return result
+        stage_d_raw.append((info, s, t, e))
+
+    if stage_d_raw:
+        stage_d_raw.sort(key=lambda item: (item[0], item[1], item[2]), reverse=True)
+        stage_d = [(s, t, e) for _, s, t, e in stage_d_raw]
+        if debug_context:
+            logging.debug(
+                "[%s] Stage %s (neutral): %s candidates",
+                debug_context,
+                FallbackStage.NEUTRAL.value,
+                len(stage_d),
+            )
+        return _collect(stage_d, FallbackStage.NEUTRAL, preserve_order=True)
+
+    if debug_context:
+        logging.debug("[%s] All stages empty → returning []", debug_context)
+    return []
 
 
 def _match_tags(entry_tags: Iterable[str], wanted_tags: Iterable[str]) -> bool:
