@@ -2,18 +2,19 @@ from __future__ import annotations
 
 from typing import Any, Dict, List, Optional
 
-from pydantic import BaseModel, Field, validator
+from pydantic import BaseModel, Field, field_validator
 
+from src.shared_contracts import (
+    ALLOWED_DOMAINS,
+    ALLOWED_EXPERTISE,
+    ALLOWED_FORMALITY,
+    ALLOWED_INTENTS,
+    ALLOWED_KIND,
+    ALLOWED_OUTPUT_MODES,
+    ALLOWED_OVERLAYS,
+    ALLOWED_PROVIDERS,
+)
 from src.tag_registry import normalize_tag
-
-_ALLOWED_DOMAINS = {"marketing", "blog", "deai"}
-_ALLOWED_INTENTS = {"storytelling", "noragal", "deai", "neutral"}
-_ALLOWED_OVERLAYS = {"logic", "factcheck", "infostyle", "marketingpush"}
-_ALLOWED_OUTPUT_MODES = {"text_only", "text_and_report"}
-_ALLOWED_PROVIDERS = {"openrouter", "perplexity", "openai"}
-_ALLOWED_KIND = {"b2b", "b2c", "mixed", "custom"}
-_ALLOWED_EXPERTISE = {"novice", "pro", "expert"}
-_ALLOWED_FORMALITY = {"casual", "neutral", "formal"}
 
 
 class AudienceRequest(BaseModel):
@@ -22,25 +23,32 @@ class AudienceRequest(BaseModel):
     formality: str = Field(default="neutral")
     description: str = Field(default="")
 
-    @validator("kind")
+    @field_validator("kind")
+    @classmethod
     def validate_kind(cls, value: str) -> str:
         normalized = value.strip().lower()
-        if normalized not in _ALLOWED_KIND:
-            raise ValueError(f"kind must be one of {sorted(_ALLOWED_KIND)}")
+        if normalized not in ALLOWED_KIND:
+            raise ValueError(f"kind must be one of {sorted(ALLOWED_KIND)}")
         return normalized
 
-    @validator("expertise")
+    @field_validator("expertise")
+    @classmethod
     def validate_expertise(cls, value: str) -> str:
         normalized = value.strip().lower()
-        if normalized not in _ALLOWED_EXPERTISE:
-            raise ValueError(f"expertise must be one of {sorted(_ALLOWED_EXPERTISE)}")
+        if normalized not in ALLOWED_EXPERTISE:
+            raise ValueError(
+                f"expertise must be one of {sorted(ALLOWED_EXPERTISE)}"
+            )
         return normalized
 
-    @validator("formality")
+    @field_validator("formality")
+    @classmethod
     def validate_formality(cls, value: str) -> str:
         normalized = value.strip().lower()
-        if normalized not in _ALLOWED_FORMALITY:
-            raise ValueError(f"formality must be one of {sorted(_ALLOWED_FORMALITY)}")
+        if normalized not in ALLOWED_FORMALITY:
+            raise ValueError(
+                f"formality must be one of {sorted(ALLOWED_FORMALITY)}"
+            )
         return normalized
 
 
@@ -57,47 +65,62 @@ class EditRequest(BaseModel):
     include_knowledge: bool = Field(default=True)
     dry_run: bool = Field(default=False)
 
-    @validator("domain")
+    @field_validator("domain")
+    @classmethod
     def validate_domain(cls, value: str) -> str:
         normalized = value.strip().lower()
-        if normalized not in _ALLOWED_DOMAINS:
-            raise ValueError(f"domain must be one of {sorted(_ALLOWED_DOMAINS)}")
+        if normalized not in ALLOWED_DOMAINS:
+            raise ValueError(f"domain must be one of {sorted(ALLOWED_DOMAINS)}")
         return normalized
 
-    @validator("intent")
+    @field_validator("intent")
+    @classmethod
     def validate_intent(cls, value: Optional[str]) -> Optional[str]:
         if value is None or not value.strip():
             return None
+
         normalized = normalize_tag(value)
-        if normalized not in _ALLOWED_INTENTS:
-            raise ValueError(f"intent must be one of {sorted(_ALLOWED_INTENTS)}")
+        if normalized not in ALLOWED_INTENTS:
+            raise ValueError(f"intent must be one of {sorted(ALLOWED_INTENTS)}")
         return normalized
 
-    @validator("overlays")
+    @field_validator("overlays")
+    @classmethod
     def validate_overlays(cls, value: List[str]) -> List[str]:
         normalized_values: List[str] = []
         seen = set()
+
         for item in value:
             normalized = normalize_tag(item)
-            if normalized not in _ALLOWED_OVERLAYS:
-                raise ValueError(f"overlay must be one of {sorted(_ALLOWED_OVERLAYS)}")
+            if normalized not in ALLOWED_OVERLAYS:
+                raise ValueError(
+                    f"overlay must be one of {sorted(ALLOWED_OVERLAYS)}"
+                )
+
             if normalized not in seen:
                 seen.add(normalized)
                 normalized_values.append(normalized)
+
         return normalized_values
 
-    @validator("output_mode")
+    @field_validator("output_mode")
+    @classmethod
     def validate_output_mode(cls, value: str) -> str:
         normalized = value.strip().lower()
-        if normalized not in _ALLOWED_OUTPUT_MODES:
-            raise ValueError(f"output_mode must be one of {sorted(_ALLOWED_OUTPUT_MODES)}")
+        if normalized not in ALLOWED_OUTPUT_MODES:
+            raise ValueError(
+                f"output_mode must be one of {sorted(ALLOWED_OUTPUT_MODES)}"
+            )
         return normalized
 
-    @validator("provider")
+    @field_validator("provider")
+    @classmethod
     def validate_provider(cls, value: str) -> str:
         normalized = value.strip().lower()
-        if normalized not in _ALLOWED_PROVIDERS:
-            raise ValueError(f"provider must be one of {sorted(_ALLOWED_PROVIDERS)}")
+        if normalized not in ALLOWED_PROVIDERS:
+            raise ValueError(
+                f"provider must be one of {sorted(ALLOWED_PROVIDERS)}"
+            )
         return normalized
 
 

@@ -4,18 +4,17 @@ config_types.py
 Dataclasses, enum'ы и инфраструктурные типы для конфигурирования PromptBuilder.
 
 Содержит:
-  - Domain types        — RuleEntry, KnowledgeBase, CoreConfig и т.д.
-  - LimitsConfig        — лимиты выдачи и кандидатов (ТП-3)
-  - KnowledgeLevel      — режим включения блоков знаний (ТП-1)
-  - KnowledgeBlockPlan  — описание блока для budget-aware сборки (ТП-1)
-  - BlockBudget         — бюджет одного блока KB (ТП-1)
-  - KnowledgeBudget     — совокупный бюджет всех блоков (ТП-1)
-  - KnowledgeBudgetManager — вычисляет бюджет (ТП-1)
-  - CachePolicy         — политика инвалидации кэша (ФП-1)
-  - FileCache           — кэш-менеджер с поддержкой TTL/mtime (ФП-1)
-  - Tag constants       — CANONICAL_TAGS, KNOWN_TAGS, get_*_tags_for_category
+- Domain types — RuleEntry, KnowledgeBase, CoreConfig и т.д.
+- LimitsConfig — лимиты выдачи и кандидатов (ТП-3)
+- KnowledgeLevel — режим включения блоков знаний (ТП-1)
+- KnowledgeBlockPlan — описание блока для budget-aware сборки (ТП-1)
+- BlockBudget — бюджет одного блока KB (ТП-1)
+- KnowledgeBudget — совокупный бюджет всех блоков (ТП-1)
+- KnowledgeBudgetManager — вычисляет бюджет (ТП-1)
+- CachePolicy — политика инвалидации кэша (ФП-1)
+- FileCache — кэш-менеджер с поддержкой TTL/mtime (ФП-1)
+- Tag constants — CANONICAL_TAGS, KNOWN_TAGS, get_*_tags_for_category
 """
-
 from __future__ import annotations
 
 import logging
@@ -24,13 +23,22 @@ from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
 from typing import (
-    Any, Callable, Dict, Generic, List, Optional, Set, Tuple, TypeVar, Union
+    Any,
+    Callable,
+    Dict,
+    Generic,
+    List,
+    Optional,
+    Set,
+    TypeVar,
+    Union,
 )
 
 try:
     from typing import TypedDict
 except ImportError:
     from typing_extensions import TypedDict
+
 
 logger = logging.getLogger(__name__)
 V = TypeVar("V")
@@ -42,6 +50,7 @@ V = TypeVar("V")
 
 class RuleEntry(TypedDict, total=False):
     """Запись с правилом исправления (грамматика, стиль, логика)."""
+
     wrong: str
     correct: str
     rule: str
@@ -52,6 +61,7 @@ class RuleEntry(TypedDict, total=False):
 
 class StructuralEntry(TypedDict, total=False):
     """Структурная запись (фреймворк, шаблон, приём)."""
+
     name: str
     description: str
     when_to_use: Union[str, List[str]]
@@ -63,6 +73,7 @@ class StructuralEntry(TypedDict, total=False):
 
 class EditorialTechniqueEntry(TypedDict, total=False):
     """Редакторский приём."""
+
     id: str
     name: str
     category: str
@@ -82,6 +93,7 @@ FlatEntry = Dict[str, Any]
 @dataclass(frozen=True)
 class CoreConfig:
     """Базовая конфигурация редактора."""
+
     role: str
     priorities: str
     basic_audit_instructions: List[str]
@@ -91,6 +103,7 @@ class CoreConfig:
 @dataclass(frozen=True)
 class DomainConfig:
     """Конфигурация домена."""
+
     name: str
     system_rules: str
     tone: str
@@ -101,6 +114,7 @@ class DomainConfig:
 @dataclass(frozen=True)
 class IntentConfig:
     """Конфигурация цели обработки."""
+
     name: str
     instructions: List[str]
 
@@ -108,6 +122,7 @@ class IntentConfig:
 @dataclass(frozen=True)
 class OverlayConfig:
     """Конфигурация оверлея."""
+
     name: str
     instructions: List[str]
 
@@ -115,15 +130,17 @@ class OverlayConfig:
 @dataclass(frozen=True)
 class AudienceProfile:
     """Профиль аудитории."""
+
     kind: str
     expertise: str
     formality: str
     description: str = ""
 
 
-@dataclass(frozen=True)
+@dataclass
 class KnowledgeBase:
     """База знаний редактора."""
+
     stop_words: Dict[str, List[str]]
     grammar_errors: List[RuleEntry]
     stylistic_issues: List[RuleEntry]
@@ -150,6 +167,7 @@ class LimitsConfig:
     Параметры *_candidates задают, сколько записей рассматривается
     перед ранжированием (None = все).
     """
+
     grammar: int = 10
     style: int = 10
     logic: int = 8
@@ -182,7 +200,8 @@ class KnowledgeLevel(str, Enum):
 
     NONE — база знаний не включается совсем.
     CORE — только обязательные блоки: grammar, style, stop_words.
-    STANDARD — CORE + logic, composition, cohesion, nkrj, glossary.
+    STANDARD — CORE + logic, composition, cohesion, composition_errors,
+    nkrj, glossary.
     FULL — все доступные блоки, включая storytelling, marketing,
     rhetoric, editorial.
     """
@@ -193,13 +212,12 @@ class KnowledgeLevel(str, Enum):
     FULL = "full"
 
 
-KNOWLEDGE_BUDGET_CHARS: Dict[KnowledgeLevel, Optional[int]] = {
+KNOWLEDGE_BUDGET_CHARS: Dict[KnowledgeLevel, int] = {
     KnowledgeLevel.NONE: 0,
     KnowledgeLevel.CORE: 4_000,
     KnowledgeLevel.STANDARD: 10_000,
-    KnowledgeLevel.FULL: None,
+    KnowledgeLevel.FULL: 16_000,
 }
-
 
 _LEVEL_BLOCKS: Dict[KnowledgeLevel, Set[str]] = {
     KnowledgeLevel.NONE: set(),
@@ -242,7 +260,6 @@ def blocks_allowed_at_level(level: KnowledgeLevel) -> Set[str]:
 # ТП-1: KnowledgeBlockPlan
 # ============================================================================
 
-
 @dataclass
 class KnowledgeBlockPlan:
     """
@@ -271,7 +288,6 @@ class KnowledgeBlockPlan:
 # ТП-1: BlockBudget, KnowledgeBudget, KnowledgeBudgetManager
 # ============================================================================
 
-
 @dataclass(frozen=True)
 class BlockBudget:
     """
@@ -291,7 +307,7 @@ class BlockBudget:
 class KnowledgeBudget:
     """
     Совокупный бюджет всех блоков KB для одного вызова build().
-    Реализован как dict-like объект: budget.get("grammar") -> BlockBudget.
+    Реализован как dict-like объект: budget.get("grammar") → BlockBudget.
     Атрибуты grammar, style, logic, ... — шорткаты для читаемости.
     """
 
@@ -321,10 +337,10 @@ class KnowledgeBudget:
     def __getattr__(self, name: str) -> BlockBudget:
         if name.startswith("_"):
             raise AttributeError(name)
-        budget = self._budgets.get(name)
-        if budget is None:
+        block_budget = self._budgets.get(name)
+        if block_budget is None:
             raise AttributeError(f"Block '{name}' not in KnowledgeBudget")
-        return budget
+        return block_budget
 
     def __repr__(self) -> str:
         return f"KnowledgeBudget({self._budgets!r})"
@@ -343,7 +359,7 @@ class KnowledgeBudgetManager:
         """
         Args:
             token_budget: Приблизительный лимит токенов под блок «База знаний».
-                1 токен ≈ 4 символа (heuristic). None = без ограничений.
+            1 токен ≈ 4 символа (heuristic). None = без ограничений.
         """
         self._token_budget = token_budget
         self._char_budget: Optional[int] = (
@@ -394,8 +410,7 @@ class KnowledgeBudgetManager:
                 "composition": _blk("composition", limits.composition),
                 "cohesion": _blk("cohesion", limits.cohesion),
                 "composition_errors": _blk(
-                    "composition_errors",
-                    limits.composition_errors,
+                    "composition_errors", limits.composition_errors
                 ),
                 "storytelling": _blk("storytelling", limits.storytelling),
                 "marketing": _blk("marketing", limits.marketing),
@@ -407,6 +422,7 @@ class KnowledgeBudgetManager:
             }
         )
 
+
 # ============================================================================
 # ФП-1: CachePolicy и FileCache
 # ============================================================================
@@ -417,14 +433,15 @@ class CachePolicy:
     Политика инвалидации кэша.
 
     Атрибуты:
-        check_mtime:  Инвалидировать при изменении mtime файла.
-        ttl_seconds:  Время жизни кэша в секундах (None = без TTL).
+        check_mtime: Инвалидировать при изменении mtime файла.
+        ttl_seconds: Время жизни кэша в секундах (None = без TTL).
 
     Рекомендуемые режимы:
-        prod:  CachePolicy(check_mtime=True)
-        dev:   CachePolicy(check_mtime=True, ttl_seconds=30)
-        test:  CachePolicy(check_mtime=False, ttl_seconds=None)
+        prod: CachePolicy(check_mtime=True)
+        dev: CachePolicy(check_mtime=True, ttl_seconds=30)
+        test: CachePolicy(check_mtime=False, ttl_seconds=None)
     """
+
     check_mtime: bool = True
     ttl_seconds: Optional[float] = None
 
@@ -432,6 +449,7 @@ class CachePolicy:
 @dataclass
 class _CacheEntry(Generic[V]):
     """Внутренняя запись кэша."""
+
     value: V
     path: Optional[Path]
     loaded_at: float
@@ -454,16 +472,22 @@ class FileCache:
     def _is_valid(self, entry: _CacheEntry[Any]) -> bool:
         """Проверяет актуальность записи кэша."""
         now = time.monotonic()
+
         if self._policy.ttl_seconds is not None:
             if now - entry.loaded_at > self._policy.ttl_seconds:
                 return False
+
         if self._policy.check_mtime and entry.path is not None:
             try:
                 current_mtime = entry.path.stat().st_mtime
-                if entry.mtime_at_load is None or current_mtime != entry.mtime_at_load:
+                if (
+                    entry.mtime_at_load is None
+                    or current_mtime != entry.mtime_at_load
+                ):
                     return False
             except OSError:
                 return False
+
         return True
 
     def get_or_load(
@@ -477,9 +501,9 @@ class FileCache:
         Возвращает закэшированное значение или загружает через loader(*loader_args).
 
         Args:
-            key:         Ключ кэша (уникальный идентификатор значения).
-            path:        Путь к файлу для mtime-инвалидации (None = без mtime).
-            loader:      Callable, возвращающий значение.
+            key: Ключ кэша (уникальный идентификатор значения).
+            path: Путь к файлу для mtime-инвалидации (None = без mtime).
+            loader: Callable, возвращающий значение.
             loader_args: Позиционные аргументы для loader.
         """
         entry = self._store.get(key)
@@ -487,6 +511,7 @@ class FileCache:
             return entry.value
 
         value = loader(*loader_args)
+
         mtime = None
         if path is not None and self._policy.check_mtime:
             try:
@@ -514,27 +539,35 @@ class FileCache:
         Инвалидируется если изменился mtime любого из paths.
         """
         entry = self._store.get(key)
+
         if entry is not None:
             if self._policy.ttl_seconds is not None:
                 if time.monotonic() - entry.loaded_at > self._policy.ttl_seconds:
                     entry = None
-            if entry is not None and self._policy.check_mtime and entry.mtime_at_load is not None:
+
+            if (
+                entry is not None
+                and self._policy.check_mtime
+                and entry.mtime_at_load is not None
+            ):
                 try:
                     current_max = max(
-                        (p.stat().st_mtime for p in paths if p.exists()),
+                        (path.stat().st_mtime for path in paths if path.exists()),
                         default=0.0,
                     )
                     if current_max != entry.mtime_at_load:
                         entry = None
                 except OSError:
                     entry = None
-        if entry is not None:
-            return entry.value
+
+            if entry is not None:
+                return entry.value
 
         value = loader(*loader_args)
+
         try:
             max_mtime: Optional[float] = max(
-                (p.stat().st_mtime for p in paths if p.exists()),
+                (path.stat().st_mtime for path in paths if path.exists()),
                 default=None,
             )
         except OSError:
@@ -624,23 +657,6 @@ CANONICAL_TAGS: Dict[str, Dict[str, Any]] = {
 
 KB_TAGS_STRICT_VALIDATION: bool = False
 
-KNOWN_INTENTS: Set[str] = {
-    "storytelling",
-    "noragal",
-    "deai",
-    "neutral",
-}
-
-KNOWN_OVERLAYS: Set[str] = {
-    "logic",
-    "factcheck",
-    "infostyle",
-    "marketingpush",
-    "composition",
-    "cohesion",
-    "rhetoric",
-}
-
 
 def _normalize_tag_local(tag: str) -> str:
     """Локальная нормализация тега без импорта tag_registry (для bootstrap)."""
@@ -648,22 +664,24 @@ def _normalize_tag_local(tag: str) -> str:
 
 
 def _normalize_tags_local(tags: List[str]) -> List[str]:
-    return [_normalize_tag_local(t) for t in tags if isinstance(t, str)]
+    return [_normalize_tag_local(tag) for tag in tags if isinstance(tag, str)]
 
 
 def _build_known_tags_from_canonical() -> Set[str]:
     """Строит множество всех canonical тегов."""
     tags: Set[str] = set()
+
     for category_data in CANONICAL_TAGS.values():
         for tag_data in category_data.values():
             if isinstance(tag_data, dict):
                 for tag_list in tag_data.values():
                     if isinstance(tag_list, list):
                         tags.update(
-                            _normalize_tag_local(t)
-                            for t in tag_list
-                            if isinstance(t, str)
+                            _normalize_tag_local(tag)
+                            for tag in tag_list
+                            if isinstance(tag, str)
                         )
+
     return tags
 
 
@@ -677,8 +695,10 @@ def get_canonical_tags_for_category(category: str, value: str) -> List[str]:
     except ImportError:
         normalize_tag = _normalize_tag_local
         normalize_tags = _normalize_tags_local
+
     norm_value = normalize_tag(value)
     data = CANONICAL_TAGS.get(category, {}).get(norm_value)
+
     if isinstance(data, dict):
         return normalize_tags(data.get("primary", []) + data.get("expanded", []))
     if isinstance(data, list):
@@ -693,11 +713,15 @@ def get_primary_tags_for_category(category: str, value: str) -> List[str]:
     except ImportError:
         normalize_tag = _normalize_tag_local
         normalize_tags = _normalize_tags_local
+
     norm_value = normalize_tag(value)
     data = CANONICAL_TAGS.get(category, {}).get(norm_value)
+
     if isinstance(data, dict):
         return normalize_tags(data.get("primary", []))
-    return normalize_tags(data) if isinstance(data, list) else normalize_tags([norm_value])
+    if isinstance(data, list):
+        return normalize_tags(data)
+    return normalize_tags([norm_value])
 
 
 def get_expanded_tags_for_category(category: str, value: str) -> List[str]:
@@ -707,8 +731,10 @@ def get_expanded_tags_for_category(category: str, value: str) -> List[str]:
     except ImportError:
         normalize_tag = _normalize_tag_local
         normalize_tags = _normalize_tags_local
+
     norm_value = normalize_tag(value)
     data = CANONICAL_TAGS.get(category, {}).get(norm_value)
+
     if isinstance(data, dict):
         return normalize_tags(data.get("expanded", []))
     return []
