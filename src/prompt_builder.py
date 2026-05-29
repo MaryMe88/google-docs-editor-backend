@@ -1,3 +1,11 @@
+"""
+prompt_builder.py
+
+Модуль для сборки финальных промптов из конфигов и базы знаний.
+Фаза 1, Шаг 1: все доменные типы импортируются из config_types.py,
+shared_contracts — единственный источник ALLOWED_*.
+"""
+
 from __future__ import annotations
 
 import json
@@ -11,9 +19,9 @@ from src.config_types import (
     DomainConfig,
     IntentConfig,
     KnowledgeBase,
-    KnowledgeBlockPlan,  # Phase 4, Step 7 — reserved for KnowledgeBlockPlan orchestration
     KnowledgeBudget,
     KnowledgeBudgetManager,
+    KnowledgeBlockPlan,
     KnowledgeLevel,
     LimitsConfig,
     OverlayConfig,
@@ -37,6 +45,11 @@ from src.tag_registry import normalize_tag, normalize_tags
 logger = logging.getLogger(__name__)
 
 
+# ---------------------------------------------------------------------------
+# JSON-загрузчики
+# ---------------------------------------------------------------------------
+
+
 def load_json_file(path: Path) -> Dict[str, Any]:
     if not path.exists():
         raise FileNotFoundError(f"Config file not found: {path}")
@@ -47,6 +60,11 @@ def _load_optional_json(path: Path, default: Any) -> Any:
     if path.exists():
         return load_json_file(path)
     return default
+
+
+# ---------------------------------------------------------------------------
+# Загрузка конфигов (возвращают типы из config_types.py)
+# ---------------------------------------------------------------------------
 
 
 def load_core_config(base_path: Path = Path("config")) -> CoreConfig:
@@ -80,10 +98,8 @@ def load_intent_config(
 ) -> Optional[IntentConfig]:
     if intent is None or intent == "neutral":
         return None
-
     normalized_intent = normalize_tag(intent)
     data = load_json_file(base_path / "intents" / f"{normalized_intent}.json")
-
     return IntentConfig(
         name=data.get("name", normalized_intent),
         instructions=data.get("instructions", []),
@@ -96,7 +112,6 @@ def load_overlay_config(
 ) -> OverlayConfig:
     normalized_overlay = normalize_tag(overlay)
     data = load_json_file(base_path / "overlays" / f"{normalized_overlay}.json")
-
     return OverlayConfig(
         name=data.get("name", normalized_overlay),
         instructions=data.get("instructions", []),
@@ -115,13 +130,17 @@ def load_output_format(
     base_path: Path = Path("config"),
 ) -> str:
     data = load_json_file(base_path / "output_format.json")
-    return data.get(mode, data.get("text_only", "Верни только отредактированный текст."))
+    return data.get(mode, data.get("textonly", "Верни только отредактированный текст."))
+
+
+# ---------------------------------------------------------------------------
+# Загрузка базы знаний
+# ---------------------------------------------------------------------------
 
 
 def _normalize_kb_list(items: Any) -> List[Dict[str, Any]]:
     if not isinstance(items, list):
         return []
-
     result: List[Dict[str, Any]] = []
     for item in items:
         if isinstance(item, dict):
@@ -130,7 +149,6 @@ def _normalize_kb_list(items: Any) -> List[Dict[str, Any]]:
             if isinstance(tags, list):
                 normalized["tags"] = normalize_tags(tags)
             result.append(normalized)
-
     return result
 
 
@@ -174,6 +192,11 @@ def load_knowledge_base(base_path: Path = Path("knowledge_base")) -> KnowledgeBa
     )
 
 
+# ---------------------------------------------------------------------------
+# Вспомогательные функции для сборки тегов и блоков
+# ---------------------------------------------------------------------------
+
+
 def _collect_retrieval_tags(
     domain: str,
     intent: Optional[str],
@@ -204,13 +227,11 @@ def _append_rule_entries(
 ) -> None:
     if not entries:
         return
-
     lines.append(title)
     for entry in entries:
         wrong = entry.get("wrong")
         correct = entry.get("correct")
         rule = entry.get("rule") or entry.get("description") or entry.get("name")
-
         fragments: List[str] = []
         if wrong:
             fragments.append(f"плохо: {wrong}")
@@ -218,7 +239,6 @@ def _append_rule_entries(
             fragments.append(f"лучше: {correct}")
         if rule:
             fragments.append(f"пояснение: {rule}")
-
         if fragments:
             lines.append("- " + "; ".join(fragments))
 
@@ -230,16 +250,13 @@ def _append_structural_entries(
 ) -> None:
     if not entries:
         return
-
     lines.append(title)
     for entry in entries:
         name = entry.get("name", "")
         description = entry.get("description", "")
         when_to_use = entry.get("when_to_use", "")
-
         if isinstance(when_to_use, list):
             when_to_use = "; ".join(str(item) for item in when_to_use[:3])
-
         fragments: List[str] = []
         if name:
             fragments.append(str(name))
@@ -247,7 +264,6 @@ def _append_structural_entries(
             fragments.append(str(description))
         if when_to_use:
             fragments.append(f"когда применять: {when_to_use}")
-
         if fragments:
             lines.append("- " + " | ".join(fragments))
 
@@ -259,18 +275,15 @@ def _append_editorial_entries(
 ) -> None:
     if not entries:
         return
-
     lines.append(title)
     for entry in entries:
         name = entry.get("name", "")
         description = entry.get("description", "")
         how_to_apply = entry.get("how_to_apply", [])
-
         if isinstance(how_to_apply, list):
             how_to_apply_str = "; ".join(str(item) for item in how_to_apply[:3])
         else:
             how_to_apply_str = ""
-
         fragments: List[str] = []
         if name:
             fragments.append(str(name))
@@ -278,7 +291,6 @@ def _append_editorial_entries(
             fragments.append(str(description))
         if how_to_apply_str:
             fragments.append(f"как применять: {how_to_apply_str}")
-
         if fragments:
             lines.append("- " + " | ".join(fragments))
 
@@ -290,13 +302,11 @@ def _append_glossary(
 ) -> None:
     if not glossary:
         return
-
     lines.append("Глоссарий домена:")
     count = 0
     for term, value in glossary.items():
         if count >= limit:
             break
-
         if isinstance(value, str) and value.strip():
             lines.append(f"- {term}: {value.strip()}")
             count += 1
@@ -310,7 +320,6 @@ def _append_glossary(
 def _append_nkrj(lines: List[str], nkrj: Dict[str, Any]) -> None:
     if not nkrj:
         return
-
     lines.append("Структурные паттерны НКРЯ:")
     for key, value in list(nkrj.items())[:5]:
         if isinstance(value, str) and value.strip():
@@ -321,7 +330,25 @@ def _append_nkrj(lines: List[str], nkrj: Dict[str, Any]) -> None:
                 lines.append(f"- {key}: {description.strip()}")
 
 
+# ---------------------------------------------------------------------------
+# PromptBuilder
+# ---------------------------------------------------------------------------
+
+
 class PromptBuilder:
+    """
+    Фасад для сборки промпта из конфигов и базы знаний.
+
+    Публичный API (инвариант):
+      - PromptBuilder()                              — без обязательных аргументов
+      - build(text, domain, intent, audience,
+              overlays, output_mode, include_knowledge,
+              knowledge_level, token_budget)         — только дефолтные доп. параметры
+      - get_available_intents()  -> Set[str]
+      - get_available_overlays() -> Set[str]
+      - reload_configs()         -> None
+    """
+
     def __init__(
         self,
         config_path: Path = Path("config"),
@@ -334,6 +361,10 @@ class PromptBuilder:
         self.core_config: Optional[CoreConfig] = None
         self.knowledge_base: Optional[KnowledgeBase] = None
 
+    # ------------------------------------------------------------------
+    # Startup / reload
+    # ------------------------------------------------------------------
+
     def startup_check(self) -> None:
         self.core_config = load_core_config(self.config_path)
         self.knowledge_base = load_knowledge_base(self.kb_path)
@@ -342,14 +373,18 @@ class PromptBuilder:
         self.core_config = None
         self.knowledge_base = None
 
+    # ------------------------------------------------------------------
+    # Доступные intents / overlays
+    # ------------------------------------------------------------------
+
     def get_available_intents(self) -> Set[str]:
         intents_dir = self.config_path / "intents"
         if not intents_dir.exists():
             return set(ALLOWED_INTENTS)
-
         values = {path.stem for path in intents_dir.glob("*.json")}
         return values or set(ALLOWED_INTENTS)
 
+    # legacy alias
     def getavailableintents(self) -> Set[str]:
         return self.get_available_intents()
 
@@ -357,37 +392,47 @@ class PromptBuilder:
         overlays_dir = self.config_path / "overlays"
         if not overlays_dir.exists():
             return set(ALLOWED_OVERLAYS)
-
         values = {path.stem for path in overlays_dir.glob("*.json")}
         return values or set(ALLOWED_OVERLAYS)
 
+    # legacy alias
     def getavailableoverlays(self) -> Set[str]:
         return self.get_available_overlays()
+
+    # ------------------------------------------------------------------
+    # Валидация входных параметров
+    # ------------------------------------------------------------------
 
     def _validate_domain(self, domain: str) -> str:
         normalized = domain.strip().lower()
         if normalized not in ALLOWED_DOMAINS:
-            raise ValueError(f"Unsupported domain: {domain}")
+            raise ValueError(
+                f"Unsupported domain: {domain!r}. "
+                f"Must be one of {sorted(ALLOWED_DOMAINS)}"
+            )
         return normalized
 
     def _validate_intent(self, intent: Optional[str]) -> Optional[str]:
         if intent is None or not intent.strip():
             return None
-
         normalized = normalize_tag(intent)
-        if normalized not in (set(self.get_available_intents()) | ALLOWED_INTENTS):
-            raise ValueError(f"Unsupported intent: {intent}")
-
+        available = set(self.get_available_intents()) | ALLOWED_INTENTS
+        if normalized not in available:
+            raise ValueError(
+                f"Unsupported intent: {intent!r}. "
+                f"Must be one of {sorted(available)}"
+            )
         return normalized
 
     def _validate_overlays(self, overlays: Sequence[str]) -> List[str]:
         normalized = normalize_tags(overlays)
         available = set(self.get_available_overlays()) | ALLOWED_OVERLAYS
         invalid = [item for item in normalized if item not in available]
-
         if invalid:
-            raise ValueError(f"Unsupported overlays: {invalid}")
-
+            raise ValueError(
+                f"Unsupported overlays: {invalid}. "
+                f"Must be from {sorted(available)}"
+            )
         return normalized
 
     def _validate_output_mode(self, output_mode: str) -> str:
@@ -399,31 +444,30 @@ class PromptBuilder:
             )
         return normalized
 
+    # ------------------------------------------------------------------
+    # Блоки промпта
+    # ------------------------------------------------------------------
+
     def _build_audience_block(self, audience: Optional[AudienceProfile]) -> str:
         if audience is None:
             return ""
-
         parts = [
             f"Тип аудитории: {audience.kind}",
             f"Уровень экспертизы: {audience.expertise}",
             f"Формальность: {audience.formality}",
         ]
-
         if getattr(audience, "description", ""):
             parts.append(f"Описание аудитории: {audience.description}")
-
         return "\n".join(parts)
 
     def _ensure_knowledge_base(self) -> Optional[KnowledgeBase]:
         if self.knowledge_base is not None:
             return self.knowledge_base
-
         try:
             self.knowledge_base = load_knowledge_base(self.kb_path)
         except FileNotFoundError:
             logger.warning("Knowledge base directory not found: %s", self.kb_path)
             return None
-
         return self.knowledge_base
 
     def _build_knowledge_block(
@@ -442,8 +486,9 @@ class PromptBuilder:
         stop_words_budget = budget.get("stop_words")
         if stop_words_budget and stop_words_budget.enabled and kb.stop_words:
             lines.append("Стоп-слова и нежелательные формулировки:")
-            category_limit = stop_words_budget.entry_limit or self._limits.stop_words_category
-
+            category_limit = (
+                stop_words_budget.entry_limit or self._limits.stop_words_category
+            )
             for category, words in list(kb.stop_words.items())[:category_limit]:
                 if isinstance(words, list) and words:
                     joined_words = ", ".join(
@@ -496,7 +541,9 @@ class PromptBuilder:
                 expanded_tags=expanded_tags,
                 char_budget=composition_budget.char_budget,
             )
-            _append_structural_entries(lines, "Принципы композиции:", composition_entries)
+            _append_structural_entries(
+                lines, "Принципы композиции:", composition_entries
+            )
 
         composition_errors_budget = budget.get("composition_errors")
         if (
@@ -511,7 +558,9 @@ class PromptBuilder:
                 expanded_tags=expanded_tags,
                 char_budget=composition_errors_budget.char_budget,
             )
-            _append_structural_entries(lines, "Ошибки композиции:", composition_error_entries)
+            _append_structural_entries(
+                lines, "Ошибки композиции:", composition_error_entries
+            )
 
         cohesion_budget = budget.get("cohesion")
         if cohesion_budget and cohesion_budget.enabled and kb.local_cohesion:
@@ -537,7 +586,9 @@ class PromptBuilder:
                 expanded_tags=expanded_tags,
                 char_budget=storytelling_budget.char_budget,
             )
-            _append_structural_entries(lines, "Сторителлинг-фреймворки:", storytelling_entries)
+            _append_structural_entries(
+                lines, "Сторителлинг-фреймворки:", storytelling_entries
+            )
 
         marketing_budget = budget.get("marketing")
         if marketing_budget and marketing_budget.enabled and kb.marketing_templates:
@@ -548,7 +599,9 @@ class PromptBuilder:
                 expanded_tags=expanded_tags,
                 char_budget=marketing_budget.char_budget,
             )
-            _append_structural_entries(lines, "Маркетинговые шаблоны:", marketing_entries)
+            _append_structural_entries(
+                lines, "Маркетинговые шаблоны:", marketing_entries
+            )
 
         rhetoric_budget = budget.get("rhetoric")
         if rhetoric_budget and rhetoric_budget.enabled and kb.rhetoric_frameworks:
@@ -582,6 +635,10 @@ class PromptBuilder:
 
         return "\n".join(lines)
 
+    # ------------------------------------------------------------------
+    # Главный метод — build()
+    # ------------------------------------------------------------------
+
     def build(
         self,
         text: str,
@@ -589,12 +646,27 @@ class PromptBuilder:
         intent: Optional[str] = None,
         audience: Optional[AudienceProfile] = None,
         overlays: Optional[Sequence[str]] = None,
-        output_mode: str = "text_only",
+        output_mode: str = "textonly",
         include_knowledge: bool = True,
         knowledge_level: KnowledgeLevel = KnowledgeLevel.STANDARD,
         token_budget: Optional[int] = None,
         **legacy_kwargs: Any,
     ) -> str:
+        """
+        Собирает промпт из конфигов и базы знаний.
+
+        Параметры:
+            text             — исходный текст для редактирования
+            domain           — домен ('marketing' | 'blog' | 'deai')
+            intent           — опциональный intent ('storytelling' | 'noragal' | 'deai' | 'neutral')
+            audience         — профиль аудитории (AudienceProfile или None)
+            overlays         — список оверлеев
+            output_mode      — формат ответа ('textonly' | 'textandreport')
+            include_knowledge — включать ли блок базы знаний
+            knowledge_level  — уровень детализации знаний (KnowledgeLevel)
+            token_budget     — лимит токенов для knowledge-блока (None = без лимита)
+        """
+        # Поддержка legacy camelCase kwargs от старых клиентов
         legacy_output_mode = legacy_kwargs.pop("outputmode", None)
         legacy_include_knowledge = legacy_kwargs.pop("includeknowledge", None)
 
@@ -604,7 +676,6 @@ class PromptBuilder:
 
         if legacy_output_mode is not None:
             output_mode = legacy_output_mode
-
         if legacy_include_knowledge is not None:
             include_knowledge = legacy_include_knowledge
 
@@ -614,7 +685,7 @@ class PromptBuilder:
         validated_domain = self._validate_domain(domain)
         validated_intent = self._validate_intent(intent)
         validated_overlays = self._validate_overlays(overlays or [])
-        output_mode = self._validate_output_mode(output_mode)
+        validated_output_mode = self._validate_output_mode(output_mode)
 
         if self.core_config is None:
             self.core_config = load_core_config(self.config_path)
@@ -622,9 +693,10 @@ class PromptBuilder:
         domain_config = load_domain_config(validated_domain, self.config_path)
         intent_config = load_intent_config(validated_intent, self.config_path)
         overlay_configs = load_overlay_configs(validated_overlays, self.config_path)
-        output_format = load_output_format(output_mode, self.config_path)
+        output_format = load_output_format(validated_output_mode, self.config_path)
 
         blocks: List[str] = []
+
         blocks.append(f"Роль: {self.core_config.role}")
         blocks.append(f"Приоритеты: {self.core_config.priorities}")
         blocks.append(f"Домен: {domain_config.name}")
@@ -657,7 +729,6 @@ class PromptBuilder:
                     overlay_lines.append(
                         f"[{overlay.name}] " + " | ".join(overlay.instructions)
                     )
-
             if overlay_lines:
                 blocks.append("Overlay-инструкции:\n- " + "\n- ".join(overlay_lines))
 
@@ -689,5 +760,6 @@ class PromptBuilder:
 
         return "\n\n".join(block for block in blocks if block.strip())
 
+    # legacy alias
     def build_prompt(self, **kwargs: Any) -> str:
         return self.build(**kwargs)
