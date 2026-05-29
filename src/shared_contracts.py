@@ -38,18 +38,29 @@ ALLOWED_DOMAINS: Final[Set[str]] = {
 # config/intents/<нормализованное_значение>.json. Иначе load_intent_config
 # в prompt_builder.py упадёт с FileNotFoundError -> HTTP 500.
 #
-# Здесь оставлены только intent, проверенно работающие на сервере (HTTP 200):
-#   - storytelling : есть файл config/intents/storytelling.json
-#   - neutral      : специальное значение, prompt_builder трактует его как
-#                    "без intent" (load_intent_config возвращает None),
-#                    файл не требуется
+# ДОПОЛНИТЕЛЬНОЕ ТРЕБОВАНИЕ К ФАЙЛУ ИНТЕНТА:
+# prompt_builder.py собирает инструкции через "\n- ".join(instructions),
+# поэтому поле "instructions" В КАЖДОМ файле интента ДОЛЖНО быть
+# плоским списком СТРОК (List[str]). Сложные структуры (список объектов
+# {category, rules}) вызывают TypeError -> HTTP 500.
 #
-# НЕ добавляй сюда intent без создания соответствующего config/intents/*.json.
-# Доменная специфика (nora_gal, deai, basic_edit и т.д.) выражается через
-# поле domain, а не через intent.
+# Реальные файлы интентов (все приведены к плоской схеме {name, instructions}):
+#   - analytical    : config/intents/analytical.json
+#   - marketingpush : config/intents/marketingpush.json
+#   - storytelling  : config/intents/storytelling.json
+#   - engagement    : config/intents/engagement.json  (сплющен из сложной схемы)
+#   - neutral       : служебное значение, prompt_builder трактует как "без intent"
+#                     (load_intent_config возвращает None), файл не требуется
+#
+# ПОРЯДОК ДЕПЛОЯ: сначала закоммитить файлы config/intents/*.json на сервер,
+# затем этот расширенный ALLOWED_INTENTS. Иначе валидатор пропустит intent,
+# а файла не будет -> HTTP 500.
 # ---------------------------------------------------------------------------
 ALLOWED_INTENTS: Final[Set[str]] = {
+    "analytical",
+    "marketingpush",
     "storytelling",
+    "engagement",
     "neutral",
 }
 
