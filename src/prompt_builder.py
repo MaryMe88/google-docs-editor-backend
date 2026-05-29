@@ -130,7 +130,7 @@ def load_output_format(
     base_path: Path = Path("config"),
 ) -> str:
     data = load_json_file(base_path / "output_format.json")
-    return data.get(mode, data.get("textonly", "Верни только отредактированный текст."))
+    return data.get(mode, data.get("text_only", "Верни только отредактированный текст."))
 
 
 # ---------------------------------------------------------------------------
@@ -646,7 +646,7 @@ class PromptBuilder:
         intent: Optional[str] = None,
         audience: Optional[AudienceProfile] = None,
         overlays: Optional[Sequence[str]] = None,
-        output_mode: str = "textonly",
+        output_mode: str = "text_only",
         include_knowledge: bool = True,
         knowledge_level: KnowledgeLevel = KnowledgeLevel.STANDARD,
         token_budget: Optional[int] = None,
@@ -661,7 +661,7 @@ class PromptBuilder:
             intent           — опциональный intent ('storytelling' | 'noragal' | 'deai' | 'neutral')
             audience         — профиль аудитории (AudienceProfile или None)
             overlays         — список оверлеев
-            output_mode      — формат ответа ('textonly' | 'textandreport')
+            output_mode      — формат ответа ('text_only' | 'text_and_report')
             include_knowledge — включать ли блок базы знаний
             knowledge_level  — уровень детализации знаний (KnowledgeLevel)
             token_budget     — лимит токенов для knowledge-блока (None = без лимита)

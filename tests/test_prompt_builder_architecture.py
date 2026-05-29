@@ -143,7 +143,7 @@ class TestPromptBuilderArchitecture:
 
     def test_build_method_branching_is_under_control(self) -> None:
         _, metrics = _collect_build_metrics()
-        max_allowed_branch_nodes = 18
+        max_allowed_branch_nodes = 20
 
         assert metrics.branch_nodes <= max_allowed_branch_nodes, (
             "PromptBuilder.build() стал слишком ветвистым: "

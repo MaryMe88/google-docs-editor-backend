@@ -10,7 +10,7 @@ tests/test_contracts.py
 from __future__ import annotations
 
 from typing import Any, Dict
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, patch
 
 import pytest
 from fastapi.testclient import TestClient
@@ -23,12 +23,12 @@ from fastapi.testclient import TestClient
 class TestPromptBuilderContract:
     """
     Публичный интерфейс, который использует main.py:
-      - PromptBuilder()                               — инициализация без аргументов
-      - .build(text, domain, intent, audience,        — сборка промпта
-               overlays, outputmode, includeknowledge)
-      - .get_available_intents() -> Set[str]          — множество строк
-      - .get_available_overlays() -> Set[str]         — множество строк
-      - .reload_configs() -> None                     — сброс кэша
+    - PromptBuilder() — инициализация без аргументов
+    - .build(text, domain, intent, audience,  — сборка промпта
+              overlays, outputmode, includeknowledge)
+    - .get_available_intents() -> Set[str]    — множество строк
+    - .get_available_overlays() -> Set[str]   — множество строк
+    - .reload_configs() -> None               — сброс кэша
 
     Если DeepSeek переименует хотя бы один метод — тест упадёт сразу.
     """
@@ -116,9 +116,9 @@ class TestPromptBuilderContract:
 class TestTagRegistryContract:
     """
     Функции, которые импортирует prompt_builder.py:
-      - normalize_tag(str) -> str
-      - normalize_tags(Iterable[str]) -> List[str]
-      - build_known_tags(dict) -> Set[str]
+    - normalize_tag(str) -> str
+    - normalize_tags(Iterable[str]) -> List[str]
+    - build_known_tags(dict) -> Set[str]
     """
 
     def test_normalize_tag_importable(self):
@@ -173,9 +173,9 @@ class TestTagRegistryContract:
 class TestLLMClientContract:
     """
     Публичный интерфейс, который использует main.py:
-      - class LLMProvider(str, Enum)  — значения PERPLEXITY, OPENAI, OPENROUTER, ANTHROPIC
-      - create_llm_client(provider, ...) -> BaseLLMClient (async context manager)
-      - class LLMError
+    - class LLMProvider(str, Enum) — значения PERPLEXITY, OPENAI, OPENROUTER, ANTHROPIC
+    - create_llm_client(provider, ...) -> BaseLLMClient (async context manager)
+    - class LLMError
     """
 
     def test_llm_provider_importable(self):
@@ -195,8 +195,8 @@ class TestLLMClientContract:
 
     def test_create_llm_client_raises_on_missing_key(self):
         """Фабрика должна бросить ValueError (не AttributeError), если нет ключа."""
-        from src.llm_client import LLMProvider, create_llm_client
         import os
+        from src.llm_client import LLMProvider, create_llm_client
         # Временно убираем ключ из окружения
         key = os.environ.pop("OPENROUTER_API_KEY", None)
         try:
@@ -208,11 +208,19 @@ class TestLLMClientContract:
 
     def test_create_llm_client_is_async_context_manager(self):
         """Результат create_llm_client должен поддерживать async with."""
+        import os
         from src.llm_client import LLMProvider, create_llm_client
-        client = create_llm_client(
-            provider=LLMProvider.OPENROUTER,
-            apikey="fake-key-for-contract-test",
-        )
+
+        # Убираем системный прокси из окружения на время теста —
+        # httpx не поддерживает socks4, который может быть выставлен в системе.
+        proxy_keys = [k for k in os.environ if "proxy" in k.lower()]
+        clean_env = {k: v for k, v in os.environ.items() if k not in proxy_keys}
+
+        with patch.dict(os.environ, clean_env, clear=True):
+            client = create_llm_client(
+                provider=LLMProvider.OPENROUTER,
+                apikey="fake-key-for-contract-test",
+            )
         assert hasattr(client, "__aenter__"), "Клиент должен быть async context manager"
         assert hasattr(client, "__aexit__")
 
@@ -249,6 +257,7 @@ def api_client():
         provider="openrouter",
         tokens_used=42,
     )
+
     mock_client = AsyncMock()
     mock_client.generate = AsyncMock(return_value=mock_response)
     mock_client.__aenter__ = AsyncMock(return_value=mock_client)
@@ -308,8 +317,8 @@ class TestFastAPIContractEdit:
         assert r.status_code == 200
         data = r.json()
         assert "edited_text" in data, "Поле edited_text обязательно"
-        assert "model" in data,       "Поле model обязательно"
-        assert "provider" in data,    "Поле provider обязательно"
+        assert "model" in data, "Поле model обязательно"
+        assert "provider" in data, "Поле provider обязательно"
 
     def test_edit_edited_text_is_str(self, api_client):
         r = api_client.post("/api/edit", json=self.BASE_PAYLOAD)

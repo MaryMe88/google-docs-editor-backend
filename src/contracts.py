@@ -78,7 +78,6 @@ class EditRequest(BaseModel):
     def validate_intent(cls, value: Optional[str]) -> Optional[str]:
         if value is None or not value.strip():
             return None
-
         normalized = normalize_tag(value)
         if normalized not in ALLOWED_INTENTS:
             raise ValueError(f"intent must be one of {sorted(ALLOWED_INTENTS)}")
@@ -88,19 +87,17 @@ class EditRequest(BaseModel):
     @classmethod
     def validate_overlays(cls, value: List[str]) -> List[str]:
         normalized_values: List[str] = []
-        seen = set()
-
+        seen: set = set()
         for item in value:
             normalized = normalize_tag(item)
             if normalized not in ALLOWED_OVERLAYS:
                 raise ValueError(
-                    f"overlay must be one of {sorted(ALLOWED_OVERLAYS)}"
+                    f"overlays {[item]!r} not found in config/overlays. "
+                    f"Available: {sorted(ALLOWED_OVERLAYS)}"
                 )
-
             if normalized not in seen:
                 seen.add(normalized)
                 normalized_values.append(normalized)
-
         return normalized_values
 
     @field_validator("output_mode")

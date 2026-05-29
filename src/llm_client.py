@@ -104,7 +104,7 @@ class BaseLLMClient(ABC):
 
     def __init__(self, config: LLMConfig) -> None:
         self.config = config
-        self.client = httpx.AsyncClient(timeout=config.timeout)
+        self.client = httpx.AsyncClient(timeout=config.timeout, trust_env=False)
 
     async def __aenter__(self) -> "BaseLLMClient":
         return self

@@ -11,14 +11,21 @@ ALLOWED_INTENTS: Final[Set[str]] = {
     "neutral",
 }
 
+# Синхронизировано с реальными файлами config/overlays/*.json
+# Фактически присутствующие на сервере:
+#   coldemail, factcheck, finalcheck, infostyle, landing,
+#   pressrelease, readerfocus, recommendations, structurefirst, workdoc
 ALLOWED_OVERLAYS: Final[Set[str]] = {
-    "logic",
+    "coldemail",
     "factcheck",
+    "finalcheck",
     "infostyle",
-    "marketingpush",
-    "composition",
-    "cohesion",
-    "rhetoric",
+    "landing",
+    "pressrelease",
+    "readerfocus",
+    "recommendations",
+    "structurefirst",
+    "workdoc",
 }
 
 ALLOWED_OUTPUT_MODES: Final[Set[str]] = {"text_only", "text_and_report"}
