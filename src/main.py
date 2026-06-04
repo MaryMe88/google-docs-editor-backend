@@ -243,9 +243,6 @@ async def edit_text(request: EditRequest) -> dict:
         prompt_builder = get_prompt_builder()
 
         # Для всех вызовов запрашиваем метаданные у build (чтобы всегда получать кортеж)
-        # В ответе метаданные возвращаются:
-        # - для dry_run — всегда (исторически)
-        # - для обычных вызовов — только если include_retrieval_meta == True
         if request.dry_run:
             prompt, retrieval_meta = prompt_builder.build(
                 text=request.text,
@@ -255,7 +252,7 @@ async def edit_text(request: EditRequest) -> dict:
                 overlays=request.overlays,
                 output_mode=request.output_mode,
                 include_knowledge=request.include_knowledge,
-                include_retrieval_meta=request.include_retrieval_meta,
+                include_retrieval_meta=True,   # всегда True для dry_run
             )
             response_data = {
                 "edited_text": request.text,
@@ -266,7 +263,7 @@ async def edit_text(request: EditRequest) -> dict:
                 "dry_run": True,
                 "usage": {},
                 "raw_response": {},
-                "retrieval_meta": retrieval_meta,
+                "retrieval_meta": retrieval_meta,  # всегда включаем
             }
         else:
             # Всегда запрашиваем метаданные, чтобы распаковка была корректной
@@ -278,7 +275,7 @@ async def edit_text(request: EditRequest) -> dict:
                 overlays=request.overlays,
                 output_mode=request.output_mode,
                 include_knowledge=request.include_knowledge,
-                include_retrieval_meta=request.include_retrieval_meta,
+                include_retrieval_meta=True,   # всегда True, чтобы получить кортеж
             )
             providers_to_try = [request.provider] + [
                 p for p in sorted(ALLOWED_PROVIDERS) if p != request.provider
