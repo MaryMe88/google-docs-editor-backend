@@ -1,0 +1,150 @@
+{
+  "description": "Golden set for KB retrieval tests. Expected wrong strings are exact copies from knowledge base.",
+  "tests": [
+    {
+      "text": "Самодеятельных духовых оркестров в нашей республике более полутораста.",
+      "expected_wrong": "полтораста",
+      "expected_stage": "strong",
+      "category": "grammar",
+      "source_file": "grammar_errors.json"
+    },
+    {
+      "text": "Небо охватывается заревом.",
+      "expected_wrong": "охватывается",
+      "expected_stage": "strong",
+      "category": "grammar",
+      "source_file": "grammar_errors.json"
+    },
+    {
+      "text": "Я убедился о том, что рейс не отменяется.",
+      "expected_wrong": "убедился о том",
+      "expected_stage": "strong",
+      "category": "grammar",
+      "source_file": "grammar_errors.json"
+    },
+    {
+      "text": "Он получил заглавную роль в новом спектакле.",
+      "expected_wrong": "заглавная роль",
+      "expected_stage": "strong",
+      "category": "style",
+      "source_file": "stylistic_issues.json"
+    },
+    {
+      "text": "Язык не поднимается говорить об этом.",
+      "expected_wrong": "язык не поднимается говорить об этом",
+      "expected_stage": "strong",
+      "category": "style",
+      "source_file": "stylistic_issues.json"
+    },
+    {
+      "text": "Синтаксис статей отличен от других научных статей.",
+      "expected_wrong": "синтаксис статей отличен от других научных статей",
+      "expected_stage": "strong",
+      "category": "style",
+      "source_file": "stylistic_issues.json"
+    },
+    {
+      "text": "Пупс взбешен.",
+      "expected_wrong": "Пупс взбешен",
+      "expected_stage": "strong",
+      "category": "style",
+      "source_file": "stylistic_issues.json"
+    },
+    {
+      "text": "Была проведена оценка пользовательского опыта и выявлены ключевые проблемы.",
+      "expected_name": "пассивный_залог",
+      "expected_stage": "strong",
+      "category": "style",
+      "source_file": "stylistic_issues.json"
+    },
+    {
+      "text": "Осуществление оптимизации процесса требует реализации дополнительных мер.",
+      "expected_name": "отглагольные_существительные",
+      "expected_stage": "strong",
+      "category": "style",
+      "source_file": "stylistic_issues.json"
+    },
+    {
+      "text": "Совет жильцов постановил: возвести площадку, имеющую огромное значение в деле воспитания подрастающего поколения.",
+      "expected_wrong": "Совет жильцов постановил: возвести площадку, имеющую огромное значение в деле воспитания подрастающего поколения",
+      "expected_stage": "strong",
+      "category": "style",
+      "source_file": "stylistic_issues.json"
+    },
+    {
+      "text": "Лаборантка поведала шефу о случившемся.",
+      "expected_wrong": "Лаборантка поведала шефу о случившемся",
+      "expected_stage": "strong",
+      "category": "style",
+      "source_file": "stylistic_issues.json"
+    },
+    {
+      "text": "Эта книга нечитабельна.",
+      "expected_wrong": "нечитабельная литература",
+      "expected_stage": "strong",
+      "category": "style",
+      "source_file": "stylistic_issues.json"
+    },
+    {
+      "text": "Четверым молодым работницам присвоен очередной разряд.",
+      "expected_wrong": "Четверым молодым работницам",
+      "expected_stage": "strong",
+      "category": "style",
+      "source_file": "stylistic_issues.json"
+    },
+    {
+      "text": "Внутренний интерьер дома был выполнен в светлых тонах.",
+      "expected_wrong": "внутренний интерьер",
+      "expected_stage": "strong",
+      "category": "style",
+      "source_file": "stylistic_issues.json"
+    },
+    {
+      "text": "Студенты-вечерники ограничены лимитом времени.",
+      "expected_wrong": "студенты-вечерники ограничены лимитом времени",
+      "expected_stage": "strong",
+      "category": "style",
+      "source_file": "stylistic_issues.json"
+    },
+    {
+      "text": "Люди болеют гриппом, как автомобили ломаются — им нужен отдых.",
+      "expected_id": "logic-013",
+      "expected_name": "Ошибка в аналогии",
+      "expected_stage": "strong",
+      "category": "logic",
+      "source_file": "logic_issues.json"
+    },
+    {
+      "text": "Вы говорите, что этот закон несправедлив. Но посмотрите, сколько людей его поддерживают! Значит, он справедлив.",
+      "expected_id": "logic-002",
+      "expected_name": "Подмена тезиса",
+      "expected_stage": "strong",
+      "category": "logic",
+      "source_file": "logic_issues.json"
+    },
+    {
+      "text": "Сначала мы обсудили итоги, потом вспомнили о том, с чего начинали, и наконец вернулись к причинам провала.",
+      "expected_id": "comp-error-005",
+      "expected_name": "Нарушенная хронология в повествовании",
+      "expected_stage": "strong",
+      "category": "composition",
+      "source_file": "composition_errors.json"
+    },
+    {
+      "text": "Взять 200 г муки, добавить яйца, замесить тесто. Выпекать 30 минут.",
+      "expected_id": "comp-error-007",
+      "expected_name": "Отсутствие зачина",
+      "expected_stage": "strong",
+      "category": "composition",
+      "source_file": "composition_errors.json"
+    },
+    {
+      "text": "Все кошки любят молоко. Моя кошка Мурка вчера пила молоко. Вообще, кошки — млекопитающие. Мурка сегодня мяукала.",
+      "expected_id": "comp-error-011",
+      "expected_name": "Смешение уровней обобщения",
+      "expected_stage": "strong",
+      "category": "composition",
+      "source_file": "composition_errors.json"
+    }
+  ]
+}

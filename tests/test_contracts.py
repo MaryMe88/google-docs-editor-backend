@@ -263,7 +263,9 @@ def api_client():
     mock_client.__aenter__ = AsyncMock(return_value=mock_client)
     mock_client.__aexit__ = AsyncMock(return_value=False)
 
-    with patch("src.llm_client.create_llm_client", return_value=mock_client):
+    # Отключаем проверку тегов базы знаний, так как в тестовой среде KB может не содержать всех канонических тегов
+    with patch("src.llm_client.create_llm_client", return_value=mock_client), \
+         patch("src.startup_checks._check_tags_vs_kb"):
         from src.main import app
         with TestClient(app) as client:
             yield client
@@ -332,17 +334,21 @@ class TestFastAPIContractEdit:
     def test_edit_rejects_unknown_intent(self, api_client):
         payload = {**self.BASE_PAYLOAD, "intent": "nonexistent_intent_xyz"}
         r = api_client.post("/api/edit", json=payload)
-        assert r.status_code == 422, "Неизвестный intent должен давать 422"
+        # Явная валидация в main.py возвращает 400 для intent (шаг 2)
+        assert r.status_code == 400, "Неизвестный intent должен давать 400 Bad Request"
 
     def test_edit_rejects_unknown_overlay(self, api_client):
         payload = {**self.BASE_PAYLOAD, "overlays": ["unknown_overlay_xyz"]}
         r = api_client.post("/api/edit", json=payload)
-        assert r.status_code == 422, "Неизвестный overlay должен давать 422"
+        # Явная валидация в main.py возвращает 400 для overlays
+        assert r.status_code == 400, "Неизвестный overlay должен давать 400 Bad Request"
 
     def test_edit_rejects_unknown_provider(self, api_client):
         payload = {**self.BASE_PAYLOAD, "provider": "unknown_provider"}
         r = api_client.post("/api/edit", json=payload)
-        assert r.status_code == 422, "Неизвестный provider должен давать 422"
+        # Валидация Pydantic (через field_validator) возвращает 422
+        # Это не переопределено явной проверкой в main.py, поэтому остаётся 422
+        assert r.status_code == 422, "Неизвестный provider должен давать 422 Unprocessable Entity"
 
     def test_edit_with_storytelling_intent(self, api_client):
         payload = {**self.BASE_PAYLOAD, "intent": "storytelling"}

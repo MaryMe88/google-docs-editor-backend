@@ -11,7 +11,7 @@ from __future__ import annotations
 import json
 import logging
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Sequence, Set
+from typing import Any, Dict, List, Optional, Sequence, Set, Tuple, Union
 
 from src.config_types import (
     AudienceProfile,
@@ -29,6 +29,7 @@ from src.config_types import (
     get_primary_tags_for_category,
 )
 from src.knowledge_retrieval import (
+    FallbackStage,
     select_grammar_rules,
     select_logic_issues,
     select_style_issues,
@@ -43,6 +44,12 @@ from src.shared_contracts import (
 from src.tag_registry import normalize_tag, normalize_tags
 
 logger = logging.getLogger(__name__)
+
+# Интенты, для которых отсутствие знаний из KB — реальная проблема.
+# Для intent=None или intent="neutral" WARNING не нужен.
+_KNOWLEDGE_DEPENDENT_INTENTS: frozenset = frozenset({
+    "analytical", "storytelling", "engagement", "marketingpush",
+})
 
 
 # ---------------------------------------------------------------------------
@@ -139,6 +146,7 @@ def load_output_format(
 
 
 def _normalize_kb_list(items: Any) -> List[Dict[str, Any]]:
+    """Принимает список записей, нормализует теги в каждой записи."""
     if not isinstance(items, list):
         return []
     result: List[Dict[str, Any]] = []
@@ -152,43 +160,123 @@ def _normalize_kb_list(items: Any) -> List[Dict[str, Any]]:
     return result
 
 
+def _extract_records(container: Any, inherited_tags: List[str] = None) -> List[Dict[str, Any]]:
+    """
+    Рекурсивно извлекает все записи (словари с полями wrong, correct, name, rule и т.д.)
+    из любых вложенных структур: списков, словарей с ключами 'examples', 'techniques', 'steps'.
+    Добавляет унаследованные теги (например, из категории) к каждой записи.
+    """
+    if inherited_tags is None:
+        inherited_tags = []
+    records = []
+
+    if isinstance(container, list):
+        for item in container:
+            records.extend(_extract_records(item, inherited_tags))
+    elif isinstance(container, dict):
+        # Если это категория с examples или techniques
+        if "examples" in container and isinstance(container["examples"], list):
+            # Наследуем теги категории
+            cat_tags = container.get("tags", [])
+            if isinstance(cat_tags, list):
+                new_tags = inherited_tags + cat_tags
+            else:
+                new_tags = inherited_tags
+            for ex in container["examples"]:
+                if isinstance(ex, dict):
+                    # Добавляем теги категории к записи
+                    if "tags" in ex and isinstance(ex["tags"], list):
+                        ex["tags"].extend(new_tags)
+                    else:
+                        ex["tags"] = new_tags.copy()
+                    records.append(ex)
+        elif "techniques" in container and isinstance(container["techniques"], list):
+            cat_tags = container.get("tags", [])
+            if isinstance(cat_tags, list):
+                new_tags = inherited_tags + cat_tags
+            else:
+                new_tags = inherited_tags
+            for tech in container["techniques"]:
+                if isinstance(tech, dict):
+                    if "tags" in tech and isinstance(tech["tags"], list):
+                        tech["tags"].extend(new_tags)
+                    else:
+                        tech["tags"] = new_tags.copy()
+                    records.append(tech)
+        else:
+            # Обычная запись – добавляем как есть
+            records.append(container)
+    return records
+
+
+def _load_kb_list(file_name: str, base_path: Path, key: str = None) -> List[Dict[str, Any]]:
+    """
+    Загружает JSON-файл базы знаний, извлекает все записи (даже из вложенных структур),
+    нормализует теги и возвращает список записей.
+    """
+    file_path = base_path / file_name
+    if not file_path.exists():
+        logger.warning(f"KB file not found: {file_path}")
+        return []
+    data = _load_optional_json(file_path, {})
+    if key is not None:
+        items = data.get(key, [])
+    else:
+        items = data if isinstance(data, list) else []
+
+    # Извлекаем записи рекурсивно
+    records = _extract_records(items)
+
+    # Для grammar_errors, если в записи нет тегов, добавляем "grammar"
+    if file_name == "grammar_errors.json":
+        for rec in records:
+            if not rec.get("tags"):
+                rec["tags"] = ["grammar"]
+
+    # Нормализация тегов
+    normalized = []
+    for rec in records:
+        if not isinstance(rec, dict):
+            continue
+        rec = dict(rec)
+        if "tags" in rec and isinstance(rec["tags"], list):
+            rec["tags"] = normalize_tags(rec["tags"])
+        normalized.append(rec)
+    return normalized
+
+
 def load_knowledge_base(base_path: Path = Path("knowledge_base")) -> KnowledgeBase:
+    # Файлы, которые являются словарями, а не списками (загружаем как есть)
+    stop_words = _load_optional_json(base_path / "stop_words.json", {})
+    domain_glossary = _load_optional_json(base_path / "domain_glossary.json", {})
+    nkrj = _load_optional_json(base_path / "nkrj_structure_patterns.json", {})
+
+    # Файлы с записями, используем универсальную функцию
+    grammar_errors = _load_kb_list("grammar_errors.json", base_path, "common_mistakes")
+    stylistic_issues = _load_kb_list("stylistic_issues.json", base_path, "stylistic_errors")
+    logic_issues = _load_kb_list("logic_issues.json", base_path, "issues")
+    storytelling_frameworks = _load_kb_list("storytelling_frameworks.json", base_path, "frameworks")
+    marketing_templates = _load_kb_list("marketing_templates.json", base_path, "templates")
+    composition_principles = _load_kb_list("composition_principles.json", base_path, "composition_principles")
+    local_cohesion = _load_kb_list("local_cohesion.json", base_path, "local_cohesion")
+    composition_errors = _load_kb_list("composition_errors.json", base_path, "composition_errors")
+    rhetoric_frameworks = _load_kb_list("rhetoric_frameworks.json", base_path, "frameworks")
+    editorial_techniques = _load_kb_list("editorial_techniques.json", base_path, "editorial_techniques")
+
     return KnowledgeBase(
-        stop_words=_load_optional_json(base_path / "stop_words.json", {}),
-        grammar_errors=_normalize_kb_list(
-            _load_optional_json(base_path / "grammar_errors.json", [])
-        ),
-        stylistic_issues=_normalize_kb_list(
-            _load_optional_json(base_path / "stylistic_issues.json", [])
-        ),
-        logic_issues=_normalize_kb_list(
-            _load_optional_json(base_path / "logic_issues.json", [])
-        ),
-        storytelling_frameworks=_normalize_kb_list(
-            _load_optional_json(base_path / "storytelling_frameworks.json", [])
-        ),
-        marketing_templates=_normalize_kb_list(
-            _load_optional_json(base_path / "marketing_templates.json", [])
-        ),
-        domain_glossary=_load_optional_json(base_path / "domain_glossary.json", {}),
-        composition_principles=_normalize_kb_list(
-            _load_optional_json(base_path / "composition_principles.json", [])
-        ),
-        local_cohesion=_normalize_kb_list(
-            _load_optional_json(base_path / "local_cohesion.json", [])
-        ),
-        composition_errors=_normalize_kb_list(
-            _load_optional_json(base_path / "composition_errors.json", [])
-        ),
-        rhetoric_frameworks=_normalize_kb_list(
-            _load_optional_json(base_path / "rhetoric_frameworks.json", [])
-        ),
-        editorial_techniques=_normalize_kb_list(
-            _load_optional_json(base_path / "editorial_techniques.json", [])
-        ),
-        nkrj_structure_patterns=_load_optional_json(
-            base_path / "nkrj_structure_patterns.json", {}
-        ),
+        stop_words=stop_words,
+        grammar_errors=grammar_errors,
+        stylistic_issues=stylistic_issues,
+        logic_issues=logic_issues,
+        storytelling_frameworks=storytelling_frameworks,
+        marketing_templates=marketing_templates,
+        domain_glossary=domain_glossary,
+        composition_principles=composition_principles,
+        local_cohesion=local_cohesion,
+        composition_errors=composition_errors,
+        rhetoric_frameworks=rhetoric_frameworks,
+        editorial_techniques=editorial_techniques,
+        nkrj_structure_patterns=nkrj,
     )
 
 
@@ -330,6 +418,35 @@ def _append_nkrj(lines: List[str], nkrj: Dict[str, Any]) -> None:
                 lines.append(f"- {key}: {description.strip()}")
 
 
+def _warn_if_empty_retrieval(
+    block: str,
+    stage: "FallbackStage",
+    domain: str,
+    intent: Optional[str],
+    overlays: List[str],
+    text_len: int,
+    primary_tags: Set[str],
+) -> None:
+    """Логирует WARNING только для знание-зависимых режимов.
+
+    Для intent=None и intent='neutral' WARNING не выдаётся,
+    даже если retrieval вернул EMPTY/NEUTRAL.
+    """
+    if intent not in _KNOWLEDGE_DEPENDENT_INTENTS:
+        return
+    logger.warning(
+        "KB retrieval empty: block=%s, stage=%s, domain=%s, intent=%s, "
+        "overlays=%s, text_length=%d, primary_tags=%s",
+        block,
+        stage.value,
+        domain,
+        intent,
+        overlays,
+        text_len,
+        sorted(primary_tags),
+    )
+
+
 # ---------------------------------------------------------------------------
 # PromptBuilder
 # ---------------------------------------------------------------------------
@@ -343,7 +460,8 @@ class PromptBuilder:
       - PromptBuilder()                              — без обязательных аргументов
       - build(text, domain, intent, audience,
               overlays, output_mode, include_knowledge,
-              knowledge_level, token_budget)         — только дефолтные доп. параметры
+              knowledge_level, token_budget, include_retrieval_meta)
+            -> Union[str, Tuple[str, Dict[str, Any]]]
       - get_available_intents()  -> Set[str]
       - get_available_overlays() -> Set[str]
       - reload_configs()         -> None
@@ -476,13 +594,22 @@ class PromptBuilder:
         primary_tags: Set[str],
         expanded_tags: Set[str],
         budget: KnowledgeBudget,
-    ) -> str:
+        domain: str,
+        intent: Optional[str],
+        overlays: List[str],
+    ) -> Tuple[str, Dict[str, Any]]:
+        """
+        Возвращает (текст блока знаний, метаданные по блокам).
+        Метаданные: dict {block_name: {stage, entries_count, entry_ids, entry_names, truncated_count}}
+        """
         kb = self._ensure_knowledge_base()
         if kb is None:
-            return ""
+            return "", {}
 
         lines: List[str] = []
+        meta: Dict[str, Any] = {}
 
+        # Стоп-слова (не собираем метаданные)
         stop_words_budget = budget.get("stop_words")
         if stop_words_budget and stop_words_budget.enabled and kb.stop_words:
             lines.append("Стоп-слова и нежелательные формулировки:")
@@ -496,144 +623,487 @@ class PromptBuilder:
                     )
                     lines.append(f"- {category}: {joined_words}")
 
+        # Грамматика
         grammar_budget = budget.get("grammar")
         if grammar_budget and grammar_budget.enabled:
-            grammar_entries = select_grammar_rules(
+            grammar_result = select_grammar_rules(
                 kb=kb,
                 text=text,
                 tags=primary_tags,
                 limit=grammar_budget.entry_limit,
                 candidate_limit=self._limits.grammar_candidates,
                 char_budget=grammar_budget.char_budget,
+                return_meta=True,
             )
+            # Распаковка: теперь (entries, stage, dropped)
+            if isinstance(grammar_result, tuple) and len(grammar_result) == 3:
+                grammar_entries, stage, dropped = grammar_result
+            elif isinstance(grammar_result, tuple) and len(grammar_result) == 2:
+                grammar_entries, stage = grammar_result
+                dropped = 0
+            else:
+                grammar_entries, stage = grammar_result, FallbackStage.STRONG
+                dropped = 0
+
             _append_rule_entries(lines, "Грамматические ориентиры:", grammar_entries)
 
+            meta["grammar"] = {
+                "stage": stage.value,
+                "entries_count": len(grammar_entries),
+                "entry_ids": [e.get("id") for e in grammar_entries[:5] if e.get("id")],
+                "entry_names": [e.get("name") for e in grammar_entries[:5] if e.get("name")],
+                "truncated_count": dropped,
+            }
+            if dropped > 0:
+                logger.info(
+                    "Char budget truncated %d records for block='grammar', domain=%s, intent=%s",
+                    dropped, domain, intent
+                )
+            if stage in (FallbackStage.EMPTY, FallbackStage.NEUTRAL):
+                _warn_if_empty_retrieval(
+                    block="grammar",
+                    stage=stage,
+                    domain=domain,
+                    intent=intent,
+                    overlays=overlays,
+                    text_len=len(text),
+                    primary_tags=primary_tags,
+                )
+
+        # Стиль
         style_budget = budget.get("style")
         if style_budget and style_budget.enabled:
-            style_entries = select_style_issues(
+            style_result = select_style_issues(
                 kb=kb,
                 text=text,
                 tags=primary_tags,
                 limit=style_budget.entry_limit,
                 candidate_limit=self._limits.style_candidates,
                 char_budget=style_budget.char_budget,
+                return_meta=True,
             )
+            if isinstance(style_result, tuple) and len(style_result) == 3:
+                style_entries, stage, dropped = style_result
+            elif isinstance(style_result, tuple) and len(style_result) == 2:
+                style_entries, stage = style_result
+                dropped = 0
+            else:
+                style_entries, stage = style_result, FallbackStage.STRONG
+                dropped = 0
+
             _append_rule_entries(lines, "Стилистические ориентиры:", style_entries)
 
+            meta["style"] = {
+                "stage": stage.value,
+                "entries_count": len(style_entries),
+                "entry_ids": [e.get("id") for e in style_entries[:5] if e.get("id")],
+                "entry_names": [e.get("name") for e in style_entries[:5] if e.get("name")],
+                "truncated_count": dropped,
+            }
+            if dropped > 0:
+                logger.info(
+                    "Char budget truncated %d records for block='style', domain=%s, intent=%s",
+                    dropped, domain, intent
+                )
+            if stage in (FallbackStage.EMPTY, FallbackStage.NEUTRAL):
+                _warn_if_empty_retrieval(
+                    block="style",
+                    stage=stage,
+                    domain=domain,
+                    intent=intent,
+                    overlays=overlays,
+                    text_len=len(text),
+                    primary_tags=primary_tags,
+                )
+
+        # Логика
         logic_budget = budget.get("logic")
         if logic_budget and logic_budget.enabled:
-            logic_entries = select_logic_issues(
+            logic_result = select_logic_issues(
                 kb=kb,
                 text=text,
                 tags=primary_tags,
                 limit=logic_budget.entry_limit,
                 candidate_limit=self._limits.logic_candidates,
                 char_budget=logic_budget.char_budget,
+                return_meta=True,
             )
+            if isinstance(logic_result, tuple) and len(logic_result) == 3:
+                logic_entries, stage, dropped = logic_result
+            elif isinstance(logic_result, tuple) and len(logic_result) == 2:
+                logic_entries, stage = logic_result
+                dropped = 0
+            else:
+                logic_entries, stage = logic_result, FallbackStage.STRONG
+                dropped = 0
+
             _append_rule_entries(lines, "Логические ориентиры:", logic_entries)
 
+            meta["logic"] = {
+                "stage": stage.value,
+                "entries_count": len(logic_entries),
+                "entry_ids": [e.get("id") for e in logic_entries[:5] if e.get("id")],
+                "entry_names": [e.get("name") for e in logic_entries[:5] if e.get("name")],
+                "truncated_count": dropped,
+            }
+            if dropped > 0:
+                logger.info(
+                    "Char budget truncated %d records for block='logic', domain=%s, intent=%s",
+                    dropped, domain, intent
+                )
+            if stage in (FallbackStage.EMPTY, FallbackStage.NEUTRAL):
+                _warn_if_empty_retrieval(
+                    block="logic",
+                    stage=stage,
+                    domain=domain,
+                    intent=intent,
+                    overlays=overlays,
+                    text_len=len(text),
+                    primary_tags=primary_tags,
+                )
+
+        # Композиция
         composition_budget = budget.get("composition")
         if composition_budget and composition_budget.enabled and kb.composition_principles:
-            composition_entries = select_structural_by_tags_or_all(
+            composition_result = select_structural_by_tags_or_all(
                 entries=kb.composition_principles,
                 tags=primary_tags,
                 limit=composition_budget.entry_limit,
                 expanded_tags=expanded_tags,
                 char_budget=composition_budget.char_budget,
+                return_meta=True,
             )
+            if isinstance(composition_result, tuple) and len(composition_result) == 3:
+                composition_entries, stage, dropped = composition_result
+            elif isinstance(composition_result, tuple) and len(composition_result) == 2:
+                composition_entries, stage = composition_result
+                dropped = 0
+            else:
+                composition_entries, stage = composition_result, FallbackStage.STRONG
+                dropped = 0
+
             _append_structural_entries(
                 lines, "Принципы композиции:", composition_entries
             )
 
+            meta["composition"] = {
+                "stage": stage.value,
+                "entries_count": len(composition_entries),
+                "entry_ids": [e.get("id") for e in composition_entries[:5] if e.get("id")],
+                "entry_names": [e.get("name") for e in composition_entries[:5] if e.get("name")],
+                "truncated_count": dropped,
+            }
+            if dropped > 0:
+                logger.info(
+                    "Char budget truncated %d records for block='composition', domain=%s, intent=%s",
+                    dropped, domain, intent
+                )
+            if stage in (FallbackStage.EMPTY, FallbackStage.NEUTRAL):
+                _warn_if_empty_retrieval(
+                    block="composition",
+                    stage=stage,
+                    domain=domain,
+                    intent=intent,
+                    overlays=overlays,
+                    text_len=len(text),
+                    primary_tags=primary_tags,
+                )
+
+        # Ошибки композиции
         composition_errors_budget = budget.get("composition_errors")
         if (
             composition_errors_budget
             and composition_errors_budget.enabled
             and kb.composition_errors
         ):
-            composition_error_entries = select_structural_by_tags_or_all(
+            comp_err_result = select_structural_by_tags_or_all(
                 entries=kb.composition_errors,
                 tags=primary_tags,
                 limit=composition_errors_budget.entry_limit,
                 expanded_tags=expanded_tags,
                 char_budget=composition_errors_budget.char_budget,
+                return_meta=True,
             )
+            if isinstance(comp_err_result, tuple) and len(comp_err_result) == 3:
+                comp_err_entries, stage, dropped = comp_err_result
+            elif isinstance(comp_err_result, tuple) and len(comp_err_result) == 2:
+                comp_err_entries, stage = comp_err_result
+                dropped = 0
+            else:
+                comp_err_entries, stage = comp_err_result, FallbackStage.STRONG
+                dropped = 0
+
             _append_structural_entries(
-                lines, "Ошибки композиции:", composition_error_entries
+                lines, "Ошибки композиции:", comp_err_entries
             )
 
+            meta["composition_errors"] = {
+                "stage": stage.value,
+                "entries_count": len(comp_err_entries),
+                "entry_ids": [e.get("id") for e in comp_err_entries[:5] if e.get("id")],
+                "entry_names": [e.get("name") for e in comp_err_entries[:5] if e.get("name")],
+                "truncated_count": dropped,
+            }
+            if dropped > 0:
+                logger.info(
+                    "Char budget truncated %d records for block='composition_errors', domain=%s, intent=%s",
+                    dropped, domain, intent
+                )
+            if stage in (FallbackStage.EMPTY, FallbackStage.NEUTRAL):
+                _warn_if_empty_retrieval(
+                    block="composition_errors",
+                    stage=stage,
+                    domain=domain,
+                    intent=intent,
+                    overlays=overlays,
+                    text_len=len(text),
+                    primary_tags=primary_tags,
+                )
+
+        # Локальная связность
         cohesion_budget = budget.get("cohesion")
         if cohesion_budget and cohesion_budget.enabled and kb.local_cohesion:
-            cohesion_entries = select_structural_by_tags_or_all(
+            cohesion_result = select_structural_by_tags_or_all(
                 entries=kb.local_cohesion,
                 tags=primary_tags,
                 limit=cohesion_budget.entry_limit,
                 expanded_tags=expanded_tags,
                 char_budget=cohesion_budget.char_budget,
+                return_meta=True,
             )
+            if isinstance(cohesion_result, tuple) and len(cohesion_result) == 3:
+                cohesion_entries, stage, dropped = cohesion_result
+            elif isinstance(cohesion_result, tuple) and len(cohesion_result) == 2:
+                cohesion_entries, stage = cohesion_result
+                dropped = 0
+            else:
+                cohesion_entries, stage = cohesion_result, FallbackStage.STRONG
+                dropped = 0
+
             _append_structural_entries(lines, "Локальная связность:", cohesion_entries)
 
+            meta["cohesion"] = {
+                "stage": stage.value,
+                "entries_count": len(cohesion_entries),
+                "entry_ids": [e.get("id") for e in cohesion_entries[:5] if e.get("id")],
+                "entry_names": [e.get("name") for e in cohesion_entries[:5] if e.get("name")],
+                "truncated_count": dropped,
+            }
+            if dropped > 0:
+                logger.info(
+                    "Char budget truncated %d records for block='cohesion', domain=%s, intent=%s",
+                    dropped, domain, intent
+                )
+            if stage in (FallbackStage.EMPTY, FallbackStage.NEUTRAL):
+                _warn_if_empty_retrieval(
+                    block="cohesion",
+                    stage=stage,
+                    domain=domain,
+                    intent=intent,
+                    overlays=overlays,
+                    text_len=len(text),
+                    primary_tags=primary_tags,
+                )
+
+        # Сторителлинг
         storytelling_budget = budget.get("storytelling")
         if (
             storytelling_budget
             and storytelling_budget.enabled
             and kb.storytelling_frameworks
         ):
-            storytelling_entries = select_structural_by_tags_or_all(
+            story_result = select_structural_by_tags_or_all(
                 entries=kb.storytelling_frameworks,
                 tags=primary_tags,
                 limit=storytelling_budget.entry_limit,
                 expanded_tags=expanded_tags,
                 char_budget=storytelling_budget.char_budget,
+                return_meta=True,
             )
+            if isinstance(story_result, tuple) and len(story_result) == 3:
+                story_entries, stage, dropped = story_result
+            elif isinstance(story_result, tuple) and len(story_result) == 2:
+                story_entries, stage = story_result
+                dropped = 0
+            else:
+                story_entries, stage = story_result, FallbackStage.STRONG
+                dropped = 0
+
             _append_structural_entries(
-                lines, "Сторителлинг-фреймворки:", storytelling_entries
+                lines, "Сторителлинг-фреймворки:", story_entries
             )
 
+            meta["storytelling"] = {
+                "stage": stage.value,
+                "entries_count": len(story_entries),
+                "entry_ids": [e.get("id") for e in story_entries[:5] if e.get("id")],
+                "entry_names": [e.get("name") for e in story_entries[:5] if e.get("name")],
+                "truncated_count": dropped,
+            }
+            if dropped > 0:
+                logger.info(
+                    "Char budget truncated %d records for block='storytelling', domain=%s, intent=%s",
+                    dropped, domain, intent
+                )
+            if stage in (FallbackStage.EMPTY, FallbackStage.NEUTRAL):
+                _warn_if_empty_retrieval(
+                    block="storytelling",
+                    stage=stage,
+                    domain=domain,
+                    intent=intent,
+                    overlays=overlays,
+                    text_len=len(text),
+                    primary_tags=primary_tags,
+                )
+
+        # Маркетинговые шаблоны
         marketing_budget = budget.get("marketing")
         if marketing_budget and marketing_budget.enabled and kb.marketing_templates:
-            marketing_entries = select_structural_by_tags_or_all(
+            marketing_result = select_structural_by_tags_or_all(
                 entries=kb.marketing_templates,
                 tags=primary_tags,
                 limit=marketing_budget.entry_limit,
                 expanded_tags=expanded_tags,
                 char_budget=marketing_budget.char_budget,
+                return_meta=True,
             )
+            if isinstance(marketing_result, tuple) and len(marketing_result) == 3:
+                marketing_entries, stage, dropped = marketing_result
+            elif isinstance(marketing_result, tuple) and len(marketing_result) == 2:
+                marketing_entries, stage = marketing_result
+                dropped = 0
+            else:
+                marketing_entries, stage = marketing_result, FallbackStage.STRONG
+                dropped = 0
+
             _append_structural_entries(
                 lines, "Маркетинговые шаблоны:", marketing_entries
             )
 
+            meta["marketing"] = {
+                "stage": stage.value,
+                "entries_count": len(marketing_entries),
+                "entry_ids": [e.get("id") for e in marketing_entries[:5] if e.get("id")],
+                "entry_names": [e.get("name") for e in marketing_entries[:5] if e.get("name")],
+                "truncated_count": dropped,
+            }
+            if dropped > 0:
+                logger.info(
+                    "Char budget truncated %d records for block='marketing', domain=%s, intent=%s",
+                    dropped, domain, intent
+                )
+            if stage in (FallbackStage.EMPTY, FallbackStage.NEUTRAL):
+                _warn_if_empty_retrieval(
+                    block="marketing",
+                    stage=stage,
+                    domain=domain,
+                    intent=intent,
+                    overlays=overlays,
+                    text_len=len(text),
+                    primary_tags=primary_tags,
+                )
+
+        # Риторические приёмы
         rhetoric_budget = budget.get("rhetoric")
         if rhetoric_budget and rhetoric_budget.enabled and kb.rhetoric_frameworks:
-            rhetoric_entries = select_structural_by_tags_or_all(
+            rhetoric_result = select_structural_by_tags_or_all(
                 entries=kb.rhetoric_frameworks,
                 tags=primary_tags,
                 limit=rhetoric_budget.entry_limit,
                 expanded_tags=expanded_tags,
                 char_budget=rhetoric_budget.char_budget,
+                return_meta=True,
             )
+            if isinstance(rhetoric_result, tuple) and len(rhetoric_result) == 3:
+                rhetoric_entries, stage, dropped = rhetoric_result
+            elif isinstance(rhetoric_result, tuple) and len(rhetoric_result) == 2:
+                rhetoric_entries, stage = rhetoric_result
+                dropped = 0
+            else:
+                rhetoric_entries, stage = rhetoric_result, FallbackStage.STRONG
+                dropped = 0
+
             _append_structural_entries(lines, "Риторические приёмы:", rhetoric_entries)
 
+            meta["rhetoric"] = {
+                "stage": stage.value,
+                "entries_count": len(rhetoric_entries),
+                "entry_ids": [e.get("id") for e in rhetoric_entries[:5] if e.get("id")],
+                "entry_names": [e.get("name") for e in rhetoric_entries[:5] if e.get("name")],
+                "truncated_count": dropped,
+            }
+            if dropped > 0:
+                logger.info(
+                    "Char budget truncated %d records for block='rhetoric', domain=%s, intent=%s",
+                    dropped, domain, intent
+                )
+            if stage in (FallbackStage.EMPTY, FallbackStage.NEUTRAL):
+                _warn_if_empty_retrieval(
+                    block="rhetoric",
+                    stage=stage,
+                    domain=domain,
+                    intent=intent,
+                    overlays=overlays,
+                    text_len=len(text),
+                    primary_tags=primary_tags,
+                )
+
+        # Редакторские приёмы
         editorial_budget = budget.get("editorial")
         if editorial_budget and editorial_budget.enabled and kb.editorial_techniques:
-            editorial_entries = select_structural_by_tags_or_all(
+            editorial_result = select_structural_by_tags_or_all(
                 entries=kb.editorial_techniques,
                 tags=primary_tags,
                 limit=editorial_budget.entry_limit,
                 expanded_tags=expanded_tags,
                 char_budget=editorial_budget.char_budget,
+                return_meta=True,
             )
+            if isinstance(editorial_result, tuple) and len(editorial_result) == 3:
+                editorial_entries, stage, dropped = editorial_result
+            elif isinstance(editorial_result, tuple) and len(editorial_result) == 2:
+                editorial_entries, stage = editorial_result
+                dropped = 0
+            else:
+                editorial_entries, stage = editorial_result, FallbackStage.STRONG
+                dropped = 0
+
             _append_editorial_entries(lines, "Редакторские приёмы:", editorial_entries)
 
+            meta["editorial"] = {
+                "stage": stage.value,
+                "entries_count": len(editorial_entries),
+                "entry_ids": [e.get("id") for e in editorial_entries[:5] if e.get("id")],
+                "entry_names": [e.get("name") for e in editorial_entries[:5] if e.get("name")],
+                "truncated_count": dropped,
+            }
+            if dropped > 0:
+                logger.info(
+                    "Char budget truncated %d records for block='editorial', domain=%s, intent=%s",
+                    dropped, domain, intent
+                )
+            if stage in (FallbackStage.EMPTY, FallbackStage.NEUTRAL):
+                _warn_if_empty_retrieval(
+                    block="editorial",
+                    stage=stage,
+                    domain=domain,
+                    intent=intent,
+                    overlays=overlays,
+                    text_len=len(text),
+                    primary_tags=primary_tags,
+                )
+
+        # Глоссарий (без метаданных)
         glossary_budget = budget.get("glossary")
         if glossary_budget and glossary_budget.enabled and kb.domain_glossary:
             _append_glossary(lines, kb.domain_glossary, glossary_budget.entry_limit)
 
+        # НКРЯ (без метаданных)
         nkrj_budget = budget.get("nkrj")
         if nkrj_budget and nkrj_budget.enabled and kb.nkrj_structure_patterns:
             _append_nkrj(lines, kb.nkrj_structure_patterns)
 
-        return "\n".join(lines)
+        return "\n".join(lines), meta
 
     # ------------------------------------------------------------------
     # Главный метод — build()
@@ -650,8 +1120,9 @@ class PromptBuilder:
         include_knowledge: bool = True,
         knowledge_level: KnowledgeLevel = KnowledgeLevel.STANDARD,
         token_budget: Optional[int] = None,
+        include_retrieval_meta: bool = False,
         **legacy_kwargs: Any,
-    ) -> str:
+    ) -> Union[str, Tuple[str, Dict[str, Any]]]:
         """
         Собирает промпт из конфигов и базы знаний.
 
@@ -665,6 +1136,11 @@ class PromptBuilder:
             include_knowledge — включать ли блок базы знаний
             knowledge_level  — уровень детализации знаний (KnowledgeLevel)
             token_budget     — лимит токенов для knowledge-блока (None = без лимита)
+            include_retrieval_meta — если True, возвращает (prompt, retrieval_meta)
+
+        Возвращает:
+            если include_retrieval_meta=False: строка с промптом
+            если include_retrieval_meta=True: кортеж (prompt, meta)
         """
         # Поддержка legacy camelCase kwargs от старых клиентов
         legacy_output_mode = legacy_kwargs.pop("outputmode", None)
@@ -736,6 +1212,7 @@ class PromptBuilder:
         if audience_block:
             blocks.append("Аудитория:\n" + audience_block)
 
+        retrieval_meta_total: Dict[str, Any] = {}
         if include_knowledge:
             tag_sets = _collect_retrieval_tags(
                 validated_domain,
@@ -746,19 +1223,27 @@ class PromptBuilder:
                 limits=self._limits,
                 level=knowledge_level,
             )
-            knowledge_block = self._build_knowledge_block(
+            knowledge_block, block_meta = self._build_knowledge_block(
                 text=text,
                 primary_tags=tag_sets["primary"],
                 expanded_tags=tag_sets["expanded"],
                 budget=budget,
+                domain=validated_domain,
+                intent=validated_intent,
+                overlays=validated_overlays,
             )
+            retrieval_meta_total = block_meta
             if knowledge_block:
                 blocks.append("База знаний:\n" + knowledge_block)
 
         blocks.append("Формат ответа:\n" + output_format)
         blocks.append("Исходный текст:\n" + text.strip())
 
-        return "\n\n".join(block for block in blocks if block.strip())
+        prompt = "\n\n".join(block for block in blocks if block.strip())
+
+        if include_retrieval_meta:
+            return prompt, retrieval_meta_total
+        return prompt
 
     # legacy alias
     def build_prompt(self, **kwargs: Any) -> str:

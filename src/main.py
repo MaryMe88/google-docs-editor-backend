@@ -1,18 +1,29 @@
 from __future__ import annotations
 
+import asyncio
+import json
 import logging
 import re
+import time
 from contextlib import asynccontextmanager
-from typing import Optional, Set, Tuple
+from pathlib import Path
+from typing import Any, Dict, Optional, Set, Tuple
 
-from fastapi import FastAPI, HTTPException, status
+from fastapi import FastAPI, HTTPException, Request, Response, status
 from fastapi.middleware.cors import CORSMiddleware
+from pydantic import ValidationError
 
 from src.config_types import AudienceProfile
 from src.contracts import EditRequest
-from src.llm_client import LLMError, LLMProvider, create_llm_client
+from src.llm_client import LLMError, LLMProvider, LLMResponse, create_llm_client, call_with_fallback
 from src.prompt_builder import PromptBuilder
-from src.shared_contracts import ALLOWED_PROVIDERS
+from src.shared_contracts import (
+    ALLOWED_DOMAINS,
+    ALLOWED_INTENTS,
+    ALLOWED_OVERLAYS,
+    ALLOWED_PROVIDERS,
+)
+from src.startup_checks import run_startup_checks
 
 logging.basicConfig(
     level=logging.INFO,
@@ -21,17 +32,23 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 
+_provider_cache: Dict[str, Any] = {}
+_PROVIDER_CACHE_TTL = 60
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     logger.info("Starting up text editor service...")
     prompt_builder = PromptBuilder()
-
-    try:
-        prompt_builder.startup_check()
-        logger.info("PromptBuilder initialized successfully")
-    except Exception as error:
-        logger.warning("PromptBuilder startup check failed: %s", error)
-
+    prompt_builder.startup_check()
+    run_startup_checks(
+        config_path=Path("config"),
+        kb_path=Path("knowledge_base"),
+        allowed_domains=ALLOWED_DOMAINS,
+        allowed_intents=ALLOWED_INTENTS,
+        allowed_overlays=ALLOWED_OVERLAYS,
+    )
+    logger.info("PromptBuilder initialized successfully")
     app.state.prompt_builder = prompt_builder
     yield
     logger.info("Shutting down text editor service...")
@@ -53,6 +70,23 @@ app.add_middleware(
 )
 
 
+@app.middleware("http")
+async def log_requests(request: Request, call_next):
+    start_time = time.perf_counter()
+    response = await call_next(request)
+    duration_ms = (time.perf_counter() - start_time) * 1000
+    log_entry = {
+        "timestamp": time.time(),
+        "method": request.method,
+        "path": request.url.path,
+        "status_code": response.status_code,
+        "duration_ms": round(duration_ms, 2),
+        "client_ip": request.client.host if request.client else None,
+    }
+    logger.info(json.dumps(log_entry, ensure_ascii=False))
+    return response
+
+
 def get_prompt_builder() -> PromptBuilder:
     prompt_builder = getattr(app.state, "prompt_builder", None)
     if prompt_builder is None:
@@ -64,35 +98,137 @@ def _supported_providers() -> Set[str]:
     return set(ALLOWED_PROVIDERS)
 
 
+async def _check_provider_deep(provider_name: str) -> bool:
+    try:
+        provider_enum = LLMProvider(provider_name)
+        async with create_llm_client(
+            provider=provider_enum,
+            model=None,
+            temperature=0.0,
+            timeout=5.0,
+            max_retries=1,
+            max_tokens=1,
+        ) as client:
+            await client.generate("ping")
+            return True
+    except Exception as e:
+        logger.debug(f"Deep check failed for {provider_name}: {e}")
+        return False
+
+
+async def _check_providers_availability(deep: bool = False) -> Tuple[bool, Dict[str, bool]]:
+    global _provider_cache
+    now = time.time()
+    if deep and _provider_cache.get("_timestamp", 0) + _PROVIDER_CACHE_TTL > now:
+        cached = _provider_cache.get("_data")
+        if cached:
+            return cached
+    availability: Dict[str, bool] = {}
+    for provider_name in ALLOWED_PROVIDERS:
+        if deep:
+            available = await _check_provider_deep(provider_name)
+        else:
+            try:
+                provider_enum = LLMProvider(provider_name)
+                async with create_llm_client(
+                    provider=provider_enum,
+                    model=None,
+                    temperature=0.0,
+                    timeout=5.0,
+                    max_retries=1,
+                ) as client:
+                    available = True
+            except Exception as e:
+                logger.debug(f"Light check failed for {provider_name}: {e}")
+                available = False
+        availability[provider_name] = available
+    any_available = any(availability.values())
+    if deep:
+        _provider_cache = {
+            "_timestamp": now,
+            "_data": (any_available, availability),
+        }
+    return any_available, availability
+
+
 @app.get("/")
 async def root() -> dict:
     return {"status": "ok", "version": "1.0.0"}
 
 
 @app.get("/health")
-async def health_check() -> dict:
+async def health_check(deep: bool = False) -> Response:
     builder = get_prompt_builder()
-    return {
-        "status": "ok",
+    any_available, provider_status = await _check_providers_availability(deep=deep)
+
+    response_data = {
+        "status": "ok" if any_available else "degraded",
         "version": "1.0.0",
-        "available_providers": sorted(_supported_providers()),
-        "available_intents": builder.get_available_intents(),
-        "available_overlays": builder.get_available_overlays(),
+        "available_providers": [p for p, ok in provider_status.items() if ok],
+        "provider_status": provider_status,
+        "available_intents": list(builder.get_available_intents()),
+        "available_overlays": list(builder.get_available_overlays()),
+        "deep_check": deep,
     }
+
+    status_code = status.HTTP_200_OK if any_available else status.HTTP_503_SERVICE_UNAVAILABLE
+    return Response(
+        content=json.dumps(response_data, ensure_ascii=False),
+        status_code=status_code,
+        media_type="application/json",
+    )
+
+
+async def _call_llm_with_provider(
+    prompt: str,
+    provider_name: str,
+    model: Optional[str],
+    temperature: float,
+) -> LLMResponse:
+    provider_enum = LLMProvider(provider_name)
+    async with create_llm_client(
+        provider=provider_enum,
+        model=model,
+        temperature=temperature,
+    ) as client:
+        return await client.generate(prompt)
+
+
+def _log_edit_request_meta(request: EditRequest, retrieval_meta: Optional[Dict] = None) -> None:
+    log_data = {
+        "event": "edit_request",
+        "domain": request.domain,
+        "intent": request.intent,
+        "overlays": request.overlays,
+        "provider": request.provider,
+        "output_mode": request.output_mode,
+        "dry_run": request.dry_run,
+        "text_length": len(request.text),
+        "include_knowledge": request.include_knowledge,
+    }
+    if retrieval_meta:
+        log_data["retrieval_meta"] = retrieval_meta
+    logger.info(json.dumps(log_data, ensure_ascii=False))
 
 
 @app.post("/api/edit")
 async def edit_text(request: EditRequest) -> dict:
-    logger.info(
-        "Received edit request",
-        extra={
-            "text_length": len(request.text),
-            "domain": request.domain,
-            "intent": request.intent,
-            "output_mode": request.output_mode,
-            "provider": request.provider,
-        },
-    )
+    if request.domain not in ALLOWED_DOMAINS:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Invalid domain: {request.domain}. Allowed: {sorted(ALLOWED_DOMAINS)}",
+        )
+    if request.intent is not None and request.intent not in ALLOWED_INTENTS:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Invalid intent: {request.intent}. Allowed: {sorted(ALLOWED_INTENTS)}",
+        )
+    for overlay in request.overlays:
+        if overlay not in ALLOWED_OVERLAYS:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Invalid overlay: {overlay}. Allowed: {sorted(ALLOWED_OVERLAYS)}",
+            )
 
     try:
         audience: Optional[AudienceProfile] = None
@@ -105,18 +241,20 @@ async def edit_text(request: EditRequest) -> dict:
             )
 
         prompt_builder = get_prompt_builder()
-        prompt = prompt_builder.build(
-            text=request.text,
-            domain=request.domain,
-            intent=request.intent,
-            audience=audience,
-            overlays=request.overlays,
-            output_mode=request.output_mode,
-            include_knowledge=request.include_knowledge,
-        )
+        retrieval_meta = None
 
         if request.dry_run:
-            return {
+            prompt, retrieval_meta = prompt_builder.build(
+                text=request.text,
+                domain=request.domain,
+                intent=request.intent,
+                audience=audience,
+                overlays=request.overlays,
+                output_mode=request.output_mode,
+                include_knowledge=request.include_knowledge,
+                include_retrieval_meta=True,
+            )
+            response_data = {
                 "edited_text": request.text,
                 "report": None,
                 "prompt": prompt,
@@ -125,53 +263,72 @@ async def edit_text(request: EditRequest) -> dict:
                 "dry_run": True,
                 "usage": {},
                 "raw_response": {},
+                "retrieval_meta": retrieval_meta,
+            }
+        else:
+            prompt, retrieval_meta = prompt_builder.build(
+                text=request.text,
+                domain=request.domain,
+                intent=request.intent,
+                audience=audience,
+                overlays=request.overlays,
+                output_mode=request.output_mode,
+                include_knowledge=request.include_knowledge,
+                include_retrieval_meta=True,
+            )
+            providers_to_try = [request.provider] + [
+                p for p in sorted(ALLOWED_PROVIDERS) if p != request.provider
+            ]
+            response = await call_with_fallback(
+                prompt=prompt,
+                providers=providers_to_try,
+                model=request.model,
+                temperature=request.temperature,
+                max_retries_per_provider=1,
+            )
+
+            edited_text = response.content
+            report: Optional[str] = None
+            if request.output_mode == "text_and_report":
+                edited_text, report = _parse_text_and_report(response.content)
+
+            response_data = {
+                "edited_text": edited_text,
+                "report": report,
+                "prompt": prompt,
+                "model": response.model,
+                "provider": response.provider,
+                "dry_run": False,
+                "usage": {"tokens_used": response.tokens_used},
+                "raw_response": {
+                    "finish_reason": response.finish_reason,
+                    "content": response.content,
+                },
             }
 
-        provider_enum = LLMProvider(request.provider)
-        async with create_llm_client(
-            provider=provider_enum,
-            model=request.model,
-            temperature=request.temperature,
-        ) as client:
-            response = await client.generate(prompt)
-
-        edited_text = response.content
-        report: Optional[str] = None
-
-        if request.output_mode == "text_and_report":
-            edited_text, report = _parse_text_and_report(response.content)
-
-        return {
-            "edited_text": edited_text,
-            "report": report,
-            "prompt": prompt,
-            "model": response.model,
-            "provider": response.provider,
-            "dry_run": False,
-            "usage": {"tokens_used": response.tokens_used},
-            "raw_response": {
-                "finish_reason": response.finish_reason,
-                "content": response.content,
-            },
-        }
+        _log_edit_request_meta(request, retrieval_meta)
+        return response_data
 
     except LLMError as error:
         logger.error("LLM error: %s", error, exc_info=True)
         raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            status_code=status.HTTP_502_BAD_GATEWAY,
             detail=f"LLM generation failed: {error}",
         ) from error
-
     except FileNotFoundError as error:
         logger.error("Config file not found: %s", error, exc_info=True)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Configuration error: {error}",
         ) from error
-
     except HTTPException:
         raise
-
+    except ValidationError as error:
+        logger.error("Validation error: %s", error, exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=error.errors(),
+        ) from error
     except Exception as error:
         logger.error("Unexpected error: %s", error, exc_info=True)
         raise HTTPException(
@@ -217,10 +374,8 @@ def _parse_text_and_report(content: str) -> Tuple[str, Optional[str]]:
     if text_marker and report_marker:
         text_pat = re.compile(re.escape(text_marker), re.IGNORECASE)
         report_pat = re.compile(re.escape(report_marker), re.IGNORECASE)
-
         text_match = text_pat.search(content)
         report_match = report_pat.search(content)
-
         if text_match and report_match:
             edited_text = content[text_match.end():report_match.start()].strip()
             report = content[report_match.end():].strip() or None
@@ -232,7 +387,5 @@ def _parse_text_and_report(content: str) -> Tuple[str, Optional[str]]:
         if text_match:
             return content[text_match.end():].strip(), None
 
-    logger.warning(
-        "parse_text_and_report: no markers found, returning whole response as text"
-    )
+    logger.warning("parse_text_and_report: no markers found, returning whole response as text")
     return content.strip(), None

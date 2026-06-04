@@ -23,7 +23,7 @@ import random
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from enum import Enum
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
 
 import httpx
 from dotenv import load_dotenv
@@ -631,6 +631,49 @@ async def generate_text(
     ) as client:
         response = await client.generate(prompt)
         return response.content
+
+
+async def call_with_fallback(
+    prompt: str,
+    providers: List[str],
+    model: Optional[str] = None,
+    temperature: float = 0.3,
+    max_retries_per_provider: int = 1,
+) -> LLMResponse:
+    """Последовательно пробует провайдеров из списка.
+
+    Возвращает первый успешный ответ. При исчерпании всех провайдеров
+    поднимает LLMError с причиной последнего сбоя.
+
+    Args:
+        prompt: текст промпта для LLM.
+        providers: список имён провайдеров в порядке приоритета.
+        model: имя модели (None — использовать дефолтную для провайдера).
+        temperature: температура генерации.
+        max_retries_per_provider: количество попыток на каждого провайдера.
+    """
+    last_error: Optional[Exception] = None
+    for provider_name in providers:
+        try:
+            provider_enum = LLMProvider(provider_name)
+        except ValueError:
+            logger.warning("Unknown provider %r, skipping.", provider_name)
+            continue
+        try:
+            logger.info("call_with_fallback: trying provider=%s", provider_name)
+            async with create_llm_client(
+                provider=provider_enum,
+                model=model,
+                temperature=temperature,
+                max_retries=max_retries_per_provider,
+            ) as client:
+                response = await client.generate(prompt)
+            logger.info("call_with_fallback: success with provider=%s", provider_name)
+            return response
+        except LLMError as exc:
+            logger.warning("call_with_fallback: provider=%s failed: %s", provider_name, exc)
+            last_error = exc
+    raise last_error or LLMError("All providers failed")
 
 
 if __name__ == "__main__":

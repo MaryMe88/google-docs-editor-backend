@@ -11,7 +11,7 @@ import logging
 import re
 from dataclasses import dataclass
 from enum import Enum
-from typing import Any, Dict, Final, Iterable, List, Optional, Set, Tuple
+from typing import Any, Dict, Final, Iterable, List, Optional, Set, Tuple, Union, overload
 
 from src.tag_registry import normalize_tag
 
@@ -376,18 +376,25 @@ def _collect_with_budget(
     ranked_entries: List[Dict[str, Any]],
     limit: int,
     char_budget: Optional[int],
-) -> List[Dict[str, Any]]:
+) -> Tuple[List[Dict[str, Any]], int]:
+    """
+    Выбирает записи с учётом лимита и символьного бюджета.
+    Возвращает (выбранные_записи, количество_отброшенных_из-за_бюджета).
+    """
     result: List[Dict[str, Any]] = []
     seen_keys: Set[Tuple[Any, ...]] = set()
     chars_used = 0
+    dropped = 0
 
-    for entry in ranked_entries:
+    for idx, entry in enumerate(ranked_entries):
         key = _make_dedupe_key(entry)
         if key in seen_keys:
             continue
 
         entry_chars = _estimate_entry_chars(entry)
         if char_budget is not None and result and chars_used + entry_chars > char_budget:
+            # Все оставшиеся записи (включая текущую) не войдут из-за бюджета
+            dropped = len(ranked_entries) - idx
             break
 
         seen_keys.add(key)
@@ -397,7 +404,7 @@ def _collect_with_budget(
         if len(result) >= limit:
             break
 
-    return result
+    return result, dropped
 
 
 def _log_stage_debug(
@@ -430,6 +437,7 @@ def _sort_ranked(
     return [entry for _, _, entry in scored]
 
 
+@overload
 def _select_ranked_entries(
     entries: List[Dict[str, Any]],
     normalized_text: str,
@@ -443,7 +451,45 @@ def _select_ranked_entries(
     min_score: Optional[int] = None,
     char_budget: Optional[int] = None,
     fallback_policy: Optional[FallbackPolicy] = None,
+    return_meta: bool = False,
 ) -> List[Dict[str, Any]]:
+    ...
+
+
+@overload
+def _select_ranked_entries(
+    entries: List[Dict[str, Any]],
+    normalized_text: str,
+    wanted_tags: Iterable[str],
+    limit: int,
+    require_text_match: bool = False,
+    scorer=score_rule_entry,
+    candidate_limit: Optional[int] = None,
+    debug_context: str = "",
+    expanded_tags: Optional[Set[str]] = None,
+    min_score: Optional[int] = None,
+    char_budget: Optional[int] = None,
+    fallback_policy: Optional[FallbackPolicy] = None,
+    return_meta: bool = True,
+) -> Tuple[List[Dict[str, Any]], FallbackStage, int]:
+    ...
+
+
+def _select_ranked_entries(
+    entries: List[Dict[str, Any]],
+    normalized_text: str,
+    wanted_tags: Iterable[str],
+    limit: int,
+    require_text_match: bool = False,
+    scorer=score_rule_entry,
+    candidate_limit: Optional[int] = None,
+    debug_context: str = "",
+    expanded_tags: Optional[Set[str]] = None,
+    min_score: Optional[int] = None,
+    char_budget: Optional[int] = None,
+    fallback_policy: Optional[FallbackPolicy] = None,
+    return_meta: bool = False,
+) -> Union[List[Dict[str, Any]], Tuple[List[Dict[str, Any]], FallbackStage, int]]:
     """
     Общая функция ранжирования записей с quality-gated fallback.
     Стадии:
@@ -452,9 +498,12 @@ def _select_ranked_entries(
     3. tag_only
     4. neutral
     5. empty
+
+    Если return_meta=True, возвращает (entries, stage, dropped).
     """
     if not entries or limit <= 0:
-        return []
+        stage = FallbackStage.EMPTY
+        return ([], stage, 0) if return_meta else []
 
     policy = fallback_policy or RULE_FALLBACK_POLICY
     candidates = entries if candidate_limit is None else entries[:candidate_limit]
@@ -481,8 +530,15 @@ def _select_ranked_entries(
 
     if scored:
         ranked = _sort_ranked(scored)
-        result = _collect_with_budget(ranked, limit, char_budget)
+        result, dropped = _collect_with_budget(ranked, limit, char_budget)
         _log_stage_debug(debug_context, FallbackStage.STRONG, candidates, result)
+        if dropped:
+            logger.info(
+                "[%s] char_budget truncated %d records (stage=%s)",
+                debug_context, dropped, FallbackStage.STRONG.value,
+            )
+        if return_meta:
+            return (result, FallbackStage.STRONG, dropped)
         return result
 
     if policy.allow_text_only:
@@ -498,8 +554,15 @@ def _select_ranked_entries(
         if text_only_scored:
             text_only_scored.sort(key=lambda item: (item[0], item[1]), reverse=True)
             ranked = [entry for _, _, entry in text_only_scored]
-            result = _collect_with_budget(ranked, limit, char_budget)
+            result, dropped = _collect_with_budget(ranked, limit, char_budget)
             _log_stage_debug(debug_context, FallbackStage.TEXT_ONLY, candidates, result)
+            if dropped:
+                logger.info(
+                    "[%s] char_budget truncated %d records (stage=%s)",
+                    debug_context, dropped, FallbackStage.TEXT_ONLY.value,
+                )
+            if return_meta:
+                return (result, FallbackStage.TEXT_ONLY, dropped)
             return result
 
     if policy.allow_tag_only:
@@ -522,8 +585,15 @@ def _select_ranked_entries(
                 reverse=True,
             )
             ranked = [entry for _, _, _, entry in tag_only_scored]
-            result = _collect_with_budget(ranked, limit, char_budget)
+            result, dropped = _collect_with_budget(ranked, limit, char_budget)
             _log_stage_debug(debug_context, FallbackStage.TAG_ONLY, candidates, result)
+            if dropped:
+                logger.info(
+                    "[%s] char_budget truncated %d records (stage=%s)",
+                    debug_context, dropped, FallbackStage.TAG_ONLY.value,
+                )
+            if return_meta:
+                return (result, FallbackStage.TAG_ONLY, dropped)
             return result
 
     if policy.allow_neutral_fallback:
@@ -538,12 +608,47 @@ def _select_ranked_entries(
         if neutral_scored:
             neutral_scored.sort(key=lambda item: (item[0], item[1]), reverse=True)
             ranked = [entry for _, _, entry in neutral_scored]
-            result = _collect_with_budget(ranked, limit, char_budget)
+            result, dropped = _collect_with_budget(ranked, limit, char_budget)
             _log_stage_debug(debug_context, FallbackStage.NEUTRAL, candidates, result)
+            if dropped:
+                logger.info(
+                    "[%s] char_budget truncated %d records (stage=%s)",
+                    debug_context, dropped, FallbackStage.NEUTRAL.value,
+                )
+            if return_meta:
+                return (result, FallbackStage.NEUTRAL, dropped)
             return result
 
     _log_stage_debug(debug_context, FallbackStage.EMPTY, candidates, [])
+    if return_meta:
+        return ([], FallbackStage.EMPTY, 0)
     return []
+
+
+@overload
+def _select_by_tags_or_all(
+    entries: List[Dict[str, Any]],
+    tags: Iterable[str],
+    limit: int,
+    expanded_tags: Optional[Set[str]] = None,
+    min_score: Optional[int] = None,
+    char_budget: Optional[int] = None,
+    return_meta: bool = False,
+) -> List[Dict[str, Any]]:
+    ...
+
+
+@overload
+def _select_by_tags_or_all(
+    entries: List[Dict[str, Any]],
+    tags: Iterable[str],
+    limit: int,
+    expanded_tags: Optional[Set[str]] = None,
+    min_score: Optional[int] = None,
+    char_budget: Optional[int] = None,
+    return_meta: bool = True,
+) -> Tuple[List[Dict[str, Any]], FallbackStage, int]:
+    ...
 
 
 def _select_by_tags_or_all(
@@ -553,7 +658,8 @@ def _select_by_tags_or_all(
     expanded_tags: Optional[Set[str]] = None,
     min_score: Optional[int] = None,
     char_budget: Optional[int] = None,
-) -> List[Dict[str, Any]]:
+    return_meta: bool = False,
+) -> Union[List[Dict[str, Any]], Tuple[List[Dict[str, Any]], FallbackStage, int]]:
     """Обёртка для структурных записей."""
     return _select_ranked_entries(
         entries=entries,
@@ -566,7 +672,36 @@ def _select_by_tags_or_all(
         min_score=min_score,
         char_budget=char_budget,
         fallback_policy=STRUCTURAL_FALLBACK_POLICY,
+        return_meta=return_meta,
     )
+
+
+@overload
+def select_grammar_rules(
+    kb: Any,
+    text: str,
+    tags: Iterable[str],
+    limit: int = 10,
+    candidate_limit: Optional[int] = None,
+    min_score: int = 1,
+    char_budget: Optional[int] = None,
+    return_meta: bool = False,
+) -> List[Dict[str, Any]]:
+    ...
+
+
+@overload
+def select_grammar_rules(
+    kb: Any,
+    text: str,
+    tags: Iterable[str],
+    limit: int = 10,
+    candidate_limit: Optional[int] = None,
+    min_score: int = 1,
+    char_budget: Optional[int] = None,
+    return_meta: bool = True,
+) -> Tuple[List[Dict[str, Any]], FallbackStage, int]:
+    ...
 
 
 def select_grammar_rules(
@@ -577,7 +712,8 @@ def select_grammar_rules(
     candidate_limit: Optional[int] = None,
     min_score: int = 1,
     char_budget: Optional[int] = None,
-) -> List[Dict[str, Any]]:
+    return_meta: bool = False,
+) -> Union[List[Dict[str, Any]], Tuple[List[Dict[str, Any]], FallbackStage, int]]:
     normalized_text = normalize_text_for_match(text)
     effective_tags = list(tags) or ["grammar"]
     return _select_ranked_entries(
@@ -591,7 +727,36 @@ def select_grammar_rules(
         min_score=min_score,
         char_budget=char_budget,
         fallback_policy=RULE_FALLBACK_POLICY,
+        return_meta=return_meta,
     )
+
+
+@overload
+def select_style_issues(
+    kb: Any,
+    text: str,
+    tags: Iterable[str],
+    limit: int = 10,
+    candidate_limit: Optional[int] = None,
+    min_score: int = 1,
+    char_budget: Optional[int] = None,
+    return_meta: bool = False,
+) -> List[Dict[str, Any]]:
+    ...
+
+
+@overload
+def select_style_issues(
+    kb: Any,
+    text: str,
+    tags: Iterable[str],
+    limit: int = 10,
+    candidate_limit: Optional[int] = None,
+    min_score: int = 1,
+    char_budget: Optional[int] = None,
+    return_meta: bool = True,
+) -> Tuple[List[Dict[str, Any]], FallbackStage, int]:
+    ...
 
 
 def select_style_issues(
@@ -602,7 +767,8 @@ def select_style_issues(
     candidate_limit: Optional[int] = None,
     min_score: int = 1,
     char_budget: Optional[int] = None,
-) -> List[Dict[str, Any]]:
+    return_meta: bool = False,
+) -> Union[List[Dict[str, Any]], Tuple[List[Dict[str, Any]], FallbackStage, int]]:
     normalized_text = normalize_text_for_match(text)
     effective_tags = list(tags) or ["style"]
     return _select_ranked_entries(
@@ -616,7 +782,36 @@ def select_style_issues(
         min_score=min_score,
         char_budget=char_budget,
         fallback_policy=RULE_FALLBACK_POLICY,
+        return_meta=return_meta,
     )
+
+
+@overload
+def select_logic_issues(
+    kb: Any,
+    text: str,
+    tags: Iterable[str],
+    limit: int = 8,
+    candidate_limit: Optional[int] = None,
+    min_score: int = 1,
+    char_budget: Optional[int] = None,
+    return_meta: bool = False,
+) -> List[Dict[str, Any]]:
+    ...
+
+
+@overload
+def select_logic_issues(
+    kb: Any,
+    text: str,
+    tags: Iterable[str],
+    limit: int = 8,
+    candidate_limit: Optional[int] = None,
+    min_score: int = 1,
+    char_budget: Optional[int] = None,
+    return_meta: bool = True,
+) -> Tuple[List[Dict[str, Any]], FallbackStage, int]:
+    ...
 
 
 def select_logic_issues(
@@ -627,7 +822,8 @@ def select_logic_issues(
     candidate_limit: Optional[int] = None,
     min_score: int = 1,
     char_budget: Optional[int] = None,
-) -> List[Dict[str, Any]]:
+    return_meta: bool = False,
+) -> Union[List[Dict[str, Any]], Tuple[List[Dict[str, Any]], FallbackStage, int]]:
     normalized_text = normalize_text_for_match(text)
     wanted_tags = list(tags) + ["logic"]
     candidates: List[Dict[str, Any]] = (
@@ -644,7 +840,51 @@ def select_logic_issues(
         min_score=min_score,
         char_budget=char_budget,
         fallback_policy=RULE_FALLBACK_POLICY,
+        return_meta=return_meta,
     )
 
 
-select_structural_by_tags_or_all = _select_by_tags_or_all
+@overload
+def select_structural_by_tags_or_all(
+    entries: List[Dict[str, Any]],
+    tags: Iterable[str],
+    limit: int,
+    expanded_tags: Optional[Set[str]] = None,
+    min_score: Optional[int] = None,
+    char_budget: Optional[int] = None,
+    return_meta: bool = False,
+) -> List[Dict[str, Any]]:
+    ...
+
+
+@overload
+def select_structural_by_tags_or_all(
+    entries: List[Dict[str, Any]],
+    tags: Iterable[str],
+    limit: int,
+    expanded_tags: Optional[Set[str]] = None,
+    min_score: Optional[int] = None,
+    char_budget: Optional[int] = None,
+    return_meta: bool = True,
+) -> Tuple[List[Dict[str, Any]], FallbackStage, int]:
+    ...
+
+
+def select_structural_by_tags_or_all(
+    entries: List[Dict[str, Any]],
+    tags: Iterable[str],
+    limit: int,
+    expanded_tags: Optional[Set[str]] = None,
+    min_score: Optional[int] = None,
+    char_budget: Optional[int] = None,
+    return_meta: bool = False,
+) -> Union[List[Dict[str, Any]], Tuple[List[Dict[str, Any]], FallbackStage, int]]:
+    return _select_by_tags_or_all(
+        entries=entries,
+        tags=tags,
+        limit=limit,
+        expanded_tags=expanded_tags,
+        min_score=min_score,
+        char_budget=char_budget,
+        return_meta=return_meta,
+    )

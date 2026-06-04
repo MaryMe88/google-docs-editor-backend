@@ -5,13 +5,10 @@ from typing import Any, Dict, List, Optional
 from pydantic import BaseModel, Field, field_validator
 
 from src.shared_contracts import (
-    ALLOWED_DOMAINS,
     ALLOWED_EXPERTISE,
     ALLOWED_FORMALITY,
-    ALLOWED_INTENTS,
     ALLOWED_KIND,
     ALLOWED_OUTPUT_MODES,
-    ALLOWED_OVERLAYS,
     ALLOWED_PROVIDERS,
 )
 from src.tag_registry import normalize_tag
@@ -53,7 +50,7 @@ class AudienceRequest(BaseModel):
 
 
 class EditRequest(BaseModel):
-    text: str = Field(..., min_length=1)
+    text: str = Field(..., min_length=1, max_length=10000)
     domain: str = Field(default="marketing")
     intent: Optional[str] = Field(default=None)
     audience: Optional[AudienceRequest] = Field(default=None)
@@ -67,35 +64,27 @@ class EditRequest(BaseModel):
 
     @field_validator("domain")
     @classmethod
-    def validate_domain(cls, value: str) -> str:
-        normalized = value.strip().lower()
-        if normalized not in ALLOWED_DOMAINS:
-            raise ValueError(f"domain must be one of {sorted(ALLOWED_DOMAINS)}")
-        return normalized
+    def normalize_domain(cls, value: str) -> str:
+        """Только нормализация, проверка допустимости в main.py (400 Bad Request)."""
+        return value.strip().lower()
 
     @field_validator("intent")
     @classmethod
-    def validate_intent(cls, value: Optional[str]) -> Optional[str]:
+    def normalize_intent(cls, value: Optional[str]) -> Optional[str]:
+        """Только нормализация, проверка допустимости в main.py (400 Bad Request)."""
         if value is None or not value.strip():
             return None
-        normalized = normalize_tag(value)
-        if normalized not in ALLOWED_INTENTS:
-            raise ValueError(f"intent must be one of {sorted(ALLOWED_INTENTS)}")
-        return normalized
+        return normalize_tag(value)
 
     @field_validator("overlays")
     @classmethod
-    def validate_overlays(cls, value: List[str]) -> List[str]:
+    def normalize_overlays(cls, value: List[str]) -> List[str]:
+        """Нормализация и дедупликация, проверка допустимости в main.py (400 Bad Request)."""
         normalized_values: List[str] = []
         seen: set = set()
         for item in value:
             normalized = normalize_tag(item)
-            if normalized not in ALLOWED_OVERLAYS:
-                raise ValueError(
-                    f"overlays {[item]!r} not found in config/overlays. "
-                    f"Available: {sorted(ALLOWED_OVERLAYS)}"
-                )
-            if normalized not in seen:
+            if normalized and normalized not in seen:
                 seen.add(normalized)
                 normalized_values.append(normalized)
         return normalized_values
@@ -129,6 +118,7 @@ class EditResponse(BaseModel):
     dry_run: bool = False
     usage: Dict[str, Any] = Field(default_factory=dict)
     raw_response: Dict[str, Any] = Field(default_factory=dict)
+    retrieval_meta: Optional[Dict[str, Any]] = Field(default=None)
 
 
 class PromptResponse(BaseModel):

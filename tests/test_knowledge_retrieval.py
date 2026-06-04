@@ -49,7 +49,6 @@ def make_rule_entry(
     return entry
 
 
-
 def make_structural_entry(
     name: str = "",
     description: str = "",
@@ -298,7 +297,7 @@ class TestBudgetAndDeduplication:
             tags=["grammar"],
         )
 
-        result = _collect_with_budget(
+        result, _ = _collect_with_budget(
             ranked_entries=[first, duplicate, unique],
             limit=10,
             char_budget=None,
@@ -326,7 +325,7 @@ class TestBudgetAndDeduplication:
             entry_id="second",
         )
 
-        result = _collect_with_budget(
+        result, _ = _collect_with_budget(
             ranked_entries=[first, second],
             limit=10,
             char_budget=80,
@@ -345,7 +344,7 @@ class TestBudgetAndDeduplication:
             entry_id="oversized",
         )
 
-        result = _collect_with_budget(
+        result, _ = _collect_with_budget(
             ranked_entries=[oversized],
             limit=10,
             char_budget=10,

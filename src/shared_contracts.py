@@ -1,95 +1,51 @@
 from __future__ import annotations
 
+import logging
+from pathlib import Path
 from typing import Final, Set
 
-# ---------------------------------------------------------------------------
-# ДОМЕНЫ
-#
-# Синхронизировано с реальными файлами config/domains/*.json.
-# Каждое значение здесь ДОЛЖНО иметь соответствующий файл
-# config/domains/<значение>.json, иначе /api/edit вернёт 500 при сборке промпта.
-#
-# Фактически присутствующие файлы доменов:
-#   basic_edit, blog, composition, cutnoise, deai, fiction, genre,
-#   logic_edit, makeclear, marketing, nora_gal, nora_gal_soft,
-#   readerfirst, restructure
-# ---------------------------------------------------------------------------
-ALLOWED_DOMAINS: Final[Set[str]] = {
-    "marketing",
-    "blog",
-    "deai",
-    "basic_edit",
-    "logic_edit",
-    "nora_gal",
-    "nora_gal_soft",
-    "cutnoise",
-    "makeclear",
-    "restructure",
-    "readerfirst",
-    "genre",
-    "fiction",
-    "composition",
-}
+logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
-# INTENTS
-#
-# ВАЖНО: intent пропускается контрактом, ТОЛЬКО если для него есть файл
-# config/intents/<нормализованное_значение>.json. Иначе load_intent_config
-# в prompt_builder.py упадёт с FileNotFoundError -> HTTP 500.
-#
-# ДОПОЛНИТЕЛЬНОЕ ТРЕБОВАНИЕ К ФАЙЛУ ИНТЕНТА:
-# prompt_builder.py собирает инструкции через "\n- ".join(instructions),
-# поэтому поле "instructions" В КАЖДОМ файле интента ДОЛЖНО быть
-# плоским списком СТРОК (List[str]). Сложные структуры (список объектов
-# {category, rules}) вызывают TypeError -> HTTP 500.
-#
-# Реальные файлы интентов (все приведены к плоской схеме {name, instructions}):
-#   - analytical    : config/intents/analytical.json
-#   - marketingpush : config/intents/marketingpush.json
-#   - storytelling  : config/intents/storytelling.json
-#   - engagement    : config/intents/engagement.json  (сплющен из сложной схемы)
-#   - neutral       : служебное значение, prompt_builder трактует как "без intent"
-#                     (load_intent_config возвращает None), файл не требуется
-#
-# ПОРЯДОК ДЕПЛОЯ: сначала закоммитить файлы config/intents/*.json на сервер,
-# затем этот расширенный ALLOWED_INTENTS. Иначе валидатор пропустит intent,
-# а файла не будет -> HTTP 500.
+# Путь к папке конфигов (относительно расположения этого файла)
 # ---------------------------------------------------------------------------
-ALLOWED_INTENTS: Final[Set[str]] = {
-    "analytical",
-    "marketingpush",
-    "storytelling",
-    "engagement",
-    "neutral",
-}
+_CONFIG_BASE = Path(__file__).parent.parent / "config"
 
-# Синхронизировано с реальными файлами config/overlays/*.json
-# Фактически присутствующие на сервере:
-#   coldemail, factcheck, finalcheck, infostyle, landing,
-#   pressrelease, readerfocus, recommendations, structurefirst, workdoc
-ALLOWED_OVERLAYS: Final[Set[str]] = {
-    "coldemail",
-    "factcheck",
-    "finalcheck",
-    "infostyle",
-    "landing",
-    "pressrelease",
-    "readerfocus",
-    "recommendations",
-    "structurefirst",
-    "workdoc",
-}
 
+def _scan_config_files(subdir: str) -> Set[str]:
+    """
+    Сканирует папку config/<subdir> и возвращает имена *.json файлов без расширения.
+    Если папка не существует, возвращает пустое множество и логирует предупреждение.
+    """
+    dir_path = _CONFIG_BASE / subdir
+    if not dir_path.is_dir():
+        logger.warning(f"Config directory not found: {dir_path}")
+        return set()
+    return {p.stem for p in dir_path.glob("*.json") if p.is_file()}
+
+
+# ---------------------------------------------------------------------------
+# ДОМЕНЫ – автоматически из файлов config/domains/*.json
+# ---------------------------------------------------------------------------
+ALLOWED_DOMAINS: Final[Set[str]] = _scan_config_files("domains")
+
+# ---------------------------------------------------------------------------
+# INTENTS – из файлов config/intents/*.json + служебный "neutral"
+# ---------------------------------------------------------------------------
+_intents_from_files = _scan_config_files("intents")
+# neutral не имеет файла, добавляем вручную
+ALLOWED_INTENTS: Final[Set[str]] = _intents_from_files | {"neutral"}
+
+# ---------------------------------------------------------------------------
+# OVERLAYS – из файлов config/overlays/*.json
+# ---------------------------------------------------------------------------
+ALLOWED_OVERLAYS: Final[Set[str]] = _scan_config_files("overlays")
+
+# ---------------------------------------------------------------------------
+# Остальные белые списки остаются статическими (не зависят от файлов)
+# ---------------------------------------------------------------------------
 ALLOWED_OUTPUT_MODES: Final[Set[str]] = {"text_only", "text_and_report"}
-
-ALLOWED_PROVIDERS: Final[Set[str]] = {
-    "openrouter",
-    "perplexity",
-    "openai",
-    "anthropic",
-}
-
+ALLOWED_PROVIDERS: Final[Set[str]] = {"openrouter", "perplexity", "openai", "anthropic"}
 ALLOWED_KIND: Final[Set[str]] = {"b2b", "b2c", "mixed", "custom"}
 ALLOWED_EXPERTISE: Final[Set[str]] = {"novice", "pro", "expert"}
 ALLOWED_FORMALITY: Final[Set[str]] = {"casual", "neutral", "formal"}
