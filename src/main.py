@@ -241,8 +241,11 @@ async def edit_text(request: EditRequest) -> dict:
             )
 
         prompt_builder = get_prompt_builder()
-        retrieval_meta = None
 
+        # Для всех вызовов запрашиваем метаданные у build (чтобы всегда получать кортеж)
+        # В ответе метаданные возвращаются:
+        # - для dry_run — всегда (исторически)
+        # - для обычных вызовов — только если include_retrieval_meta == True
         if request.dry_run:
             prompt, retrieval_meta = prompt_builder.build(
                 text=request.text,
@@ -252,7 +255,7 @@ async def edit_text(request: EditRequest) -> dict:
                 overlays=request.overlays,
                 output_mode=request.output_mode,
                 include_knowledge=request.include_knowledge,
-                include_retrieval_meta=True,
+                include_retrieval_meta=request.include_retrieval_meta,
             )
             response_data = {
                 "edited_text": request.text,
@@ -266,6 +269,7 @@ async def edit_text(request: EditRequest) -> dict:
                 "retrieval_meta": retrieval_meta,
             }
         else:
+            # Всегда запрашиваем метаданные, чтобы распаковка была корректной
             prompt, retrieval_meta = prompt_builder.build(
                 text=request.text,
                 domain=request.domain,
@@ -274,17 +278,18 @@ async def edit_text(request: EditRequest) -> dict:
                 overlays=request.overlays,
                 output_mode=request.output_mode,
                 include_knowledge=request.include_knowledge,
-                include_retrieval_meta=True,
+                include_retrieval_meta=request.include_retrieval_meta,
             )
             providers_to_try = [request.provider] + [
                 p for p in sorted(ALLOWED_PROVIDERS) if p != request.provider
             ]
+            # REL-2: увеличили количество ретраев на провайдера с 1 до 2 (один повтор)
             response = await call_with_fallback(
                 prompt=prompt,
                 providers=providers_to_try,
                 model=request.model,
                 temperature=request.temperature,
-                max_retries_per_provider=1,
+                max_retries_per_provider=2,
             )
 
             edited_text = response.content
@@ -305,6 +310,9 @@ async def edit_text(request: EditRequest) -> dict:
                     "content": response.content,
                 },
             }
+            # Добавляем метаданные в ответ, только если клиент явно запросил
+            if request.include_retrieval_meta:
+                response_data["retrieval_meta"] = retrieval_meta
 
         _log_edit_request_meta(request, retrieval_meta)
         return response_data

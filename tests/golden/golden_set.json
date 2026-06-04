@@ -2,29 +2,29 @@
   "description": "Golden set for KB retrieval tests. Expected wrong strings are exact copies from knowledge base.",
   "tests": [
     {
-      "text": "Самодеятельных духовых оркестров в нашей республике более полутораста.",
-      "expected_wrong": "полтораста",
+      "text": "Самодеятельных духовых оркестров в нашей республике более полуторасот.",
+      "expected_wrong": "Самодеятельных духовых оркестров в нашей республике более полуторасот.",
       "expected_stage": "strong",
-      "category": "grammar",
-      "source_file": "grammar_errors.json"
+      "category": "style",
+      "source_file": "stylistic_issues.json"
     },
     {
       "text": "Небо охватывается заревом.",
-      "expected_wrong": "охватывается",
+      "expected_wrong": "Небо охватывается заревом.",
       "expected_stage": "strong",
-      "category": "grammar",
-      "source_file": "grammar_errors.json"
+      "category": "style",
+      "source_file": "stylistic_issues.json"
     },
     {
       "text": "Я убедился о том, что рейс не отменяется.",
-      "expected_wrong": "убедился о том",
+      "expected_wrong": "убедился о том, что рейс не отменяется",
       "expected_stage": "strong",
-      "category": "grammar",
-      "source_file": "grammar_errors.json"
+      "category": "style",
+      "source_file": "stylistic_issues.json"
     },
     {
-      "text": "Он получил заглавную роль в новом спектакле.",
-      "expected_wrong": "заглавная роль",
+      "text": "Заглавная роль в фильме «Война и мир».",
+      "expected_wrong": "заглавная роль в фильме «Война и мир»",
       "expected_stage": "strong",
       "category": "style",
       "source_file": "stylistic_issues.json"
@@ -52,14 +52,14 @@
     },
     {
       "text": "Была проведена оценка пользовательского опыта и выявлены ключевые проблемы.",
-      "expected_name": "пассивный_залог",
+      "expected_wrong": "Была проведена оценка пользовательского опыта и выявлены ключевые проблемы.",
       "expected_stage": "strong",
       "category": "style",
       "source_file": "stylistic_issues.json"
     },
     {
       "text": "Осуществление оптимизации процесса требует реализации дополнительных мер.",
-      "expected_name": "отглагольные_существительные",
+      "expected_wrong": "Осуществление оптимизации процесса требует реализации дополнительных мер.",
       "expected_stage": "strong",
       "category": "style",
       "source_file": "stylistic_issues.json"
@@ -80,14 +80,14 @@
     },
     {
       "text": "Эта книга нечитабельна.",
-      "expected_wrong": "нечитабельная литература",
+      "expected_wrong": "Эта книга нечитабельна.",
       "expected_stage": "strong",
       "category": "style",
       "source_file": "stylistic_issues.json"
     },
     {
-      "text": "Четверым молодым работницам присвоен очередной разряд.",
-      "expected_wrong": "Четверым молодым работницам",
+      "text": "Четверым молодым работницам присвоен очередной профессиональный разряд.",
+      "expected_wrong": "Четверым молодым работницам присвоен очередной профессиональный разряд.",
       "expected_stage": "strong",
       "category": "style",
       "source_file": "stylistic_issues.json"

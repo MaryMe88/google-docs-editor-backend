@@ -8,11 +8,12 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from typing import Any, Dict
+from typing import Any, Dict, List
 
 import pytest
 
-from src.prompt_builder import AudienceProfile, PromptBuilder
+from src.prompt_builder import AudienceProfile, PromptBuilder, load_knowledge_base
+from src.knowledge_retrieval import FallbackStage
 
 
 # ============================================================================
@@ -61,6 +62,34 @@ def sample_text() -> str:
         "Мы осуществляем проведение анализа данных. "
         "В целом, это очень эффективное решение."
     )
+
+
+# ============================================================================
+# Фикстуры для KB-3 (золотой набор)
+# ============================================================================
+
+
+@pytest.fixture(scope="session")
+def knowledge_base() -> Any:
+    """Загружает базу знаний один раз для всех тестов."""
+    if not KB_PATH.exists():
+        pytest.skip(f"Knowledge base directory not found: {KB_PATH}")
+    return load_knowledge_base(KB_PATH)
+
+
+@pytest.fixture(scope="session")
+def golden_set() -> List[Dict[str, Any]]:
+    """Загружает golden_set.json из корня проекта или папки tests."""
+    # Сначала ищем в tests/
+    golden_path = Path(__file__).parent / "golden_set.json"
+    if not golden_path.exists():
+        # Затем в корне проекта
+        golden_path = PROJECT_ROOT / "golden_set.json"
+    if not golden_path.exists():
+        pytest.skip("golden_set.json not found")
+    with open(golden_path, encoding="utf-8") as f:
+        data = json.load(f)
+    return data["tests"]
 
 
 def load_json(path: Path) -> Dict[str, Any]:
