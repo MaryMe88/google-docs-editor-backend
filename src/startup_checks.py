@@ -119,7 +119,15 @@ def _flatten_records(item: Any) -> List[Dict[str, Any]]:
 
 
 def _collect_kb_tags(kb_path: Path) -> Set[str]:
-    """Собирает все нормализованные теги из всех записей базы знаний (с учётом вложенности)."""
+    """Собирает все нормализованные теги из всех записей базы знаний (с учётом вложенности).
+
+    Поддерживает два формата KB-файлов:
+    - список записей верхнего уровня: ``[{"tags": [...], ...}, ...]``
+    - dict с корневыми тегами и вложенными записями:
+      ``{"tags": [...], "frameworks": [...]}``
+      Корневые теги из поля ``"tags"`` (или ``"inherit_tags"``) считаются
+      унаследованными всеми вложенными записями и добавляются напрямую.
+    """
     kb_tags: Set[str] = set()
     if not kb_path.is_dir():
         logger.warning("Knowledge base directory not found: %s", kb_path)
@@ -151,12 +159,25 @@ def _collect_kb_tags(kb_path: Path) -> Set[str]:
         except Exception as e:
             raise RuntimeError(f"Failed to load KB file {file_name}: {e}") from e
 
-        # Структура может быть разной: для grammar_errors — список, для editorial_techniques — список с вложенностью
         items: List[Dict[str, Any]] = []
         if isinstance(data, list):
             items = data
         elif isinstance(data, dict):
-            for value in data.values():
+            # Читаем корневые теги (поле "tags" или "inherit_tags") —
+            # они применяются ко всему файлу и добавляются напрямую.
+            for root_field in ("tags", "inherit_tags"):
+                root_tags = data.get(root_field)
+                if isinstance(root_tags, list):
+                    for tag in root_tags:
+                        if isinstance(tag, str):
+                            norm = normalize_tag(tag)
+                            if norm:
+                                kb_tags.add(norm)
+
+            # Все остальные list-значения — это коллекции записей
+            for key, value in data.items():
+                if key in ("tags", "inherit_tags"):
+                    continue
                 if isinstance(value, list):
                     items.extend(value)
 
@@ -210,7 +231,7 @@ def _check_tags_vs_kb(kb_path: Path) -> None:
 
 def _collect_wanted_tags_from_configs(config_path: Path) -> Set[str]:
     """Собирает все wanted_tags из JSON-файлов доменов, интентов и оверлеев."""
-    wanted: Set[str] = set()
+    wanted: Set[str] = set(())
     for subdir in ("domains", "intents", "overlays"):
         dir_path = config_path / subdir
         if not dir_path.is_dir():
