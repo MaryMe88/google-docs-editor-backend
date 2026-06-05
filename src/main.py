@@ -45,11 +45,11 @@ async def lifespan(app: FastAPI):
     await asyncio.to_thread(prompt_builder.startup_check)
     await asyncio.to_thread(
         run_startup_checks,
-        Path("config"),
-        Path("knowledge_base"),
         ALLOWED_DOMAINS,
         ALLOWED_INTENTS,
         ALLOWED_OVERLAYS,
+        Path("config"),
+        Path("knowledge_base"),
     )
 
     logger.info("PromptBuilder initialized successfully")
