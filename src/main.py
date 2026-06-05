@@ -40,14 +40,18 @@ _PROVIDER_CACHE_TTL = 60
 async def lifespan(app: FastAPI):
     logger.info("Starting up text editor service...")
     prompt_builder = PromptBuilder()
-    prompt_builder.startup_check()
-    run_startup_checks(
-        config_path=Path("config"),
-        kb_path=Path("knowledge_base"),
-        allowed_domains=ALLOWED_DOMAINS,
-        allowed_intents=ALLOWED_INTENTS,
-        allowed_overlays=ALLOWED_OVERLAYS,
+
+    # Выносим синхронную тяжёлую работу в поток — event loop не блокируется
+    await asyncio.to_thread(prompt_builder.startup_check)
+    await asyncio.to_thread(
+        run_startup_checks,
+        Path("config"),
+        Path("knowledge_base"),
+        ALLOWED_DOMAINS,
+        ALLOWED_INTENTS,
+        ALLOWED_OVERLAYS,
     )
+
     logger.info("PromptBuilder initialized successfully")
     app.state.prompt_builder = prompt_builder
     yield
