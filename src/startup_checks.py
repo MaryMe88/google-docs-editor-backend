@@ -118,46 +118,48 @@ def _flatten_records(item: Any) -> List[Dict[str, Any]]:
     return records
 
 
+# Файлы KB, которые заведомо не содержат поле 'tags' и не нужны для проверки.
+# Добавляй сюда новые файлы только если они точно не имеют тегов.
+_KB_FILES_WITHOUT_TAGS: Set[str] = {
+    "stop_words.json",
+    "nkrj_structure_patterns.json",
+}
+
+
 def _collect_kb_tags(kb_path: Path) -> Set[str]:
-    """Собирает все нормализованные теги из всех записей базы знаний (с учётом вложенности).
+    """Собирает все нормализованные теги из всех JSON-файлов базы знаний.
+
+    Автоматически сканирует всю папку knowledge_base/ — добавление нового
+    файла с тегами не требует правок этого кода.
+
+    Файлы из _KB_FILES_WITHOUT_TAGS пропускаются как заведомо не содержащие
+    поле 'tags'.
 
     Поддерживает два формата KB-файлов:
     - список записей верхнего уровня: ``[{"tags": [...], ...}, ...]``
     - dict с корневыми тегами и вложенными записями:
       ``{"tags": [...], "frameworks": [...]}``
-      Корневые теги из поля ``"tags"`` (или ``"inherit_tags"``) считаются
-      унаследованными всеми вложенными записями и добавляются напрямую.
     """
     kb_tags: Set[str] = set()
     if not kb_path.is_dir():
         logger.warning("Knowledge base directory not found: %s", kb_path)
         return kb_tags
 
-    # Список всех JSON-файлов KB, содержащих записи с полем 'tags'
-    kb_files = [
-        "grammar_errors.json",
-        "stylistic_issues.json",
-        "logic_issues.json",
-        "composition_errors.json",
-        "composition_principles.json",
-        "local_cohesion.json",
-        "editorial_techniques.json",
-        "marketing_templates.json",
-        "storytelling_frameworks.json",
-        "rhetoric_frameworks.json",
-        # stop_words и nkrj не содержат тегов, пропускаем
-    ]
+    kb_files = sorted(
+        p for p in kb_path.glob("*.json")
+        if p.name not in _KB_FILES_WITHOUT_TAGS
+    )
 
-    for file_name in kb_files:
-        file_path = kb_path / file_name
-        if not file_path.is_file():
-            logger.warning("KB file not found: %s", file_path)
-            continue
+    if not kb_files:
+        logger.warning("No KB JSON files found in %s", kb_path)
+        return kb_tags
+
+    for file_path in kb_files:
         try:
             with open(file_path, encoding="utf-8") as f:
                 data = json.load(f)
         except Exception as e:
-            raise RuntimeError(f"Failed to load KB file {file_name}: {e}") from e
+            raise RuntimeError(f"Failed to load KB file {file_path.name}: {e}") from e
 
         items: List[Dict[str, Any]] = []
         if isinstance(data, list):
@@ -180,6 +182,9 @@ def _collect_kb_tags(kb_path: Path) -> Set[str]:
                     continue
                 if isinstance(value, list):
                     items.extend(value)
+        else:
+            logger.warning("Unexpected KB file format in %s, skipping", file_path.name)
+            continue
 
         for item in items:
             for rec in _flatten_records(item):
@@ -200,7 +205,6 @@ def _check_tags_vs_kb(kb_path: Path) -> None:
     Собирает все теги, которые могут быть запрошены (из CANONICAL_TAGS),
     и проверяет, что каждый из них присутствует хотя бы в одной записи KB.
     """
-    # Извлечь все теги из CANONICAL_TAGS
     expected_tags: Set[str] = set()
     for category_data in CANONICAL_TAGS.values():
         for tag_data in category_data.values():
@@ -231,7 +235,7 @@ def _check_tags_vs_kb(kb_path: Path) -> None:
 
 def _collect_wanted_tags_from_configs(config_path: Path) -> Set[str]:
     """Собирает все wanted_tags из JSON-файлов доменов, интентов и оверлеев."""
-    wanted: Set[str] = set(())
+    wanted: Set[str] = set()
     for subdir in ("domains", "intents", "overlays"):
         dir_path = config_path / subdir
         if not dir_path.is_dir():
@@ -241,7 +245,7 @@ def _collect_wanted_tags_from_configs(config_path: Path) -> Set[str]:
                 with open(filepath, encoding="utf-8") as f:
                     data = json.load(f)
             except Exception:
-                continue  # ошибки парсинга уже ловятся в check_domain/intent/overlay_files
+                continue
             raw_tags = data.get("wanted_tags", [])
             if isinstance(raw_tags, list):
                 for tag in raw_tags:
@@ -255,8 +259,6 @@ def _collect_wanted_tags_from_configs(config_path: Path) -> Set[str]:
 def check_config_tags_vs_kb(config_path: Path, kb_path: Path) -> None:
     """Проверяет, что каждый wanted_tag из конфигов присутствует
     хотя бы в одной записи базы знаний.
-
-    При несоответствии поднимает RuntimeError с перечнем «висячих» тегов.
     """
     wanted = _collect_wanted_tags_from_configs(config_path)
     if not wanted:
@@ -288,6 +290,6 @@ def run_startup_checks(
     _check_domain_files(config_path, allowed_domains)
     _check_intent_files(config_path, allowed_intents)
     _check_overlay_files(config_path, allowed_overlays)
-    _check_tags_vs_kb(kb_path)                     # существующая проверка
-    check_config_tags_vs_kb(config_path, kb_path)  # новая проверка
+    _check_tags_vs_kb(kb_path)
+    check_config_tags_vs_kb(config_path, kb_path)
     logger.info("Startup checks passed successfully.")
