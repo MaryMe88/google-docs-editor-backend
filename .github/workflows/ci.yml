@@ -6,9 +6,6 @@ on:
   pull_request:
     branches: [ main ]
 
-# Temporarily disabled — remove this line to re-enable
-if: false
-
 jobs:
   test:
     runs-on: ubuntu-latest
