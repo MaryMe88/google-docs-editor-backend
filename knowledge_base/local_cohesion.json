@@ -9,7 +9,7 @@
         "book": "Мильчин А.Е. Методика редактирования текста",
         "reference": "по Н.С. Валгиной и Е.В. Падучевой"
       },
-      "tags": ["cohesion", "paragraph", "theme-rheme"]
+      "tags": ["cohesion", "paragraph", "theme-rheme", "coherence"]
     },
     {
       "id": "cohesion-theme-rheme-002",
@@ -31,7 +31,7 @@
         "book": "Мильчин А.Е. Методика редактирования текста",
         "reference": "по Н.С. Валгиной"
       },
-      "tags": ["cohesion", "syntax", "paragraph"]
+      "tags": ["cohesion", "syntax", "paragraph", "coherence"]
     },
     {
       "id": "cohesion-overuse-001",
@@ -97,7 +97,7 @@
         "book": "Мильчин А.Е. Методика редактирования текста",
         "reference": "по Н.С. Валгиной (ключевые слова)"
       },
-      "tags": ["cohesion", "global", "keywords"]
+      "tags": ["cohesion", "global", "keywords", "coherence"]
     },
     {
       "id": "cohesion-abzaс-001",

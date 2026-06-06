@@ -67,7 +67,7 @@
         "book": "Мильчин А.Е. Методика редактирования текста",
         "reference": "пересказ идей Ломоносова"
       },
-      "tags": ["composition", "narration", "chronology"]
+      "tags": ["composition", "narration", "chronology", "storytelling", "narrative", "engagement"]
     },
     {
       "id": "composition-description-variants-001",
@@ -100,7 +100,7 @@
         "book": "Мильчин А.Е. Методика редактирования текста",
         "section": "Рассуждение"
       },
-      "tags": ["composition", "argumentation", "logic"]
+      "tags": ["composition", "argumentation", "logic", "coherence", "rhetoric"]
     },
     {
       "id": "composition-mixed-001",
@@ -111,7 +111,7 @@
         "book": "Мильчин А.Е. Методика редактирования текста",
         "chapter": "Гл. 9"
       },
-      "tags": ["composition", "mixed_types", "structure"]
+      "tags": ["composition", "mixed_types", "structure", "storytelling", "narrative"]
     },
     {
       "id": "composition-device-001",

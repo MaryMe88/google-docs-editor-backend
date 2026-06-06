@@ -109,7 +109,7 @@
     "rule": "Расщеплённое сказуемое заменяется одним глаголом",
     "category": "Канцелярит",
     "description": "Тяжеловесные обороты и расщеплённые сказуемые из официально-делового стиля",
-    "tags": ["style", "officialese", "register", "verb"]
+    "tags": ["style", "officialese", "register", "verb", "nonmarketing", "educational"]
   },
   {
     "wrong": "в целях осуществления",
@@ -117,7 +117,7 @@
     "rule": "Громоздкий оборот заменяется простым предлогом",
     "category": "Канцелярит",
     "description": "Тяжеловесные обороты и расщеплённые сказуемые из официально-делового стиля",
-    "tags": ["style", "officialese", "register"]
+    "tags": ["style", "officialese", "register", "nonmarketing", "educational"]
   },
   {
     "wrong": "на сегодняшний день",
@@ -125,7 +125,7 @@
     "rule": "Канцелярский временной оборот",
     "category": "Канцелярит",
     "description": "Тяжеловесные обороты и расщеплённые сказуемые из официально-делового стиля",
-    "tags": ["style", "officialese", "register", "filler"]
+    "tags": ["style", "officialese", "register", "filler", "nonmarketing", "educational"]
   },
   {
     "wrong": "в силу того что",
@@ -133,7 +133,7 @@
     "rule": "Замена книжного оборота более простым",
     "category": "Канцелярит",
     "description": "Тяжеловесные обороты и расщеплённые сказуемые из официально-делового стиля",
-    "tags": ["style", "officialese", "register"]
+    "tags": ["style", "officialese", "register", "nonmarketing", "educational"]
   },
   {
     "wrong": "принимать участие",
@@ -141,7 +141,7 @@
     "rule": "Расщеплённое сказуемое",
     "category": "Канцелярит",
     "description": "Тяжеловесные обороты и расщеплённые сказуемые из официально-делового стиля",
-    "tags": ["style", "officialese", "register"]
+    "tags": ["style", "officialese", "register", "nonmarketing", "educational"]
   },
   {
     "wrong": "вести борьбу",
@@ -149,7 +149,7 @@
     "rule": "Глагол вместо глагольно-именного сочетания",
     "category": "Канцелярит",
     "description": "Тяжеловесные обороты и расщеплённые сказуемые из официально-делового стиля",
-    "tags": ["style", "officialese", "register"]
+    "tags": ["style", "officialese", "register", "nonmarketing", "educational"]
   },
   {
     "wrong": "индивидуальный подход",
@@ -181,7 +181,7 @@
     "rule": "Штампованное выражение",
     "category": "Речевые штампы",
     "description": "Затёртые, ничего не значащие выражения без конкретики",
-    "tags": ["style", "cliche", "filler"]
+    "tags": ["style", "cliche", "filler", "nonmarketing", "educational"]
   },
   {
     "wrong": "в настоящее время",
@@ -189,7 +189,7 @@
     "rule": "Канцелярский штамп",
     "category": "Речевые штампы",
     "description": "Затёртые, ничего не значащие выражения без конкретики",
-    "tags": ["style", "cliche", "filler"]
+    "tags": ["style", "cliche", "filler", "nonmarketing", "educational"]
   },
   {
     "wrong": "как известно / следует отметить",
@@ -213,7 +213,7 @@
     "rule": "Канцелярский временной паразит",
     "category": "Слова-паразиты и паразиты времени",
     "description": "Вводные обороты и временны́е клише, не несущие смысловой нагрузки",
-    "tags": ["style", "filler", "officialese"]
+    "tags": ["style", "filler", "officialese", "nonmarketing", "educational"]
   },
   {
     "wrong": "заглавная роль в фильме «Война и мир»",
@@ -877,7 +877,7 @@
     "rule": "Повышай вариативность ритма (burstiness)",
     "category": "Анти-ИИ паттерны",
     "description": "Стилистические признаки, по которым текст выдает машинное происхождение: монотонный ритм, пассивный залог, номинализации, псевдо-обязательство и чрезмерный оптимизм",
-    "tags": ["style", "anti_ai", "rhythm", "burstiness", "composition"]
+    "tags": ["style", "anti_ai", "rhythm", "burstiness", "composition", "deai", "humanize", "natural", "authentic"]
   },
   {
     "wrong": "пассивный_залог",
@@ -885,7 +885,7 @@
     "rule": "Активный залог делает фразу живее",
     "category": "Анти-ИИ паттерны",
     "description": "Стилистические признаки, по которым текст выдает машинное происхождение: монотонный ритм, пассивный залог, номинализации, псевдо-обязательство и чрезмерный оптимизм",
-    "tags": ["style", "anti_ai", "passive_voice", "clarity"]
+    "tags": ["style", "anti_ai", "passive_voice", "clarity", "deai", "humanize", "natural", "authentic"]
   },
   {
     "wrong": "отглагольные_существительные",
@@ -893,7 +893,7 @@
     "rule": "Разворачивай номинализации в глаголы",
     "category": "Анти-ИИ паттерны",
     "description": "Стилистические признаки, по которым текст выдает машинное происхождение: монотонный ритм, пассивный залог, номинализации, псевдо-обязательство и чрезмерный оптимизм",
-    "tags": ["style", "anti_ai", "nominalization", "bureaucratic", "clarity"]
+    "tags": ["style", "anti_ai", "nominalization", "bureaucratic", "clarity", "deai", "humanize", "natural", "authentic"]
   },
   {
     "wrong": "псевдо_обязательство",
@@ -901,7 +901,7 @@
     "rule": "Избегай безоговорочных утверждений на сложные темы",
     "category": "Анти-ИИ паттерны",
     "description": "Стилистические признаки, по которым текст выдает машинное происхождение: монотонный ритм, пассивный залог, номинализации, псевдо-обязательство и чрезмерный оптимизм",
-    "tags": ["style", "anti_ai", "epistemics", "argumentation"]
+    "tags": ["style", "anti_ai", "epistemics", "argumentation", "deai", "humanize", "natural", "authentic"]
   },
   {
     "wrong": "избыточный_оптимизм",
@@ -909,7 +909,7 @@
     "rule": "Добавь правдоподобное трение",
     "category": "Анти-ИИ паттерны",
     "description": "Стилистические признаки, по которым текст выдает машинное происхождение: монотонный ритм, пассивный залог, номинализации, псевдо-обязательство и чрезмерный оптимизм",
-    "tags": ["style", "anti_ai", "tone", "credibility"]
+    "tags": ["style", "anti_ai", "tone", "credibility", "deai", "humanize", "natural", "authentic"]
   },
   {
     "wrong": "убедился о том, что рейс не отменяется",
@@ -1485,7 +1485,7 @@
     "rule": "Замени пассивный залог на активный.",
     "category": "Анти-ИИ паттерны",
     "description": "Примеры для тестирования retrieval",
-    "tags": ["style", "anti_ai", "passive_voice"]
+    "tags": ["style", "anti_ai", "passive_voice", "deai", "humanize", "natural", "authentic"]
   },
   {
     "wrong": "Осуществление оптимизации процесса требует реализации дополнительных мер.",
@@ -1493,7 +1493,7 @@
     "rule": "Разверни отглагольные существительные в глаголы.",
     "category": "Анти-ИИ паттерны",
     "description": "Примеры для тестирования retrieval",
-    "tags": ["style", "anti_ai", "nominalization"]
+    "tags": ["style", "anti_ai", "nominalization", "deai", "humanize", "natural", "authentic"]
   },
   {
     "wrong": "Эта книга нечитабельна.",

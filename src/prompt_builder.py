@@ -213,16 +213,24 @@ def _load_kb_list(file_name: str, base_path: Path, key: str = None) -> List[Dict
     """
     Загружает JSON-файл базы знаний, извлекает все записи (даже из вложенных структур),
     нормализует теги и возвращает список записей.
+
+    Поддерживает два формата JSON:
+      - Словарь с ключом: {"key": [...]}  — стандартный формат
+      - Плоский список:   [...]            — новый формат (key игнорируется)
     """
     file_path = base_path / file_name
     if not file_path.exists():
         logger.warning(f"KB file not found: {file_path}")
         return []
     data = _load_optional_json(file_path, {})
-    if key is not None:
+
+    # Поддержка обоих форматов: плоский список [...] и словарь {"key": [...]}
+    if isinstance(data, list):
+        items = data
+    elif key is not None:
         items = data.get(key, [])
     else:
-        items = data if isinstance(data, list) else []
+        items = []
 
     # Извлекаем записи рекурсивно
     records = _extract_records(items)
