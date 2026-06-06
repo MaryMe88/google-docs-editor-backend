@@ -28,16 +28,22 @@ KB_FILES = [
     "domain_glossary.json",
 ]
 
+# Файлы с корневым типом list (а не dict)
+_LIST_ROOT_FILES = {"stylistic_issues.json"}
+
 
 @pytest.mark.parametrize("filename", KB_FILES)
 def test_json_is_valid(filename: str) -> None:
-    """Каждый файл базы знаний — валидный JSON."""
+    """Каждый файл базы знаний — валидный JSON с ожидаемым корневым типом."""
     path = KB_PATH / filename
     if not path.exists():
         pytest.skip(f"{filename} не найден (опционален)")
     raw = path.read_text(encoding="utf-8")
     data = json.loads(raw)  # упадёт при невалидном JSON
-    assert isinstance(data, dict), f"{filename} должен быть JSON-объектом"
+    if filename in _LIST_ROOT_FILES:
+        assert isinstance(data, list), f"{filename} должен быть JSON-массивом"
+    else:
+        assert isinstance(data, dict), f"{filename} должен быть JSON-объектом"
 
 
 # ============================================================================
@@ -102,27 +108,19 @@ def test_grammar_errors_structure() -> None:
 
 
 def test_stylistic_issues_structure() -> None:
-    """stylistic_issues.json содержит stylistic_errors или common_issues с полями wrong/correct/rule."""
-    data = load_json(KB_PATH / "stylistic_issues.json")
-    common = data.get("common_issues", [])
-    stylistic = data.get("stylistic_errors", [])
-    assert common or stylistic, (
-        "stylistic_issues.json должен содержать common_issues или stylistic_errors"
-    )
+    """stylistic_issues.json — список записей с полями wrong/correct/rule."""
+    path = KB_PATH / "stylistic_issues.json"
+    if not path.exists():
+        pytest.skip("stylistic_issues.json не найден")
+    data = load_json(path)
+    assert isinstance(data, list), "stylistic_issues.json должен быть JSON-массивом"
+    assert len(data) > 0, "stylistic_issues.json не должен быть пустым"
 
-    def check_rule_entry(entry: dict, ctx: str) -> None:
-        assert isinstance(entry, dict), f"{ctx}: запись должна быть словарём"
-        assert "wrong" in entry, f"{ctx}: нет поля 'wrong'"
-        assert "correct" in entry, f"{ctx}: нет поля 'correct'"
-        assert "rule" in entry, f"{ctx}: нет поля 'rule'"
-
-    for issue in common:
-        check_rule_entry(issue, "common_issues")
-
-    for issue in stylistic:
-        if isinstance(issue, dict) and "wrong" in issue:
-            check_rule_entry(issue, "stylistic_errors")
-
+    for i, entry in enumerate(data):
+        assert isinstance(entry, dict), f"Элемент #{i} должен быть словарём"
+        assert "wrong" in entry, f"Элемент #{i}: нет поля 'wrong'"
+        assert "correct" in entry, f"Элемент #{i}: нет поля 'correct'"
+        assert "rule" in entry, f"Элемент #{i}: нет поля 'rule'"
 
 
 # ============================================================================
