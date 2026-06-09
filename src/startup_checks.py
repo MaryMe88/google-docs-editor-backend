@@ -145,8 +145,9 @@ def _collect_kb_tags(kb_path: Path) -> Set[str]:
         logger.warning("Knowledge base directory not found: %s", kb_path)
         return kb_tags
 
+    # ИЗМЕНЕНИЕ: рекурсивный обход всех подпапок (заменено *.json на **/*.json)
     kb_files = sorted(
-        p for p in kb_path.glob("*.json")
+        p for p in kb_path.glob("**/*.json")
         if p.name not in _KB_FILES_WITHOUT_TAGS
     )
 

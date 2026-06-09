@@ -209,20 +209,61 @@ def _extract_records(container: Any, inherited_tags: List[str] = None) -> List[D
     return records
 
 
+def _load_kb_from_dir(dirpath: Path) -> list[dict]:
+    """
+    Загружает все JSON-файлы из папки и объединяет их содержимое.
+    Поддерживает:
+      - объекты категорий с полем "techniques" (editorial_techniques)
+      - массивы записей (stylistic_issues)
+    """
+    records: list[dict] = []
+    for filepath in sorted(dirpath.glob("*.json")):
+        try:
+            with open(filepath, "r", encoding="utf-8") as f:
+                data = json.load(f)
+        except (json.JSONDecodeError, OSError) as e:
+            logger.error(f"Failed to load {filepath}: {e}")
+            continue
+        logger.debug(f"Loaded KB file: {filepath.name}")
+
+        if isinstance(data, dict):
+            # Формат: категория с техниками
+            if "techniques" in data:
+                records.append(data)
+            else:
+                # Может быть словарь с ключами-списками (например, старые форматы)
+                for value in data.values():
+                    if isinstance(value, list):
+                        records.extend(_extract_records(value))
+        elif isinstance(data, list):
+            # Формат: плоский список записей
+            records.extend(_extract_records(data))
+        else:
+            logger.warning(f"Unexpected format in {filepath}, skipping")
+    return records
+
+
 def _load_kb_list(file_name: str, base_path: Path, key: str = None) -> List[Dict[str, Any]]:
     """
-    Загружает JSON-файл базы знаний, извлекает все записи (даже из вложенных структур),
+    Загружает JSON-файл или папку базы знаний, извлекает все записи (даже из вложенных структур),
     нормализует теги и возвращает список записей.
 
     Поддерживает два формата JSON:
       - Словарь с ключом: {"key": [...]}  — стандартный формат
       - Плоский список:   [...]            — новый формат (key игнорируется)
+
+    Если file_name указывает на папку, загружает все JSON-файлы из неё.
     """
-    file_path = base_path / file_name
-    if not file_path.exists():
-        logger.warning(f"KB file not found: {file_path}")
+    path = base_path / file_name
+    # Если путь — папка, загружаем всё содержимое
+    if path.is_dir():
+        return _load_kb_from_dir(path)
+
+    if not path.exists():
+        logger.warning(f"KB file not found: {path}")
         return []
-    data = _load_optional_json(file_path, {})
+
+    data = _load_optional_json(path, {})
 
     # Поддержка обоих форматов: плоский список [...] и словарь {"key": [...]}
     if isinstance(data, list):
@@ -261,7 +302,7 @@ def load_knowledge_base(base_path: Path = Path("knowledge_base")) -> KnowledgeBa
 
     # Файлы с записями, используем универсальную функцию
     grammar_errors = _load_kb_list("grammar_errors.json", base_path, "common_mistakes")
-    stylistic_issues = _load_kb_list("stylistic_issues.json", base_path, "stylistic_errors")
+    stylistic_issues = _load_kb_list("stylistic_issues", base_path)   # папка, key не нужен
     logic_issues = _load_kb_list("logic_issues.json", base_path, "issues")
     storytelling_frameworks = _load_kb_list("storytelling_frameworks.json", base_path, "frameworks")
     marketing_templates = _load_kb_list("marketing_templates.json", base_path, "templates")
@@ -269,7 +310,17 @@ def load_knowledge_base(base_path: Path = Path("knowledge_base")) -> KnowledgeBa
     local_cohesion = _load_kb_list("local_cohesion.json", base_path, "local_cohesion")
     composition_errors = _load_kb_list("composition_errors.json", base_path, "composition_errors")
     rhetoric_frameworks = _load_kb_list("rhetoric_frameworks.json", base_path, "frameworks")
-    editorial_techniques = _load_kb_list("editorial_techniques.json", base_path, "editorial_techniques")
+    editorial_techniques = _load_kb_list("editorial_techniques", base_path)   # папка, key не нужен
+
+    # Счётчик записей
+    total_records = (
+        len(grammar_errors) + len(stylistic_issues) + len(logic_issues) +
+        len(storytelling_frameworks) + len(marketing_templates) +
+        len(composition_principles) + len(local_cohesion) +
+        len(composition_errors) + len(rhetoric_frameworks) +
+        len(editorial_techniques)
+    )
+    logger.info(f"Loaded {total_records} knowledge base records from multiple files")
 
     return KnowledgeBase(
         stop_words=stop_words,
