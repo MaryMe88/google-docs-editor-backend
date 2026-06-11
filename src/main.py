@@ -24,6 +24,7 @@ from src.shared_contracts import (
     ALLOWED_PROVIDERS,
 )
 from src.startup_checks import run_startup_checks
+from src.scoring_weights import load_scoring_weights  # <-- PR-3: предзагрузка весов
 
 logging.basicConfig(
     level=logging.INFO,
@@ -51,6 +52,8 @@ async def lifespan(app: FastAPI):
         Path("config"),
         Path("knowledge_base"),
     )
+    # PR-3: предварительно загружаем веса скоринга в кэш, чтобы первый запрос был быстрее
+    await asyncio.to_thread(load_scoring_weights)
 
     logger.info("PromptBuilder initialized successfully")
     app.state.prompt_builder = prompt_builder

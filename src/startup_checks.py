@@ -98,6 +98,45 @@ def _check_overlay_files(
         )
 
 
+def _check_scoring_weights_file(config_path: Path) -> None:
+    """
+    Проверяет наличие и корректность файла config/scoring_weights.json.
+    Если файл отсутствует — только предупреждение (будут использованы значения по умолчанию).
+    Если файл присутствует, но повреждён или имеет неверную структуру — ошибка.
+    """
+    weights_file = config_path / "scoring_weights.json"
+    if not weights_file.is_file():
+        logger.warning("scoring_weights.json not found, will use default weights.")
+        return
+
+    try:
+        with open(weights_file, encoding="utf-8") as f:
+            data = json.load(f)
+
+        required_keys = {
+            "wrong_exact_match",
+            "name_exact_match",
+            "partial_text_match",
+            "tag_primary",
+            "tag_primary_bonus",
+            "tag_expanded",
+        }
+        missing = required_keys - data.keys()
+        if missing:
+            raise RuntimeError(f"Missing keys in scoring_weights.json: {missing}")
+
+        for k in required_keys:
+            if not isinstance(data[k], int):
+                raise RuntimeError(
+                    f"Key '{k}' in scoring_weights.json must be an integer, got {type(data[k]).__name__}"
+                )
+        # Дополнительные ключи разрешены, но не используются
+    except json.JSONDecodeError as e:
+        raise RuntimeError(f"Invalid JSON in scoring_weights.json: {e}") from e
+    except Exception as e:
+        raise RuntimeError(f"Failed to validate scoring_weights.json: {e}") from e
+
+
 def _flatten_records(item: Any) -> List[Dict[str, Any]]:
     """Рекурсивно извлекает все записи с полем 'tags' из item."""
     records: List[Dict[str, Any]] = []
@@ -286,11 +325,13 @@ def run_startup_checks(
     - домены, интенты, оверлеи → файлы существуют и корректны
     - теги из CANONICAL_TAGS присутствуют в базе знаний
     - wanted_tags из конфигов присутствуют в базе знаний
+    - проверка файла весов скоринга (PR-3)
     """
-    logger.info("Running startup checks (SYNC-1)...")
+    logger.info("Running startup checks (SYNC-1 + PR-3)...")
     _check_domain_files(config_path, allowed_domains)
     _check_intent_files(config_path, allowed_intents)
     _check_overlay_files(config_path, allowed_overlays)
     _check_tags_vs_kb(kb_path)
     check_config_tags_vs_kb(config_path, kb_path)
+    _check_scoring_weights_file(config_path)   # PR-3
     logger.info("Startup checks passed successfully.")

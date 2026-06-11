@@ -11,21 +11,12 @@ import logging
 import re
 from dataclasses import dataclass
 from enum import Enum
-from typing import Any, Dict, Final, Iterable, List, Optional, Set, Tuple, Union, overload
+from typing import Any, Dict, Iterable, List, Optional, Set, Tuple, Union, overload
 
 from src.tag_registry import normalize_tag
+from src.scoring_weights import get_scoring_weight
 
 logger = logging.getLogger(__name__)
-
-
-SCORE_WEIGHTS: Final[Dict[str, int]] = {
-    "wrong_exact_match": 1000,
-    "name_exact_match": 500,
-    "partial_text_match": 200,
-    "tag_primary": 10,
-    "tag_primary_bonus": 1,
-    "tag_expanded": 2,
-}
 
 
 class FallbackStage(str, Enum):
@@ -180,7 +171,7 @@ def score_rule_entry(
     if isinstance(wrong_val, str):
         wrong_stripped = wrong_val.strip()
         if wrong_stripped and _contains_pattern(normalized_text, wrong_stripped):
-            score += SCORE_WEIGHTS["wrong_exact_match"]
+            score += get_scoring_weight("wrong_exact_match")
 
     if score == 0:
         for field in ("name", "rule", "description"):
@@ -190,7 +181,7 @@ def score_rule_entry(
 
             stripped = value.strip()
             if stripped and _contains_pattern(normalized_text, stripped):
-                score += SCORE_WEIGHTS["partial_text_match"]
+                score += get_scoring_weight("partial_text_match")
                 break
 
     entry_tags = entry.get("tags", [])
@@ -199,13 +190,13 @@ def score_rule_entry(
 
     tag_set = {normalize_tag(tag) for tag in entry_tags if isinstance(tag, str)}
     overlap = len(tag_set & wanted_tags)
-    score += overlap * SCORE_WEIGHTS["tag_primary"]
+    score += overlap * get_scoring_weight("tag_primary")
 
     if overlap > 0:
-        score += SCORE_WEIGHTS["tag_primary_bonus"]
+        score += get_scoring_weight("tag_primary_bonus")
 
     if expanded_tags:
-        score += len(tag_set & expanded_tags) * SCORE_WEIGHTS["tag_expanded"]
+        score += len(tag_set & expanded_tags) * get_scoring_weight("tag_expanded")
 
     return score, -idx
 
@@ -272,9 +263,9 @@ def score_structural_entry(
             continue
 
         if name_stripped and pattern == name_stripped:
-            score += SCORE_WEIGHTS["name_exact_match"]
+            score += get_scoring_weight("name_exact_match")
         else:
-            score += SCORE_WEIGHTS["partial_text_match"]
+            score += get_scoring_weight("partial_text_match")
         break
 
     entry_tags = entry.get("tags", [])
@@ -283,13 +274,13 @@ def score_structural_entry(
 
     tag_set = {normalize_tag(tag) for tag in entry_tags if isinstance(tag, str)}
     overlap = len(tag_set & wanted_tags)
-    score += overlap * SCORE_WEIGHTS["tag_primary"]
+    score += overlap * get_scoring_weight("tag_primary")
 
     if overlap > 0:
-        score += SCORE_WEIGHTS["tag_primary_bonus"]
+        score += get_scoring_weight("tag_primary_bonus")
 
     if expanded_tags:
-        score += len(tag_set & expanded_tags) * SCORE_WEIGHTS["tag_expanded"]
+        score += len(tag_set & expanded_tags) * get_scoring_weight("tag_expanded")
 
     return score, -idx
 
@@ -330,11 +321,11 @@ def _get_text_match_strength(entry: Dict[str, Any], normalized_text: str) -> int
 
     first = patterns[0]
     if _contains_pattern(normalized_text, first):
-        return SCORE_WEIGHTS["wrong_exact_match"]
+        return get_scoring_weight("wrong_exact_match")
 
     for pattern in patterns[1:]:
         if _contains_pattern(normalized_text, pattern):
-            return SCORE_WEIGHTS["partial_text_match"]
+            return get_scoring_weight("partial_text_match")
 
     return 0
 
