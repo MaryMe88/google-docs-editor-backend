@@ -154,3 +154,59 @@ def test_supported_domain_intent_combinations(
 
     assert isinstance(result, str)
     assert "Домен:" in result
+
+
+# ---------------------------------------------------------------------------
+# Few-shot тесты (PR‑2)
+# ---------------------------------------------------------------------------
+
+def test_include_few_shot_false_omits_examples(builder: PromptBuilder) -> None:
+    """
+    При include_few_shot=False в промпте не должно быть заголовка 'Примеры редактирования'.
+    """
+    # Используем текст, который может триггерить примеры из KB (грамматическая ошибка)
+    # Если в KB нет записей с парами, тест всё равно проходит (просто нет заголовка)
+    result = builder.build(
+        text="Он согласился согласно приказа начальника.",
+        domain="blog",
+        include_knowledge=True,
+        include_few_shot=False,
+    )
+    assert "Примеры редактирования" not in result
+
+
+def test_include_few_shot_true_does_not_crash(builder: PromptBuilder) -> None:
+    """
+    При include_few_shot=True вызов не должен падать, даже если в KB нет подходящих пар.
+    """
+    result = builder.build(
+        text="Он согласился согласно приказа начальника.",
+        domain="blog",
+        include_knowledge=True,
+        include_few_shot=True,
+    )
+    assert isinstance(result, str)
+    # Заголовок может присутствовать или отсутствовать — не проверяем
+    assert "Исходный текст:" in result
+
+
+def test_include_few_shot_without_knowledge_does_nothing(builder: PromptBuilder) -> None:
+    """
+    Если include_knowledge=False, параметр include_few_shot игнорируется.
+    """
+    result = builder.build(
+        text="Текст без знаний.",
+        domain="blog",
+        include_knowledge=False,
+        include_few_shot=True,
+    )
+    assert "База знаний:" not in result
+    assert "Примеры редактирования" not in result
+
+    result2 = builder.build(
+        text="Текст без знаний.",
+        domain="blog",
+        include_knowledge=False,
+        include_few_shot=False,
+    )
+    assert result == result2  # одинаковый промпт

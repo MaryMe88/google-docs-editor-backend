@@ -24,8 +24,8 @@ class TestPromptBuilderContract:
     """
     Публичный интерфейс, который использует main.py:
     - PromptBuilder() — инициализация без аргументов
-    - .build(text, domain, intent, audience,  — сборка промпта
-              overlays, outputmode, includeknowledge)
+    - .build(text, domain, intent, audience,
+              overlays, outputmode, includeknowledge, include_few_shot) — сборка промпта
     - .get_available_intents() -> Set[str]    — множество строк
     - .get_available_overlays() -> Set[str]   — множество строк
     - .reload_configs() -> None               — сброс кэша
@@ -70,6 +70,25 @@ class TestPromptBuilderContract:
             includeknowledge=False,
         )
         assert marker in result
+
+    def test_build_accepts_include_few_shot(self, pb):
+        """Проверка, что метод build принимает параметр include_few_shot (PR‑2)."""
+        # Вызов с include_few_shot=True
+        result_true = pb.build(
+            text="Текст с few-shot.",
+            domain="blog",
+            include_few_shot=True,
+            includeknowledge=False,
+        )
+        assert isinstance(result_true, str)
+        # Вызов с include_few_shot=False
+        result_false = pb.build(
+            text="Текст без few-shot.",
+            domain="blog",
+            include_few_shot=False,
+            includeknowledge=False,
+        )
+        assert isinstance(result_false, str)
 
     def test_get_available_intents_returns_set_of_str(self, pb):
         intents = pb.get_available_intents()
@@ -369,3 +388,22 @@ class TestFastAPIContractEdit:
         assert r.status_code == 200
         data = r.json()
         assert "edited_text" in data
+
+    def test_edit_request_has_include_few_shot_field(self, api_client):
+        """
+        Проверка контракта: в EditRequest есть поле include_few_shot со значением по умолчанию.
+        (PR‑2)
+        """
+        # Отправляем запрос без явного указания поля — не должно быть ошибки
+        r = api_client.post("/api/edit", json=self.BASE_PAYLOAD)
+        assert r.status_code == 200
+
+        # Явно выключаем few‑shot
+        payload_false = {**self.BASE_PAYLOAD, "include_few_shot": False}
+        r2 = api_client.post("/api/edit", json=payload_false)
+        assert r2.status_code == 200
+
+        # Явно включаем few‑shot
+        payload_true = {**self.BASE_PAYLOAD, "include_few_shot": True}
+        r3 = api_client.post("/api/edit", json=payload_true)
+        assert r3.status_code == 200
