@@ -13,6 +13,10 @@ from src.shared_contracts import (
 )
 from src.tag_registry import normalize_tag
 
+# Версия контракта между бекендом и клиентом (Google Apps Script)
+# При несовместимых изменениях увеличивать мажорную версию.
+CONTRACT_VERSION: str = "1.0.0"
+
 
 class AudienceRequest(BaseModel):
     kind: str = Field(default="b2b")
@@ -133,3 +137,4 @@ class HealthResponse(BaseModel):
     available_intents: List[str]
     available_overlays: List[str]
     available_providers: List[str]
+    contract_version: str = CONTRACT_VERSION

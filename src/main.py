@@ -14,7 +14,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import ValidationError
 
 from src.config_types import AudienceProfile
-from src.contracts import EditRequest
+from src.contracts import EditRequest, CONTRACT_VERSION
 from src.llm_client import LLMError, LLMProvider, LLMResponse, create_llm_client, call_with_fallback
 from src.prompt_builder import PromptBuilder
 from src.shared_contracts import (
@@ -173,6 +173,7 @@ async def health_check(deep: bool = False) -> Response:
         "available_intents": list(builder.get_available_intents()),
         "available_overlays": list(builder.get_available_overlays()),
         "deep_check": deep,
+        "contract_version": CONTRACT_VERSION,
     }
 
     status_code = status.HTTP_200_OK if any_available else status.HTTP_503_SERVICE_UNAVAILABLE
