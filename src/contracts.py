@@ -60,7 +60,8 @@ class EditRequest(BaseModel):
     model: Optional[str] = Field(default=None)
     temperature: float = Field(default=0.3, ge=0.0, le=2.0)
     include_knowledge: bool = Field(default=True)
-    include_retrieval_meta: bool = Field(default=False)   # <-- НОВОЕ ПОЛЕ
+    include_retrieval_meta: bool = Field(default=False)
+    include_few_shot: bool = Field(default=True)   # <-- НОВОЕ ПОЛЕ (PR‑2)
     dry_run: bool = Field(default=False)
 
     @field_validator("domain")

@@ -209,6 +209,7 @@ def _log_edit_request_meta(request: EditRequest, retrieval_meta: Optional[Dict] 
         "dry_run": request.dry_run,
         "text_length": len(request.text),
         "include_knowledge": request.include_knowledge,
+        "include_few_shot": request.include_few_shot,
     }
     if retrieval_meta:
         log_data["retrieval_meta"] = retrieval_meta
@@ -256,6 +257,7 @@ async def edit_text(request: EditRequest) -> dict:
                 overlays=request.overlays,
                 output_mode=request.output_mode,
                 include_knowledge=request.include_knowledge,
+                include_few_shot=request.include_few_shot,
                 include_retrieval_meta=True,   # всегда True для dry_run
             )
             response_data = {
@@ -279,6 +281,7 @@ async def edit_text(request: EditRequest) -> dict:
                 overlays=request.overlays,
                 output_mode=request.output_mode,
                 include_knowledge=request.include_knowledge,
+                include_few_shot=request.include_few_shot,
                 include_retrieval_meta=True,   # всегда True, чтобы получить кортеж
             )
             providers_to_try = [request.provider] + [

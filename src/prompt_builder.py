@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import json
 import logging
+import random
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence, Set, Tuple, Union
 
@@ -51,6 +52,15 @@ _KNOWLEDGE_DEPENDENT_INTENTS: frozenset = frozenset({
     "analytical", "storytelling", "engagement", "marketingpush",
 })
 
+# ---------------------------------------------------------------------------
+# Few-shot safety limits (PR‑2)
+# ---------------------------------------------------------------------------
+FEW_SHOT_MAX_EXAMPLES_PER_BLOCK = 3   # максимум примеров из одного блока
+FEW_SHOT_MAX_TOTAL_EXAMPLES = 5       # всего примеров во всём промпте
+FEW_SHOT_POOL_SIZE = 10               # из скольких топ-записей выбирать случайно
+FEW_SHOT_USE_EXPANDED_TAGS = False    # для примеров используем только primary_tags
+FEW_SHOT_RULES_FIRST = True           # True = правила перед примерами (recency bias)
+
 
 # ---------------------------------------------------------------------------
 # JSON-загрузчики
@@ -67,6 +77,51 @@ def _load_optional_json(path: Path, default: Any) -> Any:
     if path.exists():
         return load_json_file(path)
     return default
+
+
+# ---------------------------------------------------------------------------
+# Few-shot helper functions (PR‑2)
+# ---------------------------------------------------------------------------
+
+def _has_few_shot_pair(entry: Dict[str, Any]) -> bool:
+    """Возвращает True, если запись содержит пару 'было → стало'."""
+    wrong = entry.get("wrong") or entry.get("example_wrong")
+    correct = entry.get("correct") or entry.get("example_correct")
+    return bool(wrong and correct)
+
+
+def _format_few_shot_example(entry: Dict[str, Any]) -> str:
+    """Форматирует одну пару 'Было: ...\nСтало: ...'."""
+    wrong = entry.get("wrong") or entry.get("example_wrong")
+    correct = entry.get("correct") or entry.get("example_correct")
+    return f"Было: {wrong}\nСтало: {correct}"
+
+
+def _select_few_shot_examples(
+    entries_with_pairs: List[Dict[str, Any]],
+    max_examples: int,
+    pool_size: int = FEW_SHOT_POOL_SIZE,
+    seed: Optional[int] = None,
+) -> List[Dict[str, Any]]:
+    """
+    Возвращает случайные max_examples записей из первых pool_size (по скору).
+
+    Args:
+        entries_with_pairs: Записи с полями wrong/correct, отсортированные по скору.
+        max_examples: Максимальное число примеров на выходе.
+        pool_size: Размер пула для случайной выборки.
+        seed: Если задан, фиксирует генератор случайных чисел (только для тестов).
+
+    Returns:
+        Список выбранных записей (длина ≤ max_examples).
+    """
+    if not entries_with_pairs or max_examples <= 0:
+        return []
+    pool = entries_with_pairs[:pool_size]
+    if len(pool) <= max_examples:
+        return pool
+    rng = random.Random(seed)
+    return rng.sample(pool, max_examples)
 
 
 # ---------------------------------------------------------------------------
@@ -656,17 +711,20 @@ class PromptBuilder:
         domain: str,
         intent: Optional[str],
         overlays: List[str],
-    ) -> Tuple[str, Dict[str, Any]]:
+        include_few_shot: bool,
+        total_few_shot_used: int,
+    ) -> Tuple[str, Dict[str, Any], int]:
         """
-        Возвращает (текст блока знаний, метаданные по блокам).
-        Метаданные: dict {block_name: {stage, entries_count, entry_ids, entry_names, truncated_count}}
+        Возвращает (текст блока знаний, метаданные по блокам, общее количество использованных few-shot примеров).
+        Метаданные: dict {block_name: {stage, entries_count, rules_count, few_shot_count, few_shot_ids, ...}}
         """
         kb = self._ensure_knowledge_base()
         if kb is None:
-            return "", {}
+            return "", {}, total_few_shot_used
 
         lines: List[str] = []
         meta: Dict[str, Any] = {}
+        current_total = total_few_shot_used
 
         # Стоп-слова (не собираем метаданные)
         stop_words_budget = budget.get("stop_words")
@@ -682,7 +740,9 @@ class PromptBuilder:
                     )
                     lines.append(f"- {category}: {joined_words}")
 
+        # ------------------------------------------------------------------
         # Грамматика
+        # ------------------------------------------------------------------
         grammar_budget = budget.get("grammar")
         if grammar_budget and grammar_budget.enabled:
             grammar_result = select_grammar_rules(
@@ -694,7 +754,6 @@ class PromptBuilder:
                 char_budget=grammar_budget.char_budget,
                 return_meta=True,
             )
-            # Распаковка: теперь (entries, stage, dropped)
             if isinstance(grammar_result, tuple) and len(grammar_result) == 3:
                 grammar_entries, stage, dropped = grammar_result
             elif isinstance(grammar_result, tuple) and len(grammar_result) == 2:
@@ -704,11 +763,46 @@ class PromptBuilder:
                 grammar_entries, stage = grammar_result, FallbackStage.STRONG
                 dropped = 0
 
-            _append_rule_entries(lines, "Грамматические ориентиры:", grammar_entries)
+            # Разделяем на пары и правила
+            pair_entries = [e for e in grammar_entries if _has_few_shot_pair(e)]
+            rule_entries = [e for e in grammar_entries if not _has_few_shot_pair(e)]
+
+            allowed_for_block = 0
+            few_shot_examples = []
+            if include_few_shot:
+                allowed_for_block = min(
+                    FEW_SHOT_MAX_EXAMPLES_PER_BLOCK,
+                    FEW_SHOT_MAX_TOTAL_EXAMPLES - current_total
+                )
+                if allowed_for_block > 0:
+                    few_shot_examples = _select_few_shot_examples(pair_entries, allowed_for_block)
+
+            # Добавляем в lines в зависимости от порядка
+            if FEW_SHOT_RULES_FIRST:
+                if rule_entries:
+                    _append_rule_entries(lines, "Грамматические ориентиры:", rule_entries)
+                if few_shot_examples:
+                    lines.append("Примеры редактирования:")
+                    for ex in few_shot_examples:
+                        lines.append(_format_few_shot_example(ex))
+                    lines.append("")
+            else:
+                if few_shot_examples:
+                    lines.append("Примеры редактирования:")
+                    for ex in few_shot_examples:
+                        lines.append(_format_few_shot_example(ex))
+                    lines.append("")
+                if rule_entries:
+                    _append_rule_entries(lines, "Грамматические ориентиры:", rule_entries)
+
+            current_total += len(few_shot_examples)
 
             meta["grammar"] = {
                 "stage": stage.value,
                 "entries_count": len(grammar_entries),
+                "rules_count": len(rule_entries),
+                "few_shot_count": len(few_shot_examples),
+                "few_shot_ids": [e.get("id") for e in few_shot_examples if e.get("id")],
                 "entry_ids": [e.get("id") for e in grammar_entries[:5] if e.get("id")],
                 "entry_names": [e.get("name") for e in grammar_entries[:5] if e.get("name")],
                 "truncated_count": dropped,
@@ -729,7 +823,9 @@ class PromptBuilder:
                     primary_tags=primary_tags,
                 )
 
+        # ------------------------------------------------------------------
         # Стиль
+        # ------------------------------------------------------------------
         style_budget = budget.get("style")
         if style_budget and style_budget.enabled:
             style_result = select_style_issues(
@@ -750,11 +846,44 @@ class PromptBuilder:
                 style_entries, stage = style_result, FallbackStage.STRONG
                 dropped = 0
 
-            _append_rule_entries(lines, "Стилистические ориентиры:", style_entries)
+            pair_entries = [e for e in style_entries if _has_few_shot_pair(e)]
+            rule_entries = [e for e in style_entries if not _has_few_shot_pair(e)]
+
+            allowed_for_block = 0
+            few_shot_examples = []
+            if include_few_shot:
+                allowed_for_block = min(
+                    FEW_SHOT_MAX_EXAMPLES_PER_BLOCK,
+                    FEW_SHOT_MAX_TOTAL_EXAMPLES - current_total
+                )
+                if allowed_for_block > 0:
+                    few_shot_examples = _select_few_shot_examples(pair_entries, allowed_for_block)
+
+            if FEW_SHOT_RULES_FIRST:
+                if rule_entries:
+                    _append_rule_entries(lines, "Стилистические ориентиры:", rule_entries)
+                if few_shot_examples:
+                    lines.append("Примеры редактирования:")
+                    for ex in few_shot_examples:
+                        lines.append(_format_few_shot_example(ex))
+                    lines.append("")
+            else:
+                if few_shot_examples:
+                    lines.append("Примеры редактирования:")
+                    for ex in few_shot_examples:
+                        lines.append(_format_few_shot_example(ex))
+                    lines.append("")
+                if rule_entries:
+                    _append_rule_entries(lines, "Стилистические ориентиры:", rule_entries)
+
+            current_total += len(few_shot_examples)
 
             meta["style"] = {
                 "stage": stage.value,
                 "entries_count": len(style_entries),
+                "rules_count": len(rule_entries),
+                "few_shot_count": len(few_shot_examples),
+                "few_shot_ids": [e.get("id") for e in few_shot_examples if e.get("id")],
                 "entry_ids": [e.get("id") for e in style_entries[:5] if e.get("id")],
                 "entry_names": [e.get("name") for e in style_entries[:5] if e.get("name")],
                 "truncated_count": dropped,
@@ -775,7 +904,9 @@ class PromptBuilder:
                     primary_tags=primary_tags,
                 )
 
+        # ------------------------------------------------------------------
         # Логика
+        # ------------------------------------------------------------------
         logic_budget = budget.get("logic")
         if logic_budget and logic_budget.enabled:
             logic_result = select_logic_issues(
@@ -796,11 +927,44 @@ class PromptBuilder:
                 logic_entries, stage = logic_result, FallbackStage.STRONG
                 dropped = 0
 
-            _append_rule_entries(lines, "Логические ориентиры:", logic_entries)
+            pair_entries = [e for e in logic_entries if _has_few_shot_pair(e)]
+            rule_entries = [e for e in logic_entries if not _has_few_shot_pair(e)]
+
+            allowed_for_block = 0
+            few_shot_examples = []
+            if include_few_shot:
+                allowed_for_block = min(
+                    FEW_SHOT_MAX_EXAMPLES_PER_BLOCK,
+                    FEW_SHOT_MAX_TOTAL_EXAMPLES - current_total
+                )
+                if allowed_for_block > 0:
+                    few_shot_examples = _select_few_shot_examples(pair_entries, allowed_for_block)
+
+            if FEW_SHOT_RULES_FIRST:
+                if rule_entries:
+                    _append_rule_entries(lines, "Логические ориентиры:", rule_entries)
+                if few_shot_examples:
+                    lines.append("Примеры редактирования:")
+                    for ex in few_shot_examples:
+                        lines.append(_format_few_shot_example(ex))
+                    lines.append("")
+            else:
+                if few_shot_examples:
+                    lines.append("Примеры редактирования:")
+                    for ex in few_shot_examples:
+                        lines.append(_format_few_shot_example(ex))
+                    lines.append("")
+                if rule_entries:
+                    _append_rule_entries(lines, "Логические ориентиры:", rule_entries)
+
+            current_total += len(few_shot_examples)
 
             meta["logic"] = {
                 "stage": stage.value,
                 "entries_count": len(logic_entries),
+                "rules_count": len(rule_entries),
+                "few_shot_count": len(few_shot_examples),
+                "few_shot_ids": [e.get("id") for e in few_shot_examples if e.get("id")],
                 "entry_ids": [e.get("id") for e in logic_entries[:5] if e.get("id")],
                 "entry_names": [e.get("name") for e in logic_entries[:5] if e.get("name")],
                 "truncated_count": dropped,
@@ -821,7 +985,9 @@ class PromptBuilder:
                     primary_tags=primary_tags,
                 )
 
-        # Композиция
+        # ------------------------------------------------------------------
+        # Композиция (структурные записи могут тоже содержать wrong/correct)
+        # ------------------------------------------------------------------
         composition_budget = budget.get("composition")
         if composition_budget and composition_budget.enabled and kb.composition_principles:
             composition_result = select_structural_by_tags_or_all(
@@ -841,13 +1007,46 @@ class PromptBuilder:
                 composition_entries, stage = composition_result, FallbackStage.STRONG
                 dropped = 0
 
-            _append_structural_entries(
-                lines, "Принципы композиции:", composition_entries
-            )
+            pair_entries = [e for e in composition_entries if _has_few_shot_pair(e)]
+            rule_entries = [e for e in composition_entries if not _has_few_shot_pair(e)]
+
+            allowed_for_block = 0
+            few_shot_examples = []
+            if include_few_shot:
+                allowed_for_block = min(
+                    FEW_SHOT_MAX_EXAMPLES_PER_BLOCK,
+                    FEW_SHOT_MAX_TOTAL_EXAMPLES - current_total
+                )
+                if allowed_for_block > 0:
+                    few_shot_examples = _select_few_shot_examples(pair_entries, allowed_for_block)
+
+            # Для структурных записей используем _append_structural_entries для правил,
+            # а для примеров — тот же _format_few_shot_example
+            if FEW_SHOT_RULES_FIRST:
+                if rule_entries:
+                    _append_structural_entries(lines, "Принципы композиции:", rule_entries)
+                if few_shot_examples:
+                    lines.append("Примеры редактирования:")
+                    for ex in few_shot_examples:
+                        lines.append(_format_few_shot_example(ex))
+                    lines.append("")
+            else:
+                if few_shot_examples:
+                    lines.append("Примеры редактирования:")
+                    for ex in few_shot_examples:
+                        lines.append(_format_few_shot_example(ex))
+                    lines.append("")
+                if rule_entries:
+                    _append_structural_entries(lines, "Принципы композиции:", rule_entries)
+
+            current_total += len(few_shot_examples)
 
             meta["composition"] = {
                 "stage": stage.value,
                 "entries_count": len(composition_entries),
+                "rules_count": len(rule_entries),
+                "few_shot_count": len(few_shot_examples),
+                "few_shot_ids": [e.get("id") for e in few_shot_examples if e.get("id")],
                 "entry_ids": [e.get("id") for e in composition_entries[:5] if e.get("id")],
                 "entry_names": [e.get("name") for e in composition_entries[:5] if e.get("name")],
                 "truncated_count": dropped,
@@ -868,7 +1067,9 @@ class PromptBuilder:
                     primary_tags=primary_tags,
                 )
 
+        # ------------------------------------------------------------------
         # Ошибки композиции
+        # ------------------------------------------------------------------
         composition_errors_budget = budget.get("composition_errors")
         if (
             composition_errors_budget
@@ -892,13 +1093,44 @@ class PromptBuilder:
                 comp_err_entries, stage = comp_err_result, FallbackStage.STRONG
                 dropped = 0
 
-            _append_structural_entries(
-                lines, "Ошибки композиции:", comp_err_entries
-            )
+            pair_entries = [e for e in comp_err_entries if _has_few_shot_pair(e)]
+            rule_entries = [e for e in comp_err_entries if not _has_few_shot_pair(e)]
+
+            allowed_for_block = 0
+            few_shot_examples = []
+            if include_few_shot:
+                allowed_for_block = min(
+                    FEW_SHOT_MAX_EXAMPLES_PER_BLOCK,
+                    FEW_SHOT_MAX_TOTAL_EXAMPLES - current_total
+                )
+                if allowed_for_block > 0:
+                    few_shot_examples = _select_few_shot_examples(pair_entries, allowed_for_block)
+
+            if FEW_SHOT_RULES_FIRST:
+                if rule_entries:
+                    _append_structural_entries(lines, "Ошибки композиции:", rule_entries)
+                if few_shot_examples:
+                    lines.append("Примеры редактирования:")
+                    for ex in few_shot_examples:
+                        lines.append(_format_few_shot_example(ex))
+                    lines.append("")
+            else:
+                if few_shot_examples:
+                    lines.append("Примеры редактирования:")
+                    for ex in few_shot_examples:
+                        lines.append(_format_few_shot_example(ex))
+                    lines.append("")
+                if rule_entries:
+                    _append_structural_entries(lines, "Ошибки композиции:", rule_entries)
+
+            current_total += len(few_shot_examples)
 
             meta["composition_errors"] = {
                 "stage": stage.value,
                 "entries_count": len(comp_err_entries),
+                "rules_count": len(rule_entries),
+                "few_shot_count": len(few_shot_examples),
+                "few_shot_ids": [e.get("id") for e in few_shot_examples if e.get("id")],
                 "entry_ids": [e.get("id") for e in comp_err_entries[:5] if e.get("id")],
                 "entry_names": [e.get("name") for e in comp_err_entries[:5] if e.get("name")],
                 "truncated_count": dropped,
@@ -919,7 +1151,9 @@ class PromptBuilder:
                     primary_tags=primary_tags,
                 )
 
+        # ------------------------------------------------------------------
         # Локальная связность
+        # ------------------------------------------------------------------
         cohesion_budget = budget.get("cohesion")
         if cohesion_budget and cohesion_budget.enabled and kb.local_cohesion:
             cohesion_result = select_structural_by_tags_or_all(
@@ -939,11 +1173,44 @@ class PromptBuilder:
                 cohesion_entries, stage = cohesion_result, FallbackStage.STRONG
                 dropped = 0
 
-            _append_structural_entries(lines, "Локальная связность:", cohesion_entries)
+            pair_entries = [e for e in cohesion_entries if _has_few_shot_pair(e)]
+            rule_entries = [e for e in cohesion_entries if not _has_few_shot_pair(e)]
+
+            allowed_for_block = 0
+            few_shot_examples = []
+            if include_few_shot:
+                allowed_for_block = min(
+                    FEW_SHOT_MAX_EXAMPLES_PER_BLOCK,
+                    FEW_SHOT_MAX_TOTAL_EXAMPLES - current_total
+                )
+                if allowed_for_block > 0:
+                    few_shot_examples = _select_few_shot_examples(pair_entries, allowed_for_block)
+
+            if FEW_SHOT_RULES_FIRST:
+                if rule_entries:
+                    _append_structural_entries(lines, "Локальная связность:", rule_entries)
+                if few_shot_examples:
+                    lines.append("Примеры редактирования:")
+                    for ex in few_shot_examples:
+                        lines.append(_format_few_shot_example(ex))
+                    lines.append("")
+            else:
+                if few_shot_examples:
+                    lines.append("Примеры редактирования:")
+                    for ex in few_shot_examples:
+                        lines.append(_format_few_shot_example(ex))
+                    lines.append("")
+                if rule_entries:
+                    _append_structural_entries(lines, "Локальная связность:", rule_entries)
+
+            current_total += len(few_shot_examples)
 
             meta["cohesion"] = {
                 "stage": stage.value,
                 "entries_count": len(cohesion_entries),
+                "rules_count": len(rule_entries),
+                "few_shot_count": len(few_shot_examples),
+                "few_shot_ids": [e.get("id") for e in few_shot_examples if e.get("id")],
                 "entry_ids": [e.get("id") for e in cohesion_entries[:5] if e.get("id")],
                 "entry_names": [e.get("name") for e in cohesion_entries[:5] if e.get("name")],
                 "truncated_count": dropped,
@@ -964,7 +1231,9 @@ class PromptBuilder:
                     primary_tags=primary_tags,
                 )
 
+        # ------------------------------------------------------------------
         # Сторителлинг
+        # ------------------------------------------------------------------
         storytelling_budget = budget.get("storytelling")
         if (
             storytelling_budget
@@ -988,13 +1257,44 @@ class PromptBuilder:
                 story_entries, stage = story_result, FallbackStage.STRONG
                 dropped = 0
 
-            _append_structural_entries(
-                lines, "Сторителлинг-фреймворки:", story_entries
-            )
+            pair_entries = [e for e in story_entries if _has_few_shot_pair(e)]
+            rule_entries = [e for e in story_entries if not _has_few_shot_pair(e)]
+
+            allowed_for_block = 0
+            few_shot_examples = []
+            if include_few_shot:
+                allowed_for_block = min(
+                    FEW_SHOT_MAX_EXAMPLES_PER_BLOCK,
+                    FEW_SHOT_MAX_TOTAL_EXAMPLES - current_total
+                )
+                if allowed_for_block > 0:
+                    few_shot_examples = _select_few_shot_examples(pair_entries, allowed_for_block)
+
+            if FEW_SHOT_RULES_FIRST:
+                if rule_entries:
+                    _append_structural_entries(lines, "Сторителлинг-фреймворки:", rule_entries)
+                if few_shot_examples:
+                    lines.append("Примеры редактирования:")
+                    for ex in few_shot_examples:
+                        lines.append(_format_few_shot_example(ex))
+                    lines.append("")
+            else:
+                if few_shot_examples:
+                    lines.append("Примеры редактирования:")
+                    for ex in few_shot_examples:
+                        lines.append(_format_few_shot_example(ex))
+                    lines.append("")
+                if rule_entries:
+                    _append_structural_entries(lines, "Сторителлинг-фреймворки:", rule_entries)
+
+            current_total += len(few_shot_examples)
 
             meta["storytelling"] = {
                 "stage": stage.value,
                 "entries_count": len(story_entries),
+                "rules_count": len(rule_entries),
+                "few_shot_count": len(few_shot_examples),
+                "few_shot_ids": [e.get("id") for e in few_shot_examples if e.get("id")],
                 "entry_ids": [e.get("id") for e in story_entries[:5] if e.get("id")],
                 "entry_names": [e.get("name") for e in story_entries[:5] if e.get("name")],
                 "truncated_count": dropped,
@@ -1015,7 +1315,9 @@ class PromptBuilder:
                     primary_tags=primary_tags,
                 )
 
+        # ------------------------------------------------------------------
         # Маркетинговые шаблоны
+        # ------------------------------------------------------------------
         marketing_budget = budget.get("marketing")
         if marketing_budget and marketing_budget.enabled and kb.marketing_templates:
             marketing_result = select_structural_by_tags_or_all(
@@ -1035,13 +1337,44 @@ class PromptBuilder:
                 marketing_entries, stage = marketing_result, FallbackStage.STRONG
                 dropped = 0
 
-            _append_structural_entries(
-                lines, "Маркетинговые шаблоны:", marketing_entries
-            )
+            pair_entries = [e for e in marketing_entries if _has_few_shot_pair(e)]
+            rule_entries = [e for e in marketing_entries if not _has_few_shot_pair(e)]
+
+            allowed_for_block = 0
+            few_shot_examples = []
+            if include_few_shot:
+                allowed_for_block = min(
+                    FEW_SHOT_MAX_EXAMPLES_PER_BLOCK,
+                    FEW_SHOT_MAX_TOTAL_EXAMPLES - current_total
+                )
+                if allowed_for_block > 0:
+                    few_shot_examples = _select_few_shot_examples(pair_entries, allowed_for_block)
+
+            if FEW_SHOT_RULES_FIRST:
+                if rule_entries:
+                    _append_structural_entries(lines, "Маркетинговые шаблоны:", rule_entries)
+                if few_shot_examples:
+                    lines.append("Примеры редактирования:")
+                    for ex in few_shot_examples:
+                        lines.append(_format_few_shot_example(ex))
+                    lines.append("")
+            else:
+                if few_shot_examples:
+                    lines.append("Примеры редактирования:")
+                    for ex in few_shot_examples:
+                        lines.append(_format_few_shot_example(ex))
+                    lines.append("")
+                if rule_entries:
+                    _append_structural_entries(lines, "Маркетинговые шаблоны:", rule_entries)
+
+            current_total += len(few_shot_examples)
 
             meta["marketing"] = {
                 "stage": stage.value,
                 "entries_count": len(marketing_entries),
+                "rules_count": len(rule_entries),
+                "few_shot_count": len(few_shot_examples),
+                "few_shot_ids": [e.get("id") for e in few_shot_examples if e.get("id")],
                 "entry_ids": [e.get("id") for e in marketing_entries[:5] if e.get("id")],
                 "entry_names": [e.get("name") for e in marketing_entries[:5] if e.get("name")],
                 "truncated_count": dropped,
@@ -1062,7 +1395,9 @@ class PromptBuilder:
                     primary_tags=primary_tags,
                 )
 
+        # ------------------------------------------------------------------
         # Риторические приёмы
+        # ------------------------------------------------------------------
         rhetoric_budget = budget.get("rhetoric")
         if rhetoric_budget and rhetoric_budget.enabled and kb.rhetoric_frameworks:
             rhetoric_result = select_structural_by_tags_or_all(
@@ -1082,11 +1417,44 @@ class PromptBuilder:
                 rhetoric_entries, stage = rhetoric_result, FallbackStage.STRONG
                 dropped = 0
 
-            _append_structural_entries(lines, "Риторические приёмы:", rhetoric_entries)
+            pair_entries = [e for e in rhetoric_entries if _has_few_shot_pair(e)]
+            rule_entries = [e for e in rhetoric_entries if not _has_few_shot_pair(e)]
+
+            allowed_for_block = 0
+            few_shot_examples = []
+            if include_few_shot:
+                allowed_for_block = min(
+                    FEW_SHOT_MAX_EXAMPLES_PER_BLOCK,
+                    FEW_SHOT_MAX_TOTAL_EXAMPLES - current_total
+                )
+                if allowed_for_block > 0:
+                    few_shot_examples = _select_few_shot_examples(pair_entries, allowed_for_block)
+
+            if FEW_SHOT_RULES_FIRST:
+                if rule_entries:
+                    _append_structural_entries(lines, "Риторические приёмы:", rule_entries)
+                if few_shot_examples:
+                    lines.append("Примеры редактирования:")
+                    for ex in few_shot_examples:
+                        lines.append(_format_few_shot_example(ex))
+                    lines.append("")
+            else:
+                if few_shot_examples:
+                    lines.append("Примеры редактирования:")
+                    for ex in few_shot_examples:
+                        lines.append(_format_few_shot_example(ex))
+                    lines.append("")
+                if rule_entries:
+                    _append_structural_entries(lines, "Риторические приёмы:", rule_entries)
+
+            current_total += len(few_shot_examples)
 
             meta["rhetoric"] = {
                 "stage": stage.value,
                 "entries_count": len(rhetoric_entries),
+                "rules_count": len(rule_entries),
+                "few_shot_count": len(few_shot_examples),
+                "few_shot_ids": [e.get("id") for e in few_shot_examples if e.get("id")],
                 "entry_ids": [e.get("id") for e in rhetoric_entries[:5] if e.get("id")],
                 "entry_names": [e.get("name") for e in rhetoric_entries[:5] if e.get("name")],
                 "truncated_count": dropped,
@@ -1107,7 +1475,9 @@ class PromptBuilder:
                     primary_tags=primary_tags,
                 )
 
+        # ------------------------------------------------------------------
         # Редакторские приёмы
+        # ------------------------------------------------------------------
         editorial_budget = budget.get("editorial")
         if editorial_budget and editorial_budget.enabled and kb.editorial_techniques:
             editorial_result = select_structural_by_tags_or_all(
@@ -1127,11 +1497,44 @@ class PromptBuilder:
                 editorial_entries, stage = editorial_result, FallbackStage.STRONG
                 dropped = 0
 
-            _append_editorial_entries(lines, "Редакторские приёмы:", editorial_entries)
+            pair_entries = [e for e in editorial_entries if _has_few_shot_pair(e)]
+            rule_entries = [e for e in editorial_entries if not _has_few_shot_pair(e)]
+
+            allowed_for_block = 0
+            few_shot_examples = []
+            if include_few_shot:
+                allowed_for_block = min(
+                    FEW_SHOT_MAX_EXAMPLES_PER_BLOCK,
+                    FEW_SHOT_MAX_TOTAL_EXAMPLES - current_total
+                )
+                if allowed_for_block > 0:
+                    few_shot_examples = _select_few_shot_examples(pair_entries, allowed_for_block)
+
+            if FEW_SHOT_RULES_FIRST:
+                if rule_entries:
+                    _append_editorial_entries(lines, "Редакторские приёмы:", rule_entries)
+                if few_shot_examples:
+                    lines.append("Примеры редактирования:")
+                    for ex in few_shot_examples:
+                        lines.append(_format_few_shot_example(ex))
+                    lines.append("")
+            else:
+                if few_shot_examples:
+                    lines.append("Примеры редактирования:")
+                    for ex in few_shot_examples:
+                        lines.append(_format_few_shot_example(ex))
+                    lines.append("")
+                if rule_entries:
+                    _append_editorial_entries(lines, "Редакторские приёмы:", rule_entries)
+
+            current_total += len(few_shot_examples)
 
             meta["editorial"] = {
                 "stage": stage.value,
                 "entries_count": len(editorial_entries),
+                "rules_count": len(rule_entries),
+                "few_shot_count": len(few_shot_examples),
+                "few_shot_ids": [e.get("id") for e in few_shot_examples if e.get("id")],
                 "entry_ids": [e.get("id") for e in editorial_entries[:5] if e.get("id")],
                 "entry_names": [e.get("name") for e in editorial_entries[:5] if e.get("name")],
                 "truncated_count": dropped,
@@ -1162,7 +1565,7 @@ class PromptBuilder:
         if nkrj_budget and nkrj_budget.enabled and kb.nkrj_structure_patterns:
             _append_nkrj(lines, kb.nkrj_structure_patterns)
 
-        return "\n".join(lines), meta
+        return "\n".join(lines), meta, current_total
 
     # ------------------------------------------------------------------
     # Главный метод — build()
@@ -1177,6 +1580,7 @@ class PromptBuilder:
         overlays: Optional[Sequence[str]] = None,
         output_mode: str = "text_only",
         include_knowledge: bool = True,
+        include_few_shot: bool = True,
         knowledge_level: KnowledgeLevel = KnowledgeLevel.STANDARD,
         token_budget: Optional[int] = None,
         include_retrieval_meta: bool = False,
@@ -1193,6 +1597,7 @@ class PromptBuilder:
             overlays         — список оверлеев
             output_mode      — формат ответа ('text_only' | 'text_and_report')
             include_knowledge — включать ли блок базы знаний
+            include_few_shot  — включать ли few-shot примеры из базы знаний (PR‑2)
             knowledge_level  — уровень детализации знаний (KnowledgeLevel)
             token_budget     — лимит токенов для knowledge-блока (None = без лимита)
             include_retrieval_meta — если True, возвращает (prompt, retrieval_meta)
@@ -1282,7 +1687,7 @@ class PromptBuilder:
                 limits=self._limits,
                 level=knowledge_level,
             )
-            knowledge_block, block_meta = self._build_knowledge_block(
+            knowledge_block, block_meta, _ = self._build_knowledge_block(
                 text=text,
                 primary_tags=tag_sets["primary"],
                 expanded_tags=tag_sets["expanded"],
@@ -1290,6 +1695,8 @@ class PromptBuilder:
                 domain=validated_domain,
                 intent=validated_intent,
                 overlays=validated_overlays,
+                include_few_shot=include_few_shot,
+                total_few_shot_used=0,
             )
             retrieval_meta_total = block_meta
             if knowledge_block:
