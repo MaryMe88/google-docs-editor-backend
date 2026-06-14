@@ -1,7 +1,7 @@
 """
 tests/integration/test_few_shot_quality.py
 
-Интеграционные тесты для few‑shot (запуск вручную, не в CI).
+Интеграционные тесты для few-shot (запуск вручную, не в CI).
 Проверяют, что модель не копирует примеры дословно и не применяет ложные правки.
 Требуют реального API-ключа и запущенного сервера (или использования TestClient с реальным LLM).
 
@@ -58,10 +58,8 @@ def has_grammar_error_after_soglasno(text: str) -> bool:
     """
     matches = re.findall(r'согласно\s+(\S+)', text.lower())
     for m in matches:
-        # Если слово заканчивается на -а или -я (родительный падеж), считаем ошибкой
         if m.endswith('а') or m.endswith('я'):
-            # Исключаем слова, которые в дательном тоже так заканчиваются? Упростим.
-            if m not in ('времени', 'имени'):  # исключения
+            if m not in ('времени', 'имени'):
                 return True
     return False
 
@@ -83,12 +81,9 @@ def test_no_verbatim_copy_from_few_shot(client: TestClient) -> None:
     """
     text = "Он согласился согласно приказа начальника отдела."
     result = call_editor(client, text)
-    
-    # Проверяем, что ошибка исправлена (родительный падеж 'приказа' заменён)
+
     assert "приказа" not in result.lower(), f"Ошибка 'приказа' осталась: {result}"
-    # Проверяем, что модель не вырезала всю фразу целиком
     assert len(result) > 20, f"Ответ слишком короткий: {result}"
-    # Проверяем, что ответ осмысленный (содержит 'начальника')
     assert "начальника" in result, f"Потерян контекст: {result}"
 
 
@@ -101,10 +96,7 @@ def test_no_false_positive_from_few_shot(client: TestClient) -> None:
     """
     text = "Он сделал всё согласно приказу."
     result = call_editor(client, text)
-    
-    # Проверяем, что после 'согласно' нет родительного падежа (это и есть единственная
-    # проверяемая ошибка). Слово 'приказа' может встречаться в других контекстах
-    # (например, "буква приказа") — это не ошибка.
+
     assert not has_grammar_error_after_soglasno(result), \
         f"Грамматическая ошибка после 'согласно' в ответе: {result}"
 
@@ -120,12 +112,10 @@ def test_few_shot_disabled_does_not_add_examples(client: TestClient) -> None:
     result_with_fs = call_editor(client, text, include_few_shot=True)
     result_without_fs = call_editor(client, text, include_few_shot=False)
 
-    # Проверяем, что в обоих случаях ошибка исправлена (нет 'приказа')
     assert "приказа" not in result_with_fs.lower(), \
         f"С few-shot не исправлено: {result_with_fs}"
     assert "приказа" not in result_without_fs.lower(), \
         f"Без few-shot не исправлено: {result_without_fs}"
-    
-    # Проверяем, что ответы не пустые и достаточно длинные
+
     assert len(result_with_fs) > 10
     assert len(result_without_fs) > 10
