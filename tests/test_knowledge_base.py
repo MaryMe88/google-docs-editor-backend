@@ -23,8 +23,14 @@ KB_FILES = [
     "stop_words.json",
     "grammar_errors.json",
     "stylistic_issues.json",
-    "storytelling_frameworks.json",
-    "marketing_templates.json",
+    # storytelling — разбит на два файла
+    "storytelling_macrostructures.json",
+    "storytelling_microtechniques.json",
+    # marketing — разбит на четыре файла
+    "marketing_web.json",
+    "marketing_email.json",
+    "marketing_social.json",
+    "marketing_other.json",
     "domain_glossary.json",
 ]
 
@@ -124,45 +130,62 @@ def test_stylistic_issues_structure() -> None:
 
 
 # ============================================================================
-# storytelling_frameworks.json
+# storytelling_macrostructures.json  +  storytelling_microtechniques.json
+# (бывший storytelling_frameworks.json, разбит на два файла)
 # ============================================================================
 
+_STORYTELLING_FILES = (
+    "storytelling_macrostructures.json",
+    "storytelling_microtechniques.json",
+)
 
-def test_storytelling_frameworks_structure() -> None:
-    """storytelling_frameworks.json — массив фреймворков со steps."""
-    data = load_json(KB_PATH / "storytelling_frameworks.json")
+
+@pytest.mark.parametrize("filename", _STORYTELLING_FILES)
+def test_storytelling_frameworks_structure(filename: str) -> None:
+    """Каждый файл сторителлинга содержит массив frameworks с полями id/name/steps."""
+    data = load_json(KB_PATH / filename)
     frameworks = data.get("frameworks", [])
-    assert len(frameworks) > 0, "frameworks не должен быть пустым"
+    assert len(frameworks) > 0, f"frameworks в {filename} не должен быть пустым"
 
     for fw in frameworks:
-        assert "id" in fw, f"Фреймворк без id: {fw.get('name', '???')}"
-        assert "name" in fw, "Фреймворк без name"
+        assert "id" in fw, f"[{filename}] Фреймворк без id: {fw.get('name', '???')}"
+        assert "name" in fw, f"[{filename}] Фреймворк без name"
         steps = fw.get("steps", [])
-        assert len(steps) > 0, f"Фреймворк '{fw['name']}' без шагов"
+        assert len(steps) > 0, f"[{filename}] Фреймворк '{fw['name']}' без шагов"
         for step in steps:
-            assert "name" in step, f"Шаг без name в '{fw['name']}'"
-            assert "goal" in step, f"Шаг без goal в '{fw['name']}'"
+            assert "name" in step, f"[{filename}] Шаг без name в '{fw['name']}'"
+            assert "goal" in step, f"[{filename}] Шаг без goal в '{fw['name']}'"
 
 
 # ============================================================================
-# marketing_templates.json
+# marketing_web.json  /  marketing_email.json  /
+# marketing_social.json  /  marketing_other.json
+# (бывший marketing_templates.json, разбит на четыре файла)
 # ============================================================================
 
+_MARKETING_FILES = (
+    "marketing_web.json",
+    "marketing_email.json",
+    "marketing_social.json",
+    "marketing_other.json",
+)
 
-def test_marketing_templates_structure() -> None:
-    """marketing_templates.json — массив шаблонов с sections."""
-    data = load_json(KB_PATH / "marketing_templates.json")
+
+@pytest.mark.parametrize("filename", _MARKETING_FILES)
+def test_marketing_templates_structure(filename: str) -> None:
+    """Каждый файл маркетинга содержит массив templates с полями id/name/sections."""
+    data = load_json(KB_PATH / filename)
     templates = data.get("templates", [])
-    assert len(templates) > 0, "templates не должен быть пустым"
+    assert len(templates) > 0, f"templates в {filename} не должен быть пустым"
 
     for tpl in templates:
-        assert "id" in tpl, f"Шаблон без id: {tpl.get('name', '???')}"
-        assert "name" in tpl, "Шаблон без name"
+        assert "id" in tpl, f"[{filename}] Шаблон без id: {tpl.get('name', '???')}"
+        assert "name" in tpl, f"[{filename}] Шаблон без name"
         sections = tpl.get("sections", [])
-        assert len(sections) > 0, f"Шаблон '{tpl['name']}' без секций"
+        assert len(sections) > 0, f"[{filename}] Шаблон '{tpl['name']}' без секций"
         for sec in sections:
-            assert "name" in sec, f"Секция без name в '{tpl['name']}'"
-            assert "goal" in sec, f"Секция без goal в '{tpl['name']}'"
+            assert "name" in sec, f"[{filename}] Секция без name в '{tpl['name']}'"
+            assert "goal" in sec, f"[{filename}] Секция без goal в '{tpl['name']}'"
 
 
 # ============================================================================
