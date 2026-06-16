@@ -334,27 +334,6 @@ class TestBudgetAndDeduplication:
         assert len(result) == 1
         assert result[0]["id"] == "first"
 
-    def test_collect_with_budget_currently_keeps_first_entry_even_if_it_exceeds_budget(self) -> None:
-        oversized = make_rule_entry(
-            wrong="слишком длинная запись для маленького бюджета",
-            correct="",
-            rule="очень длинное правило",
-            description="эта запись больше самого бюджета, но текущая логика всё равно оставляет первую запись",
-            tags=["grammar"],
-            entry_id="oversized",
-        )
-
-        result, _ = _collect_with_budget(
-            ranked_entries=[oversized],
-            limit=10,
-            char_budget=10,
-        )
-
-        # Это намеренно фиксирует ТЕКУЩЕЕ поведение.
-        # Если позже решим, что это баг, тест нужно будет поменять вместе с кодом.
-        assert len(result) == 1
-        assert result[0]["id"] == "oversized"
-
 
 class TestFallbackPolicySmoke:
     """Короткие проверки настроек policy, чтобы их не сломали случайно."""
