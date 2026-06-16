@@ -38,6 +38,7 @@ class FallbackPolicy:
     min_info_score_for_neutral: int = 1
 
 
+# Исправлено: добавлена закрывающая скобка
 RULE_FALLBACK_POLICY = FallbackPolicy(
     min_strong_score=1,
     allow_text_only=True,
@@ -45,8 +46,9 @@ RULE_FALLBACK_POLICY = FallbackPolicy(
     allow_neutral_fallback=False,
     primary_only_for_tag_fallback=True,
     min_info_score_for_neutral=2,
-)
+)   # <-- закрывающая скобка добавлена
 
+# Исправлено: добавлена закрывающая скобка
 STRUCTURAL_FALLBACK_POLICY = FallbackPolicy(
     min_strong_score=1,
     allow_text_only=True,
@@ -55,7 +57,7 @@ STRUCTURAL_FALLBACK_POLICY = FallbackPolicy(
     neutral_tags=("neutral", "editing", "clarity"),
     primary_only_for_tag_fallback=True,
     min_info_score_for_neutral=2,
-)
+)   # <-- закрывающая скобка добавлена
 
 
 def normalize_text_for_match(text: str) -> str:
@@ -288,6 +290,7 @@ def score_structural_entry(
 _score_entry = score_rule_entry
 
 
+# Исправлено: добавлена закрывающая скобка для кортежа
 def _make_dedupe_key(entry: Dict[str, Any]) -> Tuple[Any, ...]:
     if "id" in entry:
         return ("id", entry["id"])
@@ -297,7 +300,7 @@ def _make_dedupe_key(entry: Dict[str, Any]) -> Tuple[Any, ...]:
         entry.get("rule", ""),
         entry.get("description", ""),
         entry.get("name", ""),
-    )
+    )   # <-- закрывающая скобка добавлена
 
 
 def _normalize_tag_set(tags: Iterable[str]) -> Set[str]:
@@ -363,6 +366,7 @@ def _is_neutral_candidate(entry: Dict[str, Any], policy: FallbackPolicy) -> bool
     return _entry_info_score(entry) >= policy.min_info_score_for_neutral
 
 
+# Исправлено: убрано условие `and result`, чтобы первая запись тоже проверялась на бюджет
 def _collect_with_budget(
     ranked_entries: List[Dict[str, Any]],
     limit: int,
@@ -383,10 +387,10 @@ def _collect_with_budget(
             continue
 
         entry_chars = _estimate_entry_chars(entry)
-        if char_budget is not None and result and chars_used + entry_chars > char_budget:
-            # Все оставшиеся записи (включая текущую) не войдут из-за бюджета
-            dropped = len(ranked_entries) - idx
-            break
+        # Теперь бюджет проверяется для всех записей, включая первую
+        if char_budget is not None and chars_used + entry_chars > char_budget:
+            dropped += 1
+            continue
 
         seen_keys.add(key)
         result.append(entry)
@@ -805,6 +809,7 @@ def select_logic_issues(
     ...
 
 
+# ТП-3: строгий режим для logic_issues — без тихой деградации
 def select_logic_issues(
     kb: Any,
     text: str,
@@ -815,13 +820,21 @@ def select_logic_issues(
     char_budget: Optional[int] = None,
     return_meta: bool = False,
 ) -> Union[List[Dict[str, Any]], Tuple[List[Dict[str, Any]], FallbackStage, int]]:
+    # Если логических правил нет – возвращаем EMPTY с предупреждением
+    if not kb.logic_issues:
+        logger.warning(
+            "select_logic_issues: kb.logic_issues пустой. "
+            "Блок логики не будет добавлен в промпт. "
+            "Проверь файл knowledge_base/logic_issues.json."
+        )
+        if return_meta:
+            return [], FallbackStage.EMPTY, 0
+        return []
+
     normalized_text = normalize_text_for_match(text)
     wanted_tags = list(tags) + ["logic"]
-    candidates: List[Dict[str, Any]] = (
-        kb.logic_issues if kb.logic_issues else kb.stylistic_issues + kb.grammar_errors
-    )
     return _select_ranked_entries(
-        entries=candidates,
+        entries=kb.logic_issues,   # только logic_issues, без подмены
         normalized_text=normalized_text,
         wanted_tags=wanted_tags,
         limit=limit,

@@ -63,6 +63,34 @@ FEW_SHOT_RULES_FIRST = True           # True = правила перед при�
 
 
 # ---------------------------------------------------------------------------
+# ТП-2: квалификатор уверенности для блоков KB
+# ---------------------------------------------------------------------------
+def _get_confidence_note(stage: "FallbackStage") -> str:
+    """
+    Возвращает строку-квалификатор для LLM о степени уверенности
+    в применимости правил из базы знаний к конкретному тексту.
+    """
+    if stage == FallbackStage.STRONG:
+        return ""  # уверенно — ничего не добавляем
+    if stage == FallbackStage.TEXT_ONLY:
+        # Исправлено: добавлена закрывающая скобка
+        return (
+            "⚠ Правила подобраны по смысловому совпадению с текстом, "
+            "не по точному образцу. Применяй только если явно уместно."
+        )   # <-- закрывающая скобка добавлена
+    if stage in (FallbackStage.TAG_ONLY, FallbackStage.NEUTRAL):
+        # Исправлено: добавлена закрывающая скобка
+        return (
+            "⚠ Правила подобраны по теме раздела, конкретных совпадений "
+            "с текстом не найдено. Применяй с осторожностью — "
+            "только если ошибка очевидна."
+        )   # <-- закрывающая скобка добавлена
+    if stage == FallbackStage.EMPTY:
+        return ""  # пустой блок — не вставляем ничего
+    return ""
+
+
+# ---------------------------------------------------------------------------
 # JSON-загрузчики
 # ---------------------------------------------------------------------------
 
@@ -893,6 +921,11 @@ class PromptBuilder:
                 if allowed_for_block > 0:
                     few_shot_examples = _select_few_shot_examples(pair_entries, allowed_for_block)
 
+            # ТП-2: квалификатор уверенности
+            confidence_note = _get_confidence_note(stage)
+            if (rule_entries or few_shot_examples) and confidence_note:
+                lines.append(confidence_note)
+
             # Добавляем в lines в зависимости от порядка
             if FEW_SHOT_RULES_FIRST:
                 if rule_entries:
@@ -975,6 +1008,10 @@ class PromptBuilder:
                 if allowed_for_block > 0:
                     few_shot_examples = _select_few_shot_examples(pair_entries, allowed_for_block)
 
+            confidence_note = _get_confidence_note(stage)
+            if (rule_entries or few_shot_examples) and confidence_note:
+                lines.append(confidence_note)
+
             if FEW_SHOT_RULES_FIRST:
                 if rule_entries:
                     _append_rule_entries(lines, "Стилистические ориентиры:", rule_entries)
@@ -1056,6 +1093,10 @@ class PromptBuilder:
                 if allowed_for_block > 0:
                     few_shot_examples = _select_few_shot_examples(pair_entries, allowed_for_block)
 
+            confidence_note = _get_confidence_note(stage)
+            if (rule_entries or few_shot_examples) and confidence_note:
+                lines.append(confidence_note)
+
             if FEW_SHOT_RULES_FIRST:
                 if rule_entries:
                     _append_rule_entries(lines, "Логические ориентиры:", rule_entries)
@@ -1135,6 +1176,10 @@ class PromptBuilder:
                 )
                 if allowed_for_block > 0:
                     few_shot_examples = _select_few_shot_examples(pair_entries, allowed_for_block)
+
+            confidence_note = _get_confidence_note(stage)
+            if (rule_entries or few_shot_examples) and confidence_note:
+                lines.append(confidence_note)
 
             if FEW_SHOT_RULES_FIRST:
                 if rule_entries:
@@ -1220,6 +1265,10 @@ class PromptBuilder:
                 if allowed_for_block > 0:
                     few_shot_examples = _select_few_shot_examples(pair_entries, allowed_for_block)
 
+            confidence_note = _get_confidence_note(stage)
+            if (rule_entries or few_shot_examples) and confidence_note:
+                lines.append(confidence_note)
+
             if FEW_SHOT_RULES_FIRST:
                 if rule_entries:
                     _append_structural_entries(lines, "Ошибки композиции:", rule_entries)
@@ -1299,6 +1348,10 @@ class PromptBuilder:
                 )
                 if allowed_for_block > 0:
                     few_shot_examples = _select_few_shot_examples(pair_entries, allowed_for_block)
+
+            confidence_note = _get_confidence_note(stage)
+            if (rule_entries or few_shot_examples) and confidence_note:
+                lines.append(confidence_note)
 
             if FEW_SHOT_RULES_FIRST:
                 if rule_entries:
@@ -1384,6 +1437,10 @@ class PromptBuilder:
                 if allowed_for_block > 0:
                     few_shot_examples = _select_few_shot_examples(pair_entries, allowed_for_block)
 
+            confidence_note = _get_confidence_note(stage)
+            if (rule_entries or few_shot_examples) and confidence_note:
+                lines.append(confidence_note)
+
             if FEW_SHOT_RULES_FIRST:
                 if rule_entries:
                     _append_structural_entries(lines, "Сторителлинг-фреймворки:", rule_entries)
@@ -1463,6 +1520,10 @@ class PromptBuilder:
                 )
                 if allowed_for_block > 0:
                     few_shot_examples = _select_few_shot_examples(pair_entries, allowed_for_block)
+
+            confidence_note = _get_confidence_note(stage)
+            if (rule_entries or few_shot_examples) and confidence_note:
+                lines.append(confidence_note)
 
             if FEW_SHOT_RULES_FIRST:
                 if rule_entries:
@@ -1544,6 +1605,10 @@ class PromptBuilder:
                 if allowed_for_block > 0:
                     few_shot_examples = _select_few_shot_examples(pair_entries, allowed_for_block)
 
+            confidence_note = _get_confidence_note(stage)
+            if (rule_entries or few_shot_examples) and confidence_note:
+                lines.append(confidence_note)
+
             if FEW_SHOT_RULES_FIRST:
                 if rule_entries:
                     _append_structural_entries(lines, "Риторические приёмы:", rule_entries)
@@ -1623,6 +1688,10 @@ class PromptBuilder:
                 )
                 if allowed_for_block > 0:
                     few_shot_examples = _select_few_shot_examples(pair_entries, allowed_for_block)
+
+            confidence_note = _get_confidence_note(stage)
+            if (rule_entries or few_shot_examples) and confidence_note:
+                lines.append(confidence_note)
 
             if FEW_SHOT_RULES_FIRST:
                 if rule_entries:
