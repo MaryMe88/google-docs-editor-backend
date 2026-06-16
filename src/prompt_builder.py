@@ -382,6 +382,62 @@ def _load_kb_file_or_dir(name: str, base_path: Path, key: str = None) -> List[Di
     return []
 
 
+def _load_kb_multi(
+    prefixes: List[str],
+    base_path: Path,
+    key: str,
+    fallback_name: Optional[str] = None,
+) -> List[Dict[str, Any]]:
+    """
+    Загружает записи из набора файлов с заданными именами (без расширения).
+
+    Приоритет поиска:
+      1. Плоские файлы <prefix>.json в base_path (актуальная структура после разбивки).
+      2. Подпапка base_path/<group>/ где group = первая часть prefixes[0] до '_'
+         (на случай будущего переезда в подпапки).
+      3. Монолитный файл fallback_name (обратная совместимость).
+
+    Args:
+        prefixes:      Список имён файлов без расширения, например
+                       ["rhetoric_figures", "rhetoric_topoi", "rhetoric_tropes_and_strategies"].
+        base_path:     Корневая папка knowledge_base.
+        key:           Ключ для извлечения из словаря (передаётся в _load_kb_list).
+        fallback_name: Имя старого монолитного файла (с расширением), например
+                       "rhetoric_frameworks.json".
+    """
+    records: List[Dict[str, Any]] = []
+
+    # 1. Плоские файлы с заданными именами
+    for prefix in prefixes:
+        file_path = base_path / f"{prefix}.json"
+        if file_path.exists():
+            records.extend(_load_kb_list(f"{prefix}.json", base_path, key))
+
+    if records:
+        return records
+
+    # 2. Подпапка — group = часть до первого '_' в первом префиксе
+    group = prefixes[0].split("_")[0]
+    dir_path = base_path / group
+    if dir_path.is_dir():
+        logger.debug(f"Loading KB from directory: {dir_path}")
+        return _load_kb_from_dir(dir_path)
+
+    # 3. Старый монолитный файл
+    if fallback_name:
+        fallback_path = base_path / fallback_name
+        if fallback_path.exists():
+            logger.debug(f"Loading KB from legacy file: {fallback_path}")
+            return _load_kb_list(fallback_name, base_path, key)
+
+    logger.warning(
+        "KB source not found for prefixes=%s, fallback=%s",
+        prefixes,
+        fallback_name,
+    )
+    return []
+
+
 def load_knowledge_base(base_path: Path = Path("knowledge_base")) -> KnowledgeBase:
     # Файлы, которые являются словарями, а не списками (загружаем как есть)
 
@@ -403,23 +459,29 @@ def load_knowledge_base(base_path: Path = Path("knowledge_base")) -> KnowledgeBa
     composition_errors = _load_kb_list("composition_errors.json", base_path, "composition_errors")
     editorial_techniques = _load_kb_list("editorial_techniques", base_path)   # папка
 
-    # Три источника, которые могут быть либо монолитным файлом, либо папкой —
-    # _load_kb_file_or_dir пробует оба варианта автоматически.
-    # rhetoric: rhetoric_frameworks.json → папка rhetoric/ (после разбивки)
-    rhetoric_frameworks = _load_kb_file_or_dir("rhetoric", base_path, "frameworks")
-    if not rhetoric_frameworks:
-        # Совместимость: старое имя файла до переименования
-        rhetoric_frameworks = _load_kb_list("rhetoric_frameworks.json", base_path, "frameworks")
+    # Три группы файлов, разбитых из монолитных источников.
+    # _load_kb_multi ищет плоские файлы по префиксам, затем подпапку, затем legacy-файл.
 
-    # storytelling: storytelling_frameworks.json → папка storytelling/ (после разбивки)
-    storytelling_frameworks = _load_kb_file_or_dir("storytelling", base_path, "frameworks")
-    if not storytelling_frameworks:
-        storytelling_frameworks = _load_kb_list("storytelling_frameworks.json", base_path, "frameworks")
+    rhetoric_frameworks = _load_kb_multi(
+        prefixes=["rhetoric_figures", "rhetoric_topoi", "rhetoric_tropes_and_strategies"],
+        base_path=base_path,
+        key="frameworks",
+        fallback_name="rhetoric_frameworks.json",
+    )
 
-    # marketing: marketing_templates.json → папка marketing/ (после разбивки)
-    marketing_templates = _load_kb_file_or_dir("marketing", base_path, "templates")
-    if not marketing_templates:
-        marketing_templates = _load_kb_list("marketing_templates.json", base_path, "templates")
+    storytelling_frameworks = _load_kb_multi(
+        prefixes=["storytelling_macrostructures", "storytelling_microtechniques"],
+        base_path=base_path,
+        key="frameworks",
+        fallback_name="storytelling_frameworks.json",
+    )
+
+    marketing_templates = _load_kb_multi(
+        prefixes=["marketing_email", "marketing_social", "marketing_web", "marketing_other"],
+        base_path=base_path,
+        key="templates",
+        fallback_name="marketing_templates.json",
+    )
 
     # Счётчик записей
     total_records = (
