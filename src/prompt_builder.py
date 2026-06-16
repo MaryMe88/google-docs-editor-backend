@@ -349,23 +349,77 @@ def _load_kb_list(file_name: str, base_path: Path, key: str = None) -> List[Dict
     return normalized
 
 
+def _load_kb_file_or_dir(name: str, base_path: Path, key: str = None) -> List[Dict[str, Any]]:
+    """
+    Умный загрузчик: сначала пробует папку с именем `name`,
+    затем файл `name.json`, затем файл `name` как есть.
+    Позволяет безболезненно переходить от монолитного файла к папке.
+
+    Например, для rhetoric:
+      - Если есть папка knowledge_base/rhetoric/ — грузит все файлы из неё.
+      - Если есть файл knowledge_base/rhetoric_frameworks.json — грузит его.
+      - Иначе логирует warning и возвращает [].
+    """
+    # 1. Проверяем папку с именем name
+    dir_path = base_path / name
+    if dir_path.is_dir():
+        logger.debug(f"Loading KB from directory: {dir_path}")
+        return _load_kb_from_dir(dir_path)
+
+    # 2. Проверяем файл name.json
+    file_path = base_path / f"{name}.json"
+    if file_path.exists():
+        logger.debug(f"Loading KB from file: {file_path}")
+        return _load_kb_list(f"{name}.json", base_path, key)
+
+    # 3. Проверяем файл name как есть (если передано имя с расширением)
+    file_path_exact = base_path / name
+    if file_path_exact.exists():
+        logger.debug(f"Loading KB from file: {file_path_exact}")
+        return _load_kb_list(name, base_path, key)
+
+    logger.warning(f"KB source not found (tried dir and .json): {base_path / name}")
+    return []
+
+
 def load_knowledge_base(base_path: Path = Path("knowledge_base")) -> KnowledgeBase:
     # Файлы, которые являются словарями, а не списками (загружаем как есть)
-    stop_words = _load_optional_json(base_path / "stop_words.json", {})
+
+    # stop_words: явная проверка с предупреждением
+    sw_path = base_path / "stop_words.json"
+    if not sw_path.exists():
+        logger.warning("stop_words.json not found at %s — stop-word filtering disabled", sw_path)
+    stop_words = _load_optional_json(sw_path, {})
+
     domain_glossary = _load_optional_json(base_path / "domain_glossary.json", {})
     nkrj = _load_optional_json(base_path / "nkrj_structure_patterns.json", {})
 
-    # Файлы с записями, используем универсальную функцию
+    # Файлы с записями
     grammar_errors = _load_kb_list("grammar_errors.json", base_path, "common_mistakes")
-    stylistic_issues = _load_kb_list("stylistic_issues", base_path)   # папка, key не нужен
+    stylistic_issues = _load_kb_list("stylistic_issues", base_path)   # папка
     logic_issues = _load_kb_list("logic_issues.json", base_path, "issues")
-    storytelling_frameworks = _load_kb_list("storytelling_frameworks.json", base_path, "frameworks")
-    marketing_templates = _load_kb_list("marketing_templates.json", base_path, "templates")
     composition_principles = _load_kb_list("composition_principles.json", base_path, "composition_principles")
     local_cohesion = _load_kb_list("local_cohesion.json", base_path, "local_cohesion")
     composition_errors = _load_kb_list("composition_errors.json", base_path, "composition_errors")
-    rhetoric_frameworks = _load_kb_list("rhetoric_frameworks.json", base_path, "frameworks")
-    editorial_techniques = _load_kb_list("editorial_techniques", base_path)   # папка, key не нужен
+    editorial_techniques = _load_kb_list("editorial_techniques", base_path)   # папка
+
+    # Три источника, которые могут быть либо монолитным файлом, либо папкой —
+    # _load_kb_file_or_dir пробует оба варианта автоматически.
+    # rhetoric: rhetoric_frameworks.json → папка rhetoric/ (после разбивки)
+    rhetoric_frameworks = _load_kb_file_or_dir("rhetoric", base_path, "frameworks")
+    if not rhetoric_frameworks:
+        # Совместимость: старое имя файла до переименования
+        rhetoric_frameworks = _load_kb_list("rhetoric_frameworks.json", base_path, "frameworks")
+
+    # storytelling: storytelling_frameworks.json → папка storytelling/ (после разбивки)
+    storytelling_frameworks = _load_kb_file_or_dir("storytelling", base_path, "frameworks")
+    if not storytelling_frameworks:
+        storytelling_frameworks = _load_kb_list("storytelling_frameworks.json", base_path, "frameworks")
+
+    # marketing: marketing_templates.json → папка marketing/ (после разбивки)
+    marketing_templates = _load_kb_file_or_dir("marketing", base_path, "templates")
+    if not marketing_templates:
+        marketing_templates = _load_kb_list("marketing_templates.json", base_path, "templates")
 
     # Счётчик записей
     total_records = (
@@ -986,7 +1040,7 @@ class PromptBuilder:
                 )
 
         # ------------------------------------------------------------------
-        # Композиция (структурные записи могут тоже содержать wrong/correct)
+        # Композиция
         # ------------------------------------------------------------------
         composition_budget = budget.get("composition")
         if composition_budget and composition_budget.enabled and kb.composition_principles:
@@ -1020,8 +1074,6 @@ class PromptBuilder:
                 if allowed_for_block > 0:
                     few_shot_examples = _select_few_shot_examples(pair_entries, allowed_for_block)
 
-            # Для структурных записей используем _append_structural_entries для правил,
-            # а для примеров — тот же _format_few_shot_example
             if FEW_SHOT_RULES_FIRST:
                 if rule_entries:
                     _append_structural_entries(lines, "Принципы композиции:", rule_entries)
