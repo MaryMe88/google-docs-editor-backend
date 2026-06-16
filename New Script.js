@@ -14,7 +14,8 @@
  *   POST /api/edit принимает:
  *     domain   : marketing | blog | deai | basic_edit | logic_edit |
  *                nora_gal | nora_gal_soft | cutnoise | makeclear |
- *                restructure | readerfirst | genre | fiction | composition
+ *                restructure | readerfirst | genre | fiction | composition |
+ *                balanced_edit
  *     intent   : analytical | marketingpush | storytelling | engagement | (отсутствует)
  *                (все четыре имеют файлы config/intents/*.json с плоским
  *                 списком инструкций; noragal/deai как intent всё ещё дают 500 —
@@ -22,7 +23,6 @@
  *     overlays : infostyle | landing | coldemail | pressrelease | workdoc | ...
  *     output_mode : 'text_only' | 'text_and_report'
  */
-
 
 
 
@@ -35,13 +35,11 @@
 
 
 
-
 const BACKEND_CONFIG = {
   url: 'https://google-docs-editor-backend.onrender.com/api/edit',
   provider: 'openrouter',
   temperature: 0.3
 };
-
 
 
 
@@ -76,13 +74,10 @@ const ALLOWED_INTENTS = [
 
 
 
-
-
 /* ============================================================================
  * SECTION: MENU
  * ============================================================================
  */
-
 
 
 
@@ -98,7 +93,6 @@ const MENU_GROUP_ORDER = [
 
 
 
-
 const MENU_GROUP_TITLES = {
   marketing: 'Маркетинг',
   blog: 'Блог и соцсети',
@@ -106,8 +100,6 @@ const MENU_GROUP_TITLES = {
   genre: 'Жанры',
   creative: 'Творческие режимы'
 };
-
-
 
 
 
@@ -122,7 +114,6 @@ const MENU_GROUP_TITLES = {
  *   output_mode — 'text_only' | 'text_and_report'
  * ============================================================================
  */
-
 
 
 
@@ -254,6 +245,21 @@ const MODE_CONFIG = {
 
 
 
+  // ← НОВОЕ: взвешенная правка без крайностей
+  balanced_edit: {
+    menu: 'Взвешенная правка',
+    group: 'editing',
+    order: 45,
+    domain: 'balanced_edit', // реальный файл config/domains/balanced_edit.json
+    intent: null,            // без интента — максимальная предсказуемость
+    overlays: ['infostyle'],
+    temperature: 0.35,
+    handler: 'editSelection_balanced_edit'
+  },
+
+
+
+
   // --- режимы «Пиши, сокращай 2025» в группе editing ---
 
 
@@ -314,7 +320,9 @@ const MODE_CONFIG = {
 
 
 
+
   // --- режим «Убрать признаки ИИ» в группе editing ---
+
 
 
 
@@ -441,10 +449,9 @@ const ALLOWED_DOMAINS = [
   'readerfirst',
   'genre',
   'fiction',
-  'composition'
+  'composition',
+  'balanced_edit'  // ← НОВОЕ
 ];
-
-
 
 
 
@@ -453,7 +460,6 @@ const ALLOWED_DOMAINS = [
  * SECTION: CONFIG VALIDATION
  * ============================================================================
  */
-
 
 
 
@@ -569,13 +575,10 @@ function validateModeConfig_() {
 
 
 
-
-
 /* ============================================================================
  * SECTION: MENU BUILDING
  * ============================================================================
  */
-
 
 
 
@@ -612,7 +615,6 @@ function onOpen(e) {
 
 
 
-
 function buildSubMenu_(ui, groupId) {
   const items = getModesByGroup_(groupId);
 
@@ -644,7 +646,6 @@ function buildSubMenu_(ui, groupId) {
 
 
 
-
 function getModesByGroup_(groupId) {
   return Object.keys(MODE_CONFIG)
     .filter((modeId) => MODE_CONFIG[modeId].group === groupId)
@@ -667,13 +668,10 @@ function getModesByGroup_(groupId) {
 
 
 
-
-
 /* ============================================================================
  * SECTION: EXPLICIT HANDLERS
  * ============================================================================
  */
-
 
 
 
@@ -736,6 +734,14 @@ function editSelection_nora_gal() {
 
 function editSelection_nora_gal_soft() {
   runModeById_('nora_gal_soft');
+}
+
+
+
+
+// ← НОВОЕ: handler для взвешенной правки
+function editSelection_balanced_edit() {
+  runModeById_('balanced_edit');
 }
 
 
@@ -833,13 +839,10 @@ function editSelection_composition_analysis() {
 
 
 
-
-
 /* ============================================================================
  * SECTION: MODE EXECUTION
  * ============================================================================
  */
-
 
 
 
@@ -859,7 +862,6 @@ function runModeById_(modeId) {
 
   editSelection_withMode_(mode);
 }
-
 
 
 
@@ -904,13 +906,10 @@ function editSelection_withMode_(mode) {
 
 
 
-
-
 /* ============================================================================
  * SECTION: SELECTION
  * ============================================================================
  */
-
 
 
 
@@ -978,7 +977,6 @@ function getSelectedText_(selection) {
 
   return parts.join('\n');
 }
-
 
 
 
@@ -1080,13 +1078,10 @@ function replaceSelection_(selection, newText) {
 
 
 
-
-
 /* ============================================================================
  * SECTION: PAYLOAD
  * ============================================================================
  */
-
 
 
 
@@ -1132,13 +1127,10 @@ function buildPayload_(text, mode) {
 
 
 
-
-
 /* ============================================================================
  * SECTION: HTTP (исправлен – ретраи при 502/503/504)
  * ============================================================================
  */
-
 
 
 
