@@ -73,18 +73,16 @@ def _get_confidence_note(stage: "FallbackStage") -> str:
     if stage == FallbackStage.STRONG:
         return ""  # уверенно — ничего не добавляем
     if stage == FallbackStage.TEXT_ONLY:
-        # Исправлено: добавлена закрывающая скобка
         return (
             "⚠ Правила подобраны по смысловому совпадению с текстом, "
             "не по точному образцу. Применяй только если явно уместно."
-        )   # <-- закрывающая скобка добавлена
+        )
     if stage in (FallbackStage.TAG_ONLY, FallbackStage.NEUTRAL):
-        # Исправлено: добавлена закрывающая скобка
         return (
             "⚠ Правила подобраны по теме раздела, конкретных совпадений "
             "с текстом не найдено. Применяй с осторожностью — "
             "только если ошибка очевидна."
-        )   # <-- закрывающая скобка добавлена
+        )
     if stage == FallbackStage.EMPTY:
         return ""  # пустой блок — не вставляем ничего
     return ""
@@ -219,8 +217,34 @@ def load_output_format(
     mode: str,
     base_path: Path = Path("config"),
 ) -> str:
+    """
+    Загружает формат ответа для указанного режима.
+
+    Если в output_format.json есть блок global_formatting_rules,
+    его no_markdown_note и allowed_formatting добавляются в начало
+    строки — перед инструкцией конкретного режима.
+    Это гарантирует, что запрет Markdown-разметки попадает в промпт
+    при любом output_mode и не может быть молча проигнорирован.
+    """
     data = load_json_file(base_path / "output_format.json")
-    return data.get(mode, data.get("text_only", "Верни только отредактированный текст."))
+    mode_instruction = data.get(mode, data.get("text_only", "Верни только отредактированный текст."))
+
+    global_rules = data.get("global_formatting_rules", {})
+    if not global_rules:
+        return mode_instruction
+
+    global_parts: List[str] = []
+    no_markdown_note = global_rules.get("no_markdown_note", "")
+    allowed_formatting = global_rules.get("allowed_formatting", "")
+    if no_markdown_note:
+        global_parts.append(no_markdown_note)
+    if allowed_formatting:
+        global_parts.append(allowed_formatting)
+
+    if not global_parts:
+        return mode_instruction
+
+    return "\n".join(global_parts) + "\n\n" + mode_instruction
 
 
 # ---------------------------------------------------------------------------
