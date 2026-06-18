@@ -86,6 +86,7 @@ const MENU_GROUP_ORDER = [
   'marketing',
   'blog',
   'editing',
+  'cleanup',
   'genre',
   'creative'
 ];
@@ -96,7 +97,8 @@ const MENU_GROUP_ORDER = [
 const MENU_GROUP_TITLES = {
   marketing: 'Маркетинг',
   blog: 'Блог и соцсети',
-  editing: 'Стили и правка',
+  editing: 'Правка и стиль',
+  cleanup: 'Чистка и структура',
   genre: 'Жанры',
   creative: 'Творческие режимы'
 };
@@ -245,7 +247,6 @@ const MODE_CONFIG = {
 
 
 
-  // ← НОВОЕ: взвешенная правка без крайностей
   balanced_edit: {
     menu: 'Взвешенная правка',
     group: 'editing',
@@ -260,15 +261,30 @@ const MODE_CONFIG = {
 
 
 
-  // --- режимы «Пиши, сокращай 2025» в группе editing ---
+  deai: {
+    menu: 'Убрать признаки ИИ',
+    group: 'editing',
+    order: 50,
+    domain: 'deai',          // валидный domain — оставляем
+    intent: null,            // intent 'deai' даёт HTTP 500, поэтому не отправляем
+    overlays: ['infostyle'],
+    output_mode: 'text_and_report',
+    temperature: 0.2,
+    handler: 'editSelection_deai'
+  },
+
+
+
+
+  // --- режимы «Пиши, сокращай 2025» в группе cleanup ---
 
 
 
 
   readerfirst: {
     menu: 'Фокус на читателе',
-    group: 'editing',
-    order: 50,
+    group: 'cleanup',
+    order: 10,
     domain: 'readerfirst',   // реальный файл config/domains/readerfirst.json
     intent: null,
     overlays: ['infostyle', 'readerfocus'],
@@ -281,8 +297,8 @@ const MODE_CONFIG = {
 
   cutnoise: {
     menu: 'Убрать мусор',
-    group: 'editing',
-    order: 60,
+    group: 'cleanup',
+    order: 20,
     domain: 'cutnoise',      // реальный файл config/domains/cutnoise.json
     intent: null,
     overlays: ['infostyle'],
@@ -295,8 +311,8 @@ const MODE_CONFIG = {
 
   makeclear: {
     menu: 'Упростить предложения',
-    group: 'editing',
-    order: 70,
+    group: 'cleanup',
+    order: 30,
     domain: 'makeclear',     // реальный файл config/domains/makeclear.json
     intent: null,
     overlays: ['infostyle'],
@@ -309,33 +325,13 @@ const MODE_CONFIG = {
 
   restructure: {
     menu: 'Перестроить структуру',
-    group: 'editing',
-    order: 80,
+    group: 'cleanup',
+    order: 40,
     domain: 'restructure',   // реальный файл config/domains/restructure.json
     intent: null,
     overlays: ['infostyle', 'structurefirst'],
     temperature: 0.2,
     handler: 'editSelection_restructure'
-  },
-
-
-
-
-  // --- режим «Убрать признаки ИИ» в группе editing ---
-
-
-
-
-  deai: {
-    menu: 'Убрать признаки ИИ',
-    group: 'editing',
-    order: 90,
-    domain: 'deai',          // валидный domain — оставляем
-    intent: null,            // intent 'deai' даёт HTTP 500, поэтому не отправляем
-    overlays: ['infostyle'],
-    output_mode: 'text_and_report',
-    temperature: 0.2,
-    handler: 'editSelection_deai'
   },
 
 
@@ -450,7 +446,7 @@ const ALLOWED_DOMAINS = [
   'genre',
   'fiction',
   'composition',
-  'balanced_edit'  // ← НОВОЕ
+  'balanced_edit'
 ];
 
 
@@ -739,7 +735,6 @@ function editSelection_nora_gal_soft() {
 
 
 
-// ← НОВОЕ: handler для взвешенной правки
 function editSelection_balanced_edit() {
   runModeById_('balanced_edit');
 }
