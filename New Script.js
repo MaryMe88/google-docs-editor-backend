@@ -20,7 +20,9 @@
  *                (все четыре имеют файлы config/intents/*.json с плоским
  *                 списком инструкций; noragal/deai как intent всё ещё дают 500 —
  *                 их специфика выражается через domain)
- *     overlays : infostyle | landing | coldemail | pressrelease | workdoc | ...
+ *     overlays : base | infostyle | landing | coldemail | pressrelease | workdoc | ...
+ *                base    — нейтральный overlay, не навязывает стиль
+ *                infostyle — информационный деловой стиль
  *     output_mode : 'text_only' | 'text_and_report'
  */
 
@@ -113,6 +115,8 @@ const MENU_GROUP_TITLES = {
  *   domain      — ТОЛЬКО 'marketing' | 'blog' | 'deai'
  *   intent      — ТОЛЬКО 'storytelling' или null
  *   overlays    — массив overlay-тегов (несут жанровую/стилевую специфику)
+ *                 'base'      — нейтральный, без стилевого уклона
+ *                 'infostyle' — информационный деловой стиль
  *   output_mode — 'text_only' | 'text_and_report'
  * ============================================================================
  */
@@ -226,7 +230,7 @@ const MODE_CONFIG = {
     order: 30,
     domain: 'nora_gal',      // реальный файл config/domains/nora_gal.json
     intent: null,            // intent 'noragal' даёт 500; принципы Норы Галь несёт domain
-    overlays: ['infostyle'],
+    overlays: ['base'],      // base вместо infostyle: у Норы Галь своя философия стиля
     temperature: 0.5,
     handler: 'editSelection_nora_gal'
   },
@@ -240,7 +244,7 @@ const MODE_CONFIG = {
     order: 40,
     domain: 'nora_gal_soft', // реальный файл config/domains/nora_gal_soft.json
     intent: null,
-    overlays: ['infostyle'],
+    overlays: ['base'],      // base вместо infostyle: та же логика, что у nora_gal
     temperature: 0.45,
     handler: 'editSelection_nora_gal_soft'
   },
@@ -405,7 +409,7 @@ const MODE_CONFIG = {
     order: 10,
     domain: 'fiction',       // реальный файл config/domains/fiction.json
     intent: 'storytelling',  // валидный intent — оставляем
-    overlays: ['infostyle'],
+    overlays: ['base'],      // base вместо infostyle: художественному тексту не нужен деловой стиль
     temperature: 0.75,
     handler: 'editSelection_fiction_story'
   },
@@ -419,7 +423,7 @@ const MODE_CONFIG = {
     order: 20,
     domain: 'composition',   // реальный файл config/domains/composition.json
     intent: null,
-    overlays: ['infostyle'],
+    overlays: ['base'],      // base вместо infostyle: анализ композиции — интерпретация, не деловой стиль
     temperature: 0.45,
     handler: 'editSelection_composition_analysis'
   }
@@ -1087,7 +1091,7 @@ function buildPayload_(text, mode) {
     text: text,
     domain: mode.domain,
     audience: mode.audience || DEFAULT_AUDIENCE,
-    overlays: mode.overlays || ['infostyle'],
+    overlays: mode.overlays || ['base'],
     output_mode: mode.output_mode || 'text_only',
     provider: BACKEND_CONFIG.provider,
     temperature:
