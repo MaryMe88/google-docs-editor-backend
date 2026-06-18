@@ -150,12 +150,13 @@ const MODE_CONFIG = {
 
 
   marketing_analysis: {
-    menu: 'Анализ текста',
+    menu: 'Правка с объяснением',
     group: 'marketing',
     order: 30,
     domain: 'marketing',
     intent: 'analytical',    // файл config/intents/analytical.json
     overlays: ['infostyle'],
+    output_mode: 'text_and_report',
     temperature: 0.35,
     handler: 'analyzeSelection_marketing'
   },
