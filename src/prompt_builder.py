@@ -272,8 +272,6 @@ def _extract_records(container: Any, inherited_tags: List[str] = None) -> List[D
     Рекурсивно извлекает все записи (словари с полями wrong, correct, name, rule и т.д.)
     из любых вложенных структур: списков, словарей с ключами 'examples', 'techniques', 'steps'.
     Добавляет унаследованные теги (например, из категории) к каждой записи.
-
-    Всегда работает с копиями записей, не мутирует оригинальные данные из JSON.
     """
     if inherited_tags is None:
         inherited_tags = []
@@ -293,13 +291,12 @@ def _extract_records(container: Any, inherited_tags: List[str] = None) -> List[D
                 new_tags = inherited_tags
             for ex in container["examples"]:
                 if isinstance(ex, dict):
-                    # Работаем с копией, не мутируем оригинал
-                    ex_copy = dict(ex)
-                    if "tags" in ex_copy and isinstance(ex_copy["tags"], list):
-                        ex_copy["tags"] = ex_copy["tags"] + new_tags
+                    # Добавляем теги категории к записи
+                    if "tags" in ex and isinstance(ex["tags"], list):
+                        ex["tags"].extend(new_tags)
                     else:
-                        ex_copy["tags"] = new_tags.copy()
-                    records.append(ex_copy)
+                        ex["tags"] = new_tags.copy()
+                    records.append(ex)
         elif "techniques" in container and isinstance(container["techniques"], list):
             cat_tags = container.get("tags", [])
             if isinstance(cat_tags, list):
@@ -308,13 +305,11 @@ def _extract_records(container: Any, inherited_tags: List[str] = None) -> List[D
                 new_tags = inherited_tags
             for tech in container["techniques"]:
                 if isinstance(tech, dict):
-                    # Работаем с копией, не мутируем оригинал
-                    tech_copy = dict(tech)
-                    if "tags" in tech_copy and isinstance(tech_copy["tags"], list):
-                        tech_copy["tags"] = tech_copy["tags"] + new_tags
+                    if "tags" in tech and isinstance(tech["tags"], list):
+                        tech["tags"].extend(new_tags)
                     else:
-                        tech_copy["tags"] = new_tags.copy()
-                    records.append(tech_copy)
+                        tech["tags"] = new_tags.copy()
+                    records.append(tech)
         else:
             # Обычная запись – добавляем как есть
             records.append(container)
@@ -775,9 +770,8 @@ class PromptBuilder:
         self.knowledge_base = load_knowledge_base(self.kb_path)
 
     def reload_configs(self) -> None:
-        """Перезагружает core_config и knowledge_base с диска."""
-        self.core_config = load_core_config(self.config_path)
-        self.knowledge_base = load_knowledge_base(self.kb_path)
+        self.core_config = None
+        self.knowledge_base = None
 
     # ------------------------------------------------------------------
     # Доступные intents / overlays
@@ -1281,3 +1275,649 @@ class PromptBuilder:
             else:
                 comp_err_entries, stage = comp_err_result, FallbackStage.STRONG
                 dropped = 0
+
+            pair_entries = [e for e in comp_err_entries if _has_few_shot_pair(e)]
+            rule_entries = [e for e in comp_err_entries if not _has_few_shot_pair(e)]
+
+            allowed_for_block = 0
+            few_shot_examples = []
+            if include_few_shot:
+                allowed_for_block = min(
+                    FEW_SHOT_MAX_EXAMPLES_PER_BLOCK,
+                    FEW_SHOT_MAX_TOTAL_EXAMPLES - current_total
+                )
+                if allowed_for_block > 0:
+                    few_shot_examples = _select_few_shot_examples(pair_entries, allowed_for_block)
+
+            confidence_note = _get_confidence_note(stage)
+            if (rule_entries or few_shot_examples) and confidence_note:
+                lines.append(confidence_note)
+
+            if FEW_SHOT_RULES_FIRST:
+                if rule_entries:
+                    _append_structural_entries(lines, "Ошибки композиции:", rule_entries)
+                if few_shot_examples:
+                    lines.append("Примеры редактирования:")
+                    for ex in few_shot_examples:
+                        lines.append(_format_few_shot_example(ex))
+                    lines.append("")
+            else:
+                if few_shot_examples:
+                    lines.append("Примеры редактирования:")
+                    for ex in few_shot_examples:
+                        lines.append(_format_few_shot_example(ex))
+                    lines.append("")
+                if rule_entries:
+                    _append_structural_entries(lines, "Ошибки композиции:", rule_entries)
+
+            current_total += len(few_shot_examples)
+
+            meta["composition_errors"] = {
+                "stage": stage.value,
+                "entries_count": len(comp_err_entries),
+                "rules_count": len(rule_entries),
+                "few_shot_count": len(few_shot_examples),
+                "few_shot_ids": [e.get("id") for e in few_shot_examples if e.get("id")],
+                "entry_ids": [e.get("id") for e in comp_err_entries[:5] if e.get("id")],
+                "entry_names": [e.get("name") for e in comp_err_entries[:5] if e.get("name")],
+                "truncated_count": dropped,
+            }
+            if dropped > 0:
+                logger.info(
+                    "Char budget truncated %d records for block='composition_errors', domain=%s, intent=%s",
+                    dropped, domain, intent
+                )
+            if stage in (FallbackStage.EMPTY, FallbackStage.NEUTRAL):
+                _warn_if_empty_retrieval(
+                    block="composition_errors",
+                    stage=stage,
+                    domain=domain,
+                    intent=intent,
+                    overlays=overlays,
+                    text_len=len(text),
+                    primary_tags=primary_tags,
+                )
+
+        # ------------------------------------------------------------------
+        # Локальная связность
+        # ------------------------------------------------------------------
+        cohesion_budget = budget.get("cohesion")
+        if cohesion_budget and cohesion_budget.enabled and kb.local_cohesion:
+            cohesion_result = select_structural_by_tags_or_all(
+                entries=kb.local_cohesion,
+                tags=primary_tags,
+                limit=cohesion_budget.entry_limit,
+                expanded_tags=expanded_tags,
+                char_budget=cohesion_budget.char_budget,
+                return_meta=True,
+            )
+            if isinstance(cohesion_result, tuple) and len(cohesion_result) == 3:
+                cohesion_entries, stage, dropped = cohesion_result
+            elif isinstance(cohesion_result, tuple) and len(cohesion_result) == 2:
+                cohesion_entries, stage = cohesion_result
+                dropped = 0
+            else:
+                cohesion_entries, stage = cohesion_result, FallbackStage.STRONG
+                dropped = 0
+
+            pair_entries = [e for e in cohesion_entries if _has_few_shot_pair(e)]
+            rule_entries = [e for e in cohesion_entries if not _has_few_shot_pair(e)]
+
+            allowed_for_block = 0
+            few_shot_examples = []
+            if include_few_shot:
+                allowed_for_block = min(
+                    FEW_SHOT_MAX_EXAMPLES_PER_BLOCK,
+                    FEW_SHOT_MAX_TOTAL_EXAMPLES - current_total
+                )
+                if allowed_for_block > 0:
+                    few_shot_examples = _select_few_shot_examples(pair_entries, allowed_for_block)
+
+            confidence_note = _get_confidence_note(stage)
+            if (rule_entries or few_shot_examples) and confidence_note:
+                lines.append(confidence_note)
+
+            if FEW_SHOT_RULES_FIRST:
+                if rule_entries:
+                    _append_structural_entries(lines, "Локальная связность:", rule_entries)
+                if few_shot_examples:
+                    lines.append("Примеры редактирования:")
+                    for ex in few_shot_examples:
+                        lines.append(_format_few_shot_example(ex))
+                    lines.append("")
+            else:
+                if few_shot_examples:
+                    lines.append("Примеры редактирования:")
+                    for ex in few_shot_examples:
+                        lines.append(_format_few_shot_example(ex))
+                    lines.append("")
+                if rule_entries:
+                    _append_structural_entries(lines, "Локальная связность:", rule_entries)
+
+            current_total += len(few_shot_examples)
+
+            meta["cohesion"] = {
+                "stage": stage.value,
+                "entries_count": len(cohesion_entries),
+                "rules_count": len(rule_entries),
+                "few_shot_count": len(few_shot_examples),
+                "few_shot_ids": [e.get("id") for e in few_shot_examples if e.get("id")],
+                "entry_ids": [e.get("id") for e in cohesion_entries[:5] if e.get("id")],
+                "entry_names": [e.get("name") for e in cohesion_entries[:5] if e.get("name")],
+                "truncated_count": dropped,
+            }
+            if dropped > 0:
+                logger.info(
+                    "Char budget truncated %d records for block='cohesion', domain=%s, intent=%s",
+                    dropped, domain, intent
+                )
+            if stage in (FallbackStage.EMPTY, FallbackStage.NEUTRAL):
+                _warn_if_empty_retrieval(
+                    block="cohesion",
+                    stage=stage,
+                    domain=domain,
+                    intent=intent,
+                    overlays=overlays,
+                    text_len=len(text),
+                    primary_tags=primary_tags,
+                )
+
+        # ------------------------------------------------------------------
+        # Сторителлинг
+        # ------------------------------------------------------------------
+        storytelling_budget = budget.get("storytelling")
+        if (
+            storytelling_budget
+            and storytelling_budget.enabled
+            and kb.storytelling_frameworks
+        ):
+            story_result = select_structural_by_tags_or_all(
+                entries=kb.storytelling_frameworks,
+                tags=primary_tags,
+                limit=storytelling_budget.entry_limit,
+                expanded_tags=expanded_tags,
+                char_budget=storytelling_budget.char_budget,
+                return_meta=True,
+            )
+            if isinstance(story_result, tuple) and len(story_result) == 3:
+                story_entries, stage, dropped = story_result
+            elif isinstance(story_result, tuple) and len(story_result) == 2:
+                story_entries, stage = story_result
+                dropped = 0
+            else:
+                story_entries, stage = story_result, FallbackStage.STRONG
+                dropped = 0
+
+            pair_entries = [e for e in story_entries if _has_few_shot_pair(e)]
+            rule_entries = [e for e in story_entries if not _has_few_shot_pair(e)]
+
+            allowed_for_block = 0
+            few_shot_examples = []
+            if include_few_shot:
+                allowed_for_block = min(
+                    FEW_SHOT_MAX_EXAMPLES_PER_BLOCK,
+                    FEW_SHOT_MAX_TOTAL_EXAMPLES - current_total
+                )
+                if allowed_for_block > 0:
+                    few_shot_examples = _select_few_shot_examples(pair_entries, allowed_for_block)
+
+            confidence_note = _get_confidence_note(stage)
+            if (rule_entries or few_shot_examples) and confidence_note:
+                lines.append(confidence_note)
+
+            if FEW_SHOT_RULES_FIRST:
+                if rule_entries:
+                    _append_structural_entries(lines, "Сторителлинг-фреймворки:", rule_entries)
+                if few_shot_examples:
+                    lines.append("Примеры редактирования:")
+                    for ex in few_shot_examples:
+                        lines.append(_format_few_shot_example(ex))
+                    lines.append("")
+            else:
+                if few_shot_examples:
+                    lines.append("Примеры редактирования:")
+                    for ex in few_shot_examples:
+                        lines.append(_format_few_shot_example(ex))
+                    lines.append("")
+                if rule_entries:
+                    _append_structural_entries(lines, "Сторителлинг-фреймворки:", rule_entries)
+
+            current_total += len(few_shot_examples)
+
+            meta["storytelling"] = {
+                "stage": stage.value,
+                "entries_count": len(story_entries),
+                "rules_count": len(rule_entries),
+                "few_shot_count": len(few_shot_examples),
+                "few_shot_ids": [e.get("id") for e in few_shot_examples if e.get("id")],
+                "entry_ids": [e.get("id") for e in story_entries[:5] if e.get("id")],
+                "entry_names": [e.get("name") for e in story_entries[:5] if e.get("name")],
+                "truncated_count": dropped,
+            }
+            if dropped > 0:
+                logger.info(
+                    "Char budget truncated %d records for block='storytelling', domain=%s, intent=%s",
+                    dropped, domain, intent
+                )
+            if stage in (FallbackStage.EMPTY, FallbackStage.NEUTRAL):
+                _warn_if_empty_retrieval(
+                    block="storytelling",
+                    stage=stage,
+                    domain=domain,
+                    intent=intent,
+                    overlays=overlays,
+                    text_len=len(text),
+                    primary_tags=primary_tags,
+                )
+
+        # ------------------------------------------------------------------
+        # Маркетинговые шаблоны
+        # ------------------------------------------------------------------
+        marketing_budget = budget.get("marketing")
+        if marketing_budget and marketing_budget.enabled and kb.marketing_templates:
+            marketing_result = select_structural_by_tags_or_all(
+                entries=kb.marketing_templates,
+                tags=primary_tags,
+                limit=marketing_budget.entry_limit,
+                expanded_tags=expanded_tags,
+                char_budget=marketing_budget.char_budget,
+                return_meta=True,
+            )
+            if isinstance(marketing_result, tuple) and len(marketing_result) == 3:
+                marketing_entries, stage, dropped = marketing_result
+            elif isinstance(marketing_result, tuple) and len(marketing_result) == 2:
+                marketing_entries, stage = marketing_result
+                dropped = 0
+            else:
+                marketing_entries, stage = marketing_result, FallbackStage.STRONG
+                dropped = 0
+
+            pair_entries = [e for e in marketing_entries if _has_few_shot_pair(e)]
+            rule_entries = [e for e in marketing_entries if not _has_few_shot_pair(e)]
+
+            allowed_for_block = 0
+            few_shot_examples = []
+            if include_few_shot:
+                allowed_for_block = min(
+                    FEW_SHOT_MAX_EXAMPLES_PER_BLOCK,
+                    FEW_SHOT_MAX_TOTAL_EXAMPLES - current_total
+                )
+                if allowed_for_block > 0:
+                    few_shot_examples = _select_few_shot_examples(pair_entries, allowed_for_block)
+
+            confidence_note = _get_confidence_note(stage)
+            if (rule_entries or few_shot_examples) and confidence_note:
+                lines.append(confidence_note)
+
+            if FEW_SHOT_RULES_FIRST:
+                if rule_entries:
+                    _append_structural_entries(lines, "Маркетинговые шаблоны:", rule_entries)
+                if few_shot_examples:
+                    lines.append("Примеры редактирования:")
+                    for ex in few_shot_examples:
+                        lines.append(_format_few_shot_example(ex))
+                    lines.append("")
+            else:
+                if few_shot_examples:
+                    lines.append("Примеры редактирования:")
+                    for ex in few_shot_examples:
+                        lines.append(_format_few_shot_example(ex))
+                    lines.append("")
+                if rule_entries:
+                    _append_structural_entries(lines, "Маркетинговые шаблоны:", rule_entries)
+
+            current_total += len(few_shot_examples)
+
+            meta["marketing"] = {
+                "stage": stage.value,
+                "entries_count": len(marketing_entries),
+                "rules_count": len(rule_entries),
+                "few_shot_count": len(few_shot_examples),
+                "few_shot_ids": [e.get("id") for e in few_shot_examples if e.get("id")],
+                "entry_ids": [e.get("id") for e in marketing_entries[:5] if e.get("id")],
+                "entry_names": [e.get("name") for e in marketing_entries[:5] if e.get("name")],
+                "truncated_count": dropped,
+            }
+            if dropped > 0:
+                logger.info(
+                    "Char budget truncated %d records for block='marketing', domain=%s, intent=%s",
+                    dropped, domain, intent
+                )
+            if stage in (FallbackStage.EMPTY, FallbackStage.NEUTRAL):
+                _warn_if_empty_retrieval(
+                    block="marketing",
+                    stage=stage,
+                    domain=domain,
+                    intent=intent,
+                    overlays=overlays,
+                    text_len=len(text),
+                    primary_tags=primary_tags,
+                )
+
+        # ------------------------------------------------------------------
+        # Риторические приёмы
+        # ------------------------------------------------------------------
+        rhetoric_budget = budget.get("rhetoric")
+        if rhetoric_budget and rhetoric_budget.enabled and kb.rhetoric_frameworks:
+            rhetoric_result = select_structural_by_tags_or_all(
+                entries=kb.rhetoric_frameworks,
+                tags=primary_tags,
+                limit=rhetoric_budget.entry_limit,
+                expanded_tags=expanded_tags,
+                char_budget=rhetoric_budget.char_budget,
+                return_meta=True,
+            )
+            if isinstance(rhetoric_result, tuple) and len(rhetoric_result) == 3:
+                rhetoric_entries, stage, dropped = rhetoric_result
+            elif isinstance(rhetoric_result, tuple) and len(rhetoric_result) == 2:
+                rhetoric_entries, stage = rhetoric_result
+                dropped = 0
+            else:
+                rhetoric_entries, stage = rhetoric_result, FallbackStage.STRONG
+                dropped = 0
+
+            pair_entries = [e for e in rhetoric_entries if _has_few_shot_pair(e)]
+            rule_entries = [e for e in rhetoric_entries if not _has_few_shot_pair(e)]
+
+            allowed_for_block = 0
+            few_shot_examples = []
+            if include_few_shot:
+                allowed_for_block = min(
+                    FEW_SHOT_MAX_EXAMPLES_PER_BLOCK,
+                    FEW_SHOT_MAX_TOTAL_EXAMPLES - current_total
+                )
+                if allowed_for_block > 0:
+                    few_shot_examples = _select_few_shot_examples(pair_entries, allowed_for_block)
+
+            confidence_note = _get_confidence_note(stage)
+            if (rule_entries or few_shot_examples) and confidence_note:
+                lines.append(confidence_note)
+
+            if FEW_SHOT_RULES_FIRST:
+                if rule_entries:
+                    _append_structural_entries(lines, "Риторические приёмы:", rule_entries)
+                if few_shot_examples:
+                    lines.append("Примеры редактирования:")
+                    for ex in few_shot_examples:
+                        lines.append(_format_few_shot_example(ex))
+                    lines.append("")
+            else:
+                if few_shot_examples:
+                    lines.append("Примеры редактирования:")
+                    for ex in few_shot_examples:
+                        lines.append(_format_few_shot_example(ex))
+                    lines.append("")
+                if rule_entries:
+                    _append_structural_entries(lines, "Риторические приёмы:", rule_entries)
+
+            current_total += len(few_shot_examples)
+
+            meta["rhetoric"] = {
+                "stage": stage.value,
+                "entries_count": len(rhetoric_entries),
+                "rules_count": len(rule_entries),
+                "few_shot_count": len(few_shot_examples),
+                "few_shot_ids": [e.get("id") for e in few_shot_examples if e.get("id")],
+                "entry_ids": [e.get("id") for e in rhetoric_entries[:5] if e.get("id")],
+                "entry_names": [e.get("name") for e in rhetoric_entries[:5] if e.get("name")],
+                "truncated_count": dropped,
+            }
+            if dropped > 0:
+                logger.info(
+                    "Char budget truncated %d records for block='rhetoric', domain=%s, intent=%s",
+                    dropped, domain, intent
+                )
+            if stage in (FallbackStage.EMPTY, FallbackStage.NEUTRAL):
+                _warn_if_empty_retrieval(
+                    block="rhetoric",
+                    stage=stage,
+                    domain=domain,
+                    intent=intent,
+                    overlays=overlays,
+                    text_len=len(text),
+                    primary_tags=primary_tags,
+                )
+
+        # ------------------------------------------------------------------
+        # Редакторские приёмы
+        # ------------------------------------------------------------------
+        editorial_budget = budget.get("editorial")
+        if editorial_budget and editorial_budget.enabled and kb.editorial_techniques:
+            editorial_result = select_structural_by_tags_or_all(
+                entries=kb.editorial_techniques,
+                tags=primary_tags,
+                limit=editorial_budget.entry_limit,
+                expanded_tags=expanded_tags,
+                char_budget=editorial_budget.char_budget,
+                return_meta=True,
+            )
+            if isinstance(editorial_result, tuple) and len(editorial_result) == 3:
+                editorial_entries, stage, dropped = editorial_result
+            elif isinstance(editorial_result, tuple) and len(editorial_result) == 2:
+                editorial_entries, stage = editorial_result
+                dropped = 0
+            else:
+                editorial_entries, stage = editorial_result, FallbackStage.STRONG
+                dropped = 0
+
+            pair_entries = [e for e in editorial_entries if _has_few_shot_pair(e)]
+            rule_entries = [e for e in editorial_entries if not _has_few_shot_pair(e)]
+
+            allowed_for_block = 0
+            few_shot_examples = []
+            if include_few_shot:
+                allowed_for_block = min(
+                    FEW_SHOT_MAX_EXAMPLES_PER_BLOCK,
+                    FEW_SHOT_MAX_TOTAL_EXAMPLES - current_total
+                )
+                if allowed_for_block > 0:
+                    few_shot_examples = _select_few_shot_examples(pair_entries, allowed_for_block)
+
+            confidence_note = _get_confidence_note(stage)
+            if (rule_entries or few_shot_examples) and confidence_note:
+                lines.append(confidence_note)
+
+            if FEW_SHOT_RULES_FIRST:
+                if rule_entries:
+                    _append_editorial_entries(lines, "Редакторские приёмы:", rule_entries)
+                if few_shot_examples:
+                    lines.append("Примеры редактирования:")
+                    for ex in few_shot_examples:
+                        lines.append(_format_few_shot_example(ex))
+                    lines.append("")
+            else:
+                if few_shot_examples:
+                    lines.append("Примеры редактирования:")
+                    for ex in few_shot_examples:
+                        lines.append(_format_few_shot_example(ex))
+                    lines.append("")
+                if rule_entries:
+                    _append_editorial_entries(lines, "Редакторские приёмы:", rule_entries)
+
+            current_total += len(few_shot_examples)
+
+            meta["editorial"] = {
+                "stage": stage.value,
+                "entries_count": len(editorial_entries),
+                "rules_count": len(rule_entries),
+                "few_shot_count": len(few_shot_examples),
+                "few_shot_ids": [e.get("id") for e in few_shot_examples if e.get("id")],
+                "entry_ids": [e.get("id") for e in editorial_entries[:5] if e.get("id")],
+                "entry_names": [e.get("name") for e in editorial_entries[:5] if e.get("name")],
+                "truncated_count": dropped,
+            }
+            if dropped > 0:
+                logger.info(
+                    "Char budget truncated %d records for block='editorial', domain=%s, intent=%s",
+                    dropped, domain, intent
+                )
+            if stage in (FallbackStage.EMPTY, FallbackStage.NEUTRAL):
+                _warn_if_empty_retrieval(
+                    block="editorial",
+                    stage=stage,
+                    domain=domain,
+                    intent=intent,
+                    overlays=overlays,
+                    text_len=len(text),
+                    primary_tags=primary_tags,
+                )
+
+        # Глоссарий (без метаданных)
+        glossary_budget = budget.get("glossary")
+        if glossary_budget and glossary_budget.enabled and kb.domain_glossary:
+            _append_glossary(lines, kb.domain_glossary, glossary_budget.entry_limit)
+
+        # НКРЯ (без метаданных)
+        nkrj_budget = budget.get("nkrj")
+        if nkrj_budget and nkrj_budget.enabled and kb.nkrj_structure_patterns:
+            _append_nkrj(lines, kb.nkrj_structure_patterns)
+
+        return "\n".join(lines), meta, current_total
+
+    # ------------------------------------------------------------------
+    # Главный метод — build()
+    # ------------------------------------------------------------------
+
+    def build(
+        self,
+        text: str,
+        domain: str,
+        intent: Optional[str] = None,
+        audience: Optional[AudienceProfile] = None,
+        overlays: Optional[Sequence[str]] = None,
+        output_mode: str = "text_only",
+        include_knowledge: bool = True,
+        include_few_shot: bool = True,
+        knowledge_level: KnowledgeLevel = KnowledgeLevel.STANDARD,
+        token_budget: Optional[int] = None,
+        include_retrieval_meta: bool = False,
+        **legacy_kwargs: Any,
+    ) -> Union[str, Tuple[str, Dict[str, Any]]]:
+        """
+        Собирает промпт из конфигов и базы знаний.
+
+        Параметры:
+            text             — исходный текст для редактирования
+            domain           — домен ('marketing' | 'blog' | 'deai')
+            intent           — опциональный intent ('storytelling' | 'noragal' | 'deai' | 'neutral')
+            audience         — профиль аудитории (AudienceProfile или None)
+            overlays         — список оверлеев
+            output_mode      — формат ответа ('text_only' | 'text_and_report')
+            include_knowledge — включать ли блок базы знаний
+            include_few_shot  — включать ли few-shot примеры из базы знаний (PR‑2)
+            knowledge_level  — уровень детализации знаний (KnowledgeLevel)
+            token_budget     — лимит токенов для knowledge-блока (None = без лимита)
+            include_retrieval_meta — если True, возвращает (prompt, retrieval_meta)
+
+        Возвращает:
+            если include_retrieval_meta=False: строка с промптом
+            если include_retrieval_meta=True: кортеж (prompt, meta)
+        """
+        # Поддержка legacy camelCase kwargs от старых клиентов
+        legacy_output_mode = legacy_kwargs.pop("outputmode", None)
+        legacy_include_knowledge = legacy_kwargs.pop("includeknowledge", None)
+
+        if legacy_kwargs:
+            unknown = ", ".join(sorted(legacy_kwargs))
+            raise TypeError(f"Unexpected keyword arguments: {unknown}")
+
+        if legacy_output_mode is not None:
+            output_mode = legacy_output_mode
+        if legacy_include_knowledge is not None:
+            include_knowledge = legacy_include_knowledge
+
+        if not text or not text.strip():
+            raise ValueError("Text must not be empty")
+
+        validated_domain = self._validate_domain(domain)
+        validated_intent = self._validate_intent(intent)
+        validated_overlays = self._validate_overlays(overlays or [])
+        validated_output_mode = self._validate_output_mode(output_mode)
+
+        if self.core_config is None:
+            self.core_config = load_core_config(self.config_path)
+
+        domain_config = load_domain_config(validated_domain, self.config_path)
+        intent_config = load_intent_config(validated_intent, self.config_path)
+        overlay_configs = load_overlay_configs(validated_overlays, self.config_path)
+        output_format = load_output_format(validated_output_mode, self.config_path)
+
+        blocks: List[str] = []
+
+        blocks.append(f"Роль: {self.core_config.role}")
+        blocks.append(f"Приоритеты: {self.core_config.priorities}")
+        blocks.append(f"Домен: {domain_config.name}")
+        blocks.append(f"Тон: {domain_config.tone}")
+
+        if domain_config.system_rules:
+            blocks.append("Правила домена:\n" + domain_config.system_rules)
+
+        if self.core_config.basic_audit_instructions:
+            blocks.append(
+                "Базовые инструкции:\n- "
+                + "\n- ".join(self.core_config.basic_audit_instructions)
+            )
+
+        if self.core_config.forbidden:
+            blocks.append(
+                "Запрещено:\n- " + "\n- ".join(self.core_config.forbidden)
+            )
+
+        if intent_config and intent_config.instructions:
+            blocks.append(
+                f"Intent: {intent_config.name}\n- "
+                + "\n- ".join(intent_config.instructions)
+            )
+
+        if overlay_configs:
+            overlay_lines: List[str] = []
+            for overlay in overlay_configs:
+                if overlay.instructions:
+                    overlay_lines.append(
+                        f"[{overlay.name}] " + " | ".join(overlay.instructions)
+                    )
+            if overlay_lines:
+                blocks.append("Overlay-инструкции:\n- " + "\n- ".join(overlay_lines))
+
+        audience_block = self._build_audience_block(audience)
+        if audience_block:
+            blocks.append("Аудитория:\n" + audience_block)
+
+        retrieval_meta_total: Dict[str, Any] = {}
+        if include_knowledge:
+            tag_sets = _collect_retrieval_tags(
+                validated_domain,
+                validated_intent,
+                validated_overlays,
+            )
+            budget = KnowledgeBudgetManager(token_budget).allocate(
+                limits=self._limits,
+                level=knowledge_level,
+            )
+            knowledge_block, block_meta, _ = self._build_knowledge_block(
+                text=text,
+                primary_tags=tag_sets["primary"],
+                expanded_tags=tag_sets["expanded"],
+                budget=budget,
+                domain=validated_domain,
+                intent=validated_intent,
+                overlays=validated_overlays,
+                include_few_shot=include_few_shot,
+                total_few_shot_used=0,
+            )
+            retrieval_meta_total = block_meta
+            if knowledge_block:
+                blocks.append("База знаний:\n" + knowledge_block)
+
+        blocks.append("Формат ответа:\n" + output_format)
+        blocks.append("Исходный текст:\n" + text.strip())
+
+        prompt = "\n\n".join(block for block in blocks if block.strip())
+
+        if include_retrieval_meta:
+            return prompt, retrieval_meta_total
+        return prompt
+
+    # legacy alias
+    def build_prompt(self, **kwargs: Any) -> str:
+        return self.build(**kwargs)
