@@ -188,7 +188,7 @@ const MODE_CONFIG = {
     order: 20,
     domain: 'blog',
     intent: 'engagement',    // файл config/intents/engagement.json (профильный интент для этого режима)
-    overlays: ['infostyle'],
+    overlays: ['base'],      // base: вовлечённость — живой стиль, деловой уклон мешает
     temperature: 0.65,
     handler: 'editSelection_blog_engagement'
   },
@@ -202,7 +202,7 @@ const MODE_CONFIG = {
     order: 10,
     domain: 'basic_edit',    // реальный файл config/domains/basic_edit.json
     intent: null,
-    overlays: ['infostyle'],
+    overlays: ['base'],      // base: базовая правка не должна навязывать деловой стиль
     temperature: 0.4,
     handler: 'editSelection_basic_edit'
   },
@@ -216,7 +216,7 @@ const MODE_CONFIG = {
     order: 20,
     domain: 'logic_edit',    // реальный файл config/domains/logic_edit.json
     intent: null,
-    overlays: ['infostyle'],
+    overlays: ['base'],      // base: логическая правка стиленейтральна
     temperature: 0.3,
     handler: 'editSelection_logic_edit'
   },
@@ -258,7 +258,7 @@ const MODE_CONFIG = {
     order: 45,
     domain: 'balanced_edit', // реальный файл config/domains/balanced_edit.json
     intent: null,            // без интента — максимальная предсказуемость
-    overlays: ['infostyle'],
+    overlays: ['base'],      // base: взвешенная правка универсальна, не привязана к деловому стилю
     temperature: 0.35,
     handler: 'editSelection_balanced_edit'
   },
@@ -334,7 +334,7 @@ const MODE_CONFIG = {
     order: 40,
     domain: 'restructure',   // реальный файл config/domains/restructure.json
     intent: null,
-    overlays: ['infostyle', 'structurefirst'],
+    overlays: ['base', 'structurefirst'], // base: структурная правка не зависит от стиля
     temperature: 0.2,
     handler: 'editSelection_restructure'
   },
