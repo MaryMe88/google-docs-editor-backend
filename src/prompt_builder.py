@@ -58,7 +58,7 @@ _KNOWLEDGE_DEPENDENT_INTENTS: frozenset = frozenset({
 FEW_SHOT_MAX_EXAMPLES_PER_BLOCK = 3   # максимум примеров из одного блока
 FEW_SHOT_MAX_TOTAL_EXAMPLES = 5       # всего примеров во всём промпте
 FEW_SHOT_POOL_SIZE = 10               # из скольких топ-записей выбирать случайно
-FEW_SHOT_USE_EXPANDED_TAGS = False    # для примеров используем только primary_tags
+FEW_SHOT_USE_EXPANDED_TAGS = False    # TODO: not yet wired into _build_knowledge_block
 FEW_SHOT_RULES_FIRST = True           # True = правила перед примерами (recency bias)
 
 
@@ -86,6 +86,28 @@ def _get_confidence_note(stage: "FallbackStage") -> str:
     if stage == FallbackStage.EMPTY:
         return ""  # пустой блок — не вставляем ничего
     return ""
+
+
+# ---------------------------------------------------------------------------
+# Хелпер: распаковка результата retrieval (fix #3 — убираем дублирование)
+# ---------------------------------------------------------------------------
+
+def _unpack_retrieval_result(
+    result: Any,
+) -> Tuple[List[Dict[str, Any]], "FallbackStage", int]:
+    """
+    Распаковывает возвращаемое значение select_* функций.
+
+    Поддерживает три формата:
+      - (entries, stage, dropped)  — полный формат с метаданными
+      - (entries, stage)           — без dropped (dropped = 0)
+      - entries                    — только список (stage = STRONG, dropped = 0)
+    """
+    if isinstance(result, tuple) and len(result) == 3:
+        return result
+    if isinstance(result, tuple) and len(result) == 2:
+        return result[0], result[1], 0
+    return result, FallbackStage.STRONG, 0
 
 
 # ---------------------------------------------------------------------------
@@ -272,6 +294,8 @@ def _extract_records(container: Any, inherited_tags: List[str] = None) -> List[D
     Рекурсивно извлекает все записи (словари с полями wrong, correct, name, rule и т.д.)
     из любых вложенных структур: списков, словарей с ключами 'examples', 'techniques', 'steps'.
     Добавляет унаследованные теги (например, из категории) к каждой записи.
+
+    Никогда не мутирует оригинальные dict из JSON — все изменения делаются на копиях.
     """
     if inherited_tags is None:
         inherited_tags = []
@@ -291,9 +315,10 @@ def _extract_records(container: Any, inherited_tags: List[str] = None) -> List[D
                 new_tags = inherited_tags
             for ex in container["examples"]:
                 if isinstance(ex, dict):
-                    # Добавляем теги категории к записи
+                    # fix #2: работаем с копией, не мутируем оригинал
+                    ex = dict(ex)
                     if "tags" in ex and isinstance(ex["tags"], list):
-                        ex["tags"].extend(new_tags)
+                        ex["tags"] = ex["tags"] + new_tags  # новый список, не extend
                     else:
                         ex["tags"] = new_tags.copy()
                     records.append(ex)
@@ -305,8 +330,10 @@ def _extract_records(container: Any, inherited_tags: List[str] = None) -> List[D
                 new_tags = inherited_tags
             for tech in container["techniques"]:
                 if isinstance(tech, dict):
+                    # fix #2: работаем с копией, не мутируем оригинал
+                    tech = dict(tech)
                     if "tags" in tech and isinstance(tech["tags"], list):
-                        tech["tags"].extend(new_tags)
+                        tech["tags"] = tech["tags"] + new_tags  # новый список, не extend
                     else:
                         tech["tags"] = new_tags.copy()
                     records.append(tech)
@@ -316,13 +343,20 @@ def _extract_records(container: Any, inherited_tags: List[str] = None) -> List[D
     return records
 
 
-def _load_kb_from_dir(dirpath: Path) -> list[dict]:
+def _load_kb_from_dir(dirpath: Path, key: Optional[str] = None) -> list[dict]:
     """
     Загружает все JSON-файлы из папки и объединяет их содержимое.
     Поддерживает:
-      - объекты категорий с полем "techniques" (editorial_techniques)
+      - объекты категорий с полем ``key`` (по умолчанию "techniques")
       - массивы записей (stylistic_issues)
+
+    Args:
+        dirpath: Путь к папке с JSON-файлами.
+        key: Ключ для извлечения записей из словаря. Если None — используется "techniques"
+             для обратной совместимости. Передавайте явно, чтобы избежать молчаливой
+             потери записей при нестандартных ключах (fix #5).
     """
+    effective_key = key if key is not None else "techniques"
     records: list[dict] = []
     for filepath in sorted(dirpath.glob("*.json")):
         try:
@@ -334,8 +368,8 @@ def _load_kb_from_dir(dirpath: Path) -> list[dict]:
         logger.debug(f"Loaded KB file: {filepath.name}")
 
         if isinstance(data, dict):
-            # Формат: категория с техниками
-            if "techniques" in data:
+            # Формат: категория с указанным ключом
+            if effective_key in data:
                 records.append(data)
             else:
                 # Может быть словарь с ключами-списками (например, старые форматы)
@@ -359,12 +393,13 @@ def _load_kb_list(file_name: str, base_path: Path, key: str = None) -> List[Dict
       - Словарь с ключом: {"key": [...]}  — стандартный формат
       - Плоский список:   [...]            — новый формат (key игнорируется)
 
-    Если file_name указывает на папку, загружает все JSON-файлы из неё.
+    Если file_name указывает на папку, загружает все JSON-файлы из неё,
+    передавая key в _load_kb_from_dir (fix #5).
     """
     path = base_path / file_name
-    # Если путь — папка, загружаем всё содержимое
+    # Если путь — папка, загружаем всё содержимое, передаём key
     if path.is_dir():
-        return _load_kb_from_dir(path)
+        return _load_kb_from_dir(path, key=key)
 
     if not path.exists():
         logger.warning(f"KB file not found: {path}")
@@ -416,7 +451,7 @@ def _load_kb_file_or_dir(name: str, base_path: Path, key: str = None) -> List[Di
     dir_path = base_path / name
     if dir_path.is_dir():
         logger.debug(f"Loading KB from directory: {dir_path}")
-        return _load_kb_from_dir(dir_path)
+        return _load_kb_from_dir(dir_path, key=key)
 
     # 2. Проверяем файл name.json
     file_path = base_path / f"{name}.json"
@@ -473,7 +508,7 @@ def _load_kb_multi(
     dir_path = base_path / group
     if dir_path.is_dir():
         logger.debug(f"Loading KB from directory: {dir_path}")
-        return _load_kb_from_dir(dir_path)
+        return _load_kb_from_dir(dir_path, key=key)
 
     # 3. Старый монолитный файл
     if fallback_name:
@@ -770,8 +805,9 @@ class PromptBuilder:
         self.knowledge_base = load_knowledge_base(self.kb_path)
 
     def reload_configs(self) -> None:
-        self.core_config = None
-        self.knowledge_base = None
+        """Перезагружает конфиги и базу знаний с диска (fix #1)."""
+        self.core_config = load_core_config(self.config_path)
+        self.knowledge_base = load_knowledge_base(self.kb_path)
 
     # ------------------------------------------------------------------
     # Доступные intents / overlays
@@ -922,14 +958,7 @@ class PromptBuilder:
                 char_budget=grammar_budget.char_budget,
                 return_meta=True,
             )
-            if isinstance(grammar_result, tuple) and len(grammar_result) == 3:
-                grammar_entries, stage, dropped = grammar_result
-            elif isinstance(grammar_result, tuple) and len(grammar_result) == 2:
-                grammar_entries, stage = grammar_result
-                dropped = 0
-            else:
-                grammar_entries, stage = grammar_result, FallbackStage.STRONG
-                dropped = 0
+            grammar_entries, stage, dropped = _unpack_retrieval_result(grammar_result)
 
             # Разделяем на пары и правила
             pair_entries = [e for e in grammar_entries if _has_few_shot_pair(e)]
@@ -1010,14 +1039,7 @@ class PromptBuilder:
                 char_budget=style_budget.char_budget,
                 return_meta=True,
             )
-            if isinstance(style_result, tuple) and len(style_result) == 3:
-                style_entries, stage, dropped = style_result
-            elif isinstance(style_result, tuple) and len(style_result) == 2:
-                style_entries, stage = style_result
-                dropped = 0
-            else:
-                style_entries, stage = style_result, FallbackStage.STRONG
-                dropped = 0
+            style_entries, stage, dropped = _unpack_retrieval_result(style_result)
 
             pair_entries = [e for e in style_entries if _has_few_shot_pair(e)]
             rule_entries = [e for e in style_entries if not _has_few_shot_pair(e)]
@@ -1095,14 +1117,7 @@ class PromptBuilder:
                 char_budget=logic_budget.char_budget,
                 return_meta=True,
             )
-            if isinstance(logic_result, tuple) and len(logic_result) == 3:
-                logic_entries, stage, dropped = logic_result
-            elif isinstance(logic_result, tuple) and len(logic_result) == 2:
-                logic_entries, stage = logic_result
-                dropped = 0
-            else:
-                logic_entries, stage = logic_result, FallbackStage.STRONG
-                dropped = 0
+            logic_entries, stage, dropped = _unpack_retrieval_result(logic_result)
 
             pair_entries = [e for e in logic_entries if _has_few_shot_pair(e)]
             rule_entries = [e for e in logic_entries if not _has_few_shot_pair(e)]
@@ -1179,14 +1194,7 @@ class PromptBuilder:
                 char_budget=composition_budget.char_budget,
                 return_meta=True,
             )
-            if isinstance(composition_result, tuple) and len(composition_result) == 3:
-                composition_entries, stage, dropped = composition_result
-            elif isinstance(composition_result, tuple) and len(composition_result) == 2:
-                composition_entries, stage = composition_result
-                dropped = 0
-            else:
-                composition_entries, stage = composition_result, FallbackStage.STRONG
-                dropped = 0
+            composition_entries, stage, dropped = _unpack_retrieval_result(composition_result)
 
             pair_entries = [e for e in composition_entries if _has_few_shot_pair(e)]
             rule_entries = [e for e in composition_entries if not _has_few_shot_pair(e)]
@@ -1267,14 +1275,7 @@ class PromptBuilder:
                 char_budget=composition_errors_budget.char_budget,
                 return_meta=True,
             )
-            if isinstance(comp_err_result, tuple) and len(comp_err_result) == 3:
-                comp_err_entries, stage, dropped = comp_err_result
-            elif isinstance(comp_err_result, tuple) and len(comp_err_result) == 2:
-                comp_err_entries, stage = comp_err_result
-                dropped = 0
-            else:
-                comp_err_entries, stage = comp_err_result, FallbackStage.STRONG
-                dropped = 0
+            comp_err_entries, stage, dropped = _unpack_retrieval_result(comp_err_result)
 
             pair_entries = [e for e in comp_err_entries if _has_few_shot_pair(e)]
             rule_entries = [e for e in comp_err_entries if not _has_few_shot_pair(e)]
@@ -1351,14 +1352,7 @@ class PromptBuilder:
                 char_budget=cohesion_budget.char_budget,
                 return_meta=True,
             )
-            if isinstance(cohesion_result, tuple) and len(cohesion_result) == 3:
-                cohesion_entries, stage, dropped = cohesion_result
-            elif isinstance(cohesion_result, tuple) and len(cohesion_result) == 2:
-                cohesion_entries, stage = cohesion_result
-                dropped = 0
-            else:
-                cohesion_entries, stage = cohesion_result, FallbackStage.STRONG
-                dropped = 0
+            cohesion_entries, stage, dropped = _unpack_retrieval_result(cohesion_result)
 
             pair_entries = [e for e in cohesion_entries if _has_few_shot_pair(e)]
             rule_entries = [e for e in cohesion_entries if not _has_few_shot_pair(e)]
@@ -1439,14 +1433,7 @@ class PromptBuilder:
                 char_budget=storytelling_budget.char_budget,
                 return_meta=True,
             )
-            if isinstance(story_result, tuple) and len(story_result) == 3:
-                story_entries, stage, dropped = story_result
-            elif isinstance(story_result, tuple) and len(story_result) == 2:
-                story_entries, stage = story_result
-                dropped = 0
-            else:
-                story_entries, stage = story_result, FallbackStage.STRONG
-                dropped = 0
+            story_entries, stage, dropped = _unpack_retrieval_result(story_result)
 
             pair_entries = [e for e in story_entries if _has_few_shot_pair(e)]
             rule_entries = [e for e in story_entries if not _has_few_shot_pair(e)]
@@ -1523,14 +1510,7 @@ class PromptBuilder:
                 char_budget=marketing_budget.char_budget,
                 return_meta=True,
             )
-            if isinstance(marketing_result, tuple) and len(marketing_result) == 3:
-                marketing_entries, stage, dropped = marketing_result
-            elif isinstance(marketing_result, tuple) and len(marketing_result) == 2:
-                marketing_entries, stage = marketing_result
-                dropped = 0
-            else:
-                marketing_entries, stage = marketing_result, FallbackStage.STRONG
-                dropped = 0
+            marketing_entries, stage, dropped = _unpack_retrieval_result(marketing_result)
 
             pair_entries = [e for e in marketing_entries if _has_few_shot_pair(e)]
             rule_entries = [e for e in marketing_entries if not _has_few_shot_pair(e)]
@@ -1607,14 +1587,7 @@ class PromptBuilder:
                 char_budget=rhetoric_budget.char_budget,
                 return_meta=True,
             )
-            if isinstance(rhetoric_result, tuple) and len(rhetoric_result) == 3:
-                rhetoric_entries, stage, dropped = rhetoric_result
-            elif isinstance(rhetoric_result, tuple) and len(rhetoric_result) == 2:
-                rhetoric_entries, stage = rhetoric_result
-                dropped = 0
-            else:
-                rhetoric_entries, stage = rhetoric_result, FallbackStage.STRONG
-                dropped = 0
+            rhetoric_entries, stage, dropped = _unpack_retrieval_result(rhetoric_result)
 
             pair_entries = [e for e in rhetoric_entries if _has_few_shot_pair(e)]
             rule_entries = [e for e in rhetoric_entries if not _has_few_shot_pair(e)]
@@ -1691,14 +1664,7 @@ class PromptBuilder:
                 char_budget=editorial_budget.char_budget,
                 return_meta=True,
             )
-            if isinstance(editorial_result, tuple) and len(editorial_result) == 3:
-                editorial_entries, stage, dropped = editorial_result
-            elif isinstance(editorial_result, tuple) and len(editorial_result) == 2:
-                editorial_entries, stage = editorial_result
-                dropped = 0
-            else:
-                editorial_entries, stage = editorial_result, FallbackStage.STRONG
-                dropped = 0
+            editorial_entries, stage, dropped = _unpack_retrieval_result(editorial_result)
 
             pair_entries = [e for e in editorial_entries if _has_few_shot_pair(e)]
             rule_entries = [e for e in editorial_entries if not _has_few_shot_pair(e)]
