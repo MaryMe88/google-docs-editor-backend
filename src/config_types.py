@@ -334,6 +334,21 @@ class KnowledgeBudget:
         """Возвращает BlockBudget по имени блока."""
         return self._budgets.get(block_name)
 
+    def disable(self, key: str) -> None:
+        """
+        Отключает блок знаний по имени.
+        Если блок не найден, молча игнорирует (не бросает исключение).
+        """
+        if key not in self._budgets:
+            return
+        old = self._budgets[key]
+        # BlockBudget frozen, создаём новый с enabled=False
+        self._budgets[key] = BlockBudget(
+            entry_limit=old.entry_limit,
+            char_budget=old.char_budget,
+            enabled=False,
+        )
+
     def __getattr__(self, name: str) -> BlockBudget:
         if name.startswith("_"):
             raise AttributeError(name)
