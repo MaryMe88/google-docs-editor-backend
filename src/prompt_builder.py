@@ -197,8 +197,11 @@ def load_domain_config(
         name=data.get("name", normalized_domain),
         system_rules=data.get("system_rules", ""),
         tone=data.get("tone", "neutral"),
-        allow_storytelling=data.get("allow_storytelling", True),
-        allow_marketing=data.get("allow_marketing", True),
+        # fix: дефолт False — storytelling и marketing требуют явного разрешения
+        # в JSON домена. Иначе любой нейтральный домен тихо получал KB-блоки
+        # со сторителлингом и маркетингом, что давало непредсказуемые украшательства.
+        allow_storytelling=data.get("allow_storytelling", False),
+        allow_marketing=data.get("allow_marketing", False),
     )
 
 
