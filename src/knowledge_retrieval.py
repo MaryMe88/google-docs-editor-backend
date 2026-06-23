@@ -432,6 +432,30 @@ def _sort_ranked(
     return [entry for _, _, entry in scored]
 
 
+# Шаг 5: вспомогательная функция для проверки типа возвращаемого значения
+def _ensure_return_type(
+    result: Union[List[Dict[str, Any]], Tuple[List[Dict[str, Any]], FallbackStage, int]],
+    return_meta: bool,
+) -> Union[List[Dict[str, Any]], Tuple[List[Dict[str, Any]], FallbackStage, int]]:
+    """
+    Проверяет, что тип результата соответствует ожидаемому в зависимости от return_meta.
+    Если не соответствует, бросает TypeError.
+    """
+    if return_meta:
+        if not isinstance(result, tuple) or len(result) != 3:
+            raise TypeError(
+                f"_select_ranked_entries с return_meta=True должен возвращать tuple из 3 элементов "
+                f"(entries, stage, dropped), но получил {type(result).__name__}: {result!r}"
+            )
+    else:
+        if not isinstance(result, list):
+            raise TypeError(
+                f"_select_ranked_entries с return_meta=False должен возвращать list, "
+                f"но получил {type(result).__name__}: {result!r}"
+            )
+    return result
+
+
 @overload
 def _select_ranked_entries(
     entries: List[Dict[str, Any]],
@@ -498,7 +522,8 @@ def _select_ranked_entries(
     """
     if not entries or limit <= 0:
         stage = FallbackStage.EMPTY
-        return ([], stage, 0) if return_meta else []
+        result = ([], stage, 0) if return_meta else []
+        return _ensure_return_type(result, return_meta)
 
     policy = fallback_policy or RULE_FALLBACK_POLICY
     candidates = entries if candidate_limit is None else entries[:candidate_limit]
@@ -533,8 +558,10 @@ def _select_ranked_entries(
                 debug_context, dropped, FallbackStage.STRONG.value,
             )
         if return_meta:
-            return (result, FallbackStage.STRONG, dropped)
-        return result
+            res = (result, FallbackStage.STRONG, dropped)
+        else:
+            res = result
+        return _ensure_return_type(res, return_meta)
 
     if policy.allow_text_only:
         text_only_scored: List[Tuple[int, int, Dict[str, Any]]] = []
@@ -557,8 +584,10 @@ def _select_ranked_entries(
                     debug_context, dropped, FallbackStage.TEXT_ONLY.value,
                 )
             if return_meta:
-                return (result, FallbackStage.TEXT_ONLY, dropped)
-            return result
+                res = (result, FallbackStage.TEXT_ONLY, dropped)
+            else:
+                res = result
+            return _ensure_return_type(res, return_meta)
 
     if policy.allow_tag_only:
         tag_only_scored: List[Tuple[int, int, int, Dict[str, Any]]] = []
@@ -588,8 +617,10 @@ def _select_ranked_entries(
                     debug_context, dropped, FallbackStage.TAG_ONLY.value,
                 )
             if return_meta:
-                return (result, FallbackStage.TAG_ONLY, dropped)
-            return result
+                res = (result, FallbackStage.TAG_ONLY, dropped)
+            else:
+                res = result
+            return _ensure_return_type(res, return_meta)
 
     if policy.allow_neutral_fallback:
         neutral_scored: List[Tuple[int, int, Dict[str, Any]]] = []
@@ -611,13 +642,17 @@ def _select_ranked_entries(
                     debug_context, dropped, FallbackStage.NEUTRAL.value,
                 )
             if return_meta:
-                return (result, FallbackStage.NEUTRAL, dropped)
-            return result
+                res = (result, FallbackStage.NEUTRAL, dropped)
+            else:
+                res = result
+            return _ensure_return_type(res, return_meta)
 
     _log_stage_debug(debug_context, FallbackStage.EMPTY, candidates, [])
     if return_meta:
-        return ([], FallbackStage.EMPTY, 0)
-    return []
+        res = ([], FallbackStage.EMPTY, 0)
+    else:
+        res = []
+    return _ensure_return_type(res, return_meta)
 
 
 @overload

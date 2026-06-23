@@ -652,6 +652,10 @@ async def call_with_fallback(
         temperature: температура генерации.
         max_retries_per_provider: количество попыток на каждого провайдера.
     """
+    # Проверка на пустой список провайдеров (Шаг 1)
+    if not providers:
+        raise LLMError("No providers specified. Cannot execute LLM call.")
+
     last_error: Optional[Exception] = None
     for provider_name in providers:
         try:

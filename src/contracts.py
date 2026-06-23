@@ -128,11 +128,13 @@ class EditResponse(BaseModel):
 
     Поле report заполняется только в режиме output_mode='text_and_report'.
     В остальных режимах report=None.
+
+    Поле prompt удалено из ответа (Шаг 4) — внутренняя информация не раскрывается клиенту.
     """
 
     edited_text: str
     report: Optional[str] = None  # PR-2 (НП-2): добавлено для режима text_and_report
-    prompt: str
+    # prompt: str  # УДАЛЕНО: не возвращаем промпт клиенту
     provider: Optional[str] = None
     model: Optional[str] = None
     dry_run: bool = False

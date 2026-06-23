@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import os
 import re
 import time
 from contextlib import asynccontextmanager
@@ -37,6 +38,22 @@ logger = logging.getLogger(__name__)
 _provider_cache: Dict[str, Any] = {}
 _PROVIDER_CACHE_TTL = 60
 
+# Шаг 2а: маппинг провайдер -> переменная окружения для API-ключа
+_PROVIDER_KEY_ENV: Dict[str, str] = {
+    "perplexity": "PERPLEXITY_API_KEY",
+    "openai": "OPENAI_API_KEY",
+    "anthropic": "ANTHROPIC_API_KEY",
+    "openrouter": "OPENROUTER_API_KEY",
+}
+
+# Шаг 3: CORS – разрешённые источники из переменной окружения
+_CORS_ORIGINS_RAW = os.getenv("CORS_ALLOWED_ORIGINS", "")
+_CORS_ORIGINS: list[str] = (
+    [origin.strip() for origin in _CORS_ORIGINS_RAW.split(",") if origin.strip()]
+    if _CORS_ORIGINS_RAW
+    else ["https://script.google.com", "https://docs.google.com"]
+)
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -67,12 +84,13 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
+# Шаг 3: CORS – безопасная конфигурация с конкретными источниками
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=_CORS_ORIGINS,
     allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_methods=["GET", "POST", "OPTIONS"],
+    allow_headers=["Authorization", "Content-Type"],
 )
 
 
@@ -134,19 +152,14 @@ async def _check_providers_availability(deep: bool = False) -> Tuple[bool, Dict[
         if deep:
             available = await _check_provider_deep(provider_name)
         else:
-            try:
-                provider_enum = LLMProvider(provider_name)
-                async with create_llm_client(
-                    provider=provider_enum,
-                    model=None,
-                    temperature=0.0,
-                    timeout=5.0,
-                    max_retries=1,
-                ) as client:
-                    available = True
-            except Exception as e:
-                logger.debug(f"Light check failed for {provider_name}: {e}")
+            # Шаг 2а: light‑check только по наличию переменной окружения
+            env_var = _PROVIDER_KEY_ENV.get(provider_name.lower())
+            if env_var is None:
                 available = False
+            else:
+                available = bool(os.getenv(env_var))
+            if not available:
+                logger.debug(f"Light check failed for {provider_name}: missing API key")
         availability[provider_name] = available
     any_available = any(availability.values())
     if deep:
@@ -162,11 +175,16 @@ async def root() -> dict:
     return {"status": "ok", "version": "1.0.0"}
 
 
-# PR-3 (НП-3): подключён response_model=HealthResponse; ответ строится через
-# HealthResponse.model_dump() + JSONResponse, чтобы сохранить 503 при degraded.
-# available_domains добавлен в ответ (был в модели, но не возвращался).
 @app.get("/health", response_model=HealthResponse)
 async def health_check(deep: bool = False) -> Response:
+    """
+    Проверка состояния сервиса.
+    
+    - deep=false (по умолчанию): проверяет только наличие API-ключей в env.
+    - deep=true: выполняет реальный тестовый запрос к каждому LLM-провайдеру.
+      ВНИМАНИЕ: deep=true потребляет реальные токены и может тарифицироваться.
+      Использовать только для диагностики, не в автоматическом мониторинге.
+    """
     builder = get_prompt_builder()
     any_available, provider_status = await _check_providers_availability(deep=deep)
 
@@ -222,8 +240,6 @@ def _log_edit_request_meta(request: EditRequest, retrieval_meta: Optional[Dict] 
     logger.info(json.dumps(log_data, ensure_ascii=False))
 
 
-# PR-2 (НП-2): подключён response_model=EditResponse; обе ветки возвращают
-# EditResponse(...) вместо dict — Pydantic валидирует ответ на выходе.
 @app.post("/api/edit", response_model=EditResponse)
 async def edit_text(request: EditRequest) -> EditResponse:
     if request.domain not in ALLOWED_DOMAINS:
@@ -268,15 +284,16 @@ async def edit_text(request: EditRequest) -> EditResponse:
                 include_retrieval_meta=True,
             )
             _log_edit_request_meta(request, retrieval_meta)
+            # Шаг 4: убираем prompt из ответа
             return EditResponse(
                 edited_text=request.text,
                 report=None,
-                prompt=prompt,
+                # prompt=prompt,  # удалено
                 provider=request.provider,
                 model=request.model,
                 dry_run=True,
                 usage={},
-                raw_response={},
+                raw_response={},  # в dry-run raw_response пустой
                 retrieval_meta=retrieval_meta,
             )
 
@@ -308,17 +325,18 @@ async def edit_text(request: EditRequest) -> EditResponse:
             edited_text, report = _parse_text_and_report(response.content)
 
         _log_edit_request_meta(request, retrieval_meta)
+        # Шаг 4: убираем prompt и content из ответа
         return EditResponse(
             edited_text=edited_text,
             report=report,
-            prompt=prompt,
+            # prompt=prompt,  # удалено
             model=response.model,
             provider=response.provider,
             dry_run=False,
             usage={"tokens_used": response.tokens_used},
             raw_response={
                 "finish_reason": response.finish_reason,
-                "content": response.content,
+                # "content": response.content,  # удалено — не возвращаем полный ответ LLM
             },
             retrieval_meta=retrieval_meta if request.include_retrieval_meta else None,
         )
