@@ -1,0 +1,156 @@
+{
+  "domains": {
+    "marketing": {
+      "primary": ["marketing"],
+      "expanded": ["sales", "promo", "conversion"]
+    },
+    "blog": {
+      "primary": ["blog"],
+      "expanded": ["nonmarketing", "article", "educational"]
+    },
+    "deai": {
+      "primary": ["deai", "antiai"],
+      "expanded": ["humanize", "natural"]
+    },
+    "basic_edit": {
+      "primary": ["editing"],
+      "expanded": ["grammar", "style", "clarity"]
+    },
+    "balanced_edit": {
+      "primary": ["editing", "style"],
+      "expanded": ["clarity", "coherence"]
+    },
+    "nora_gal": {
+      "primary": ["noragal", "editing"],
+      "expanded": ["brevity", "clarity"]
+    },
+    "nora_gal_soft": {
+      "primary": ["noragal"],
+      "expanded": ["clarity"]
+    },
+    "fiction": {
+      "primary": ["storytelling"],
+      "expanded": ["narrative", "engagement"]
+    },
+    "composition": {
+      "primary": ["composition"],
+      "expanded": ["structure", "coherence"]
+    },
+    "logic_edit": {
+      "primary": ["logic"],
+      "expanded": ["argumentation", "coherence"]
+    },
+    "makeclear": {
+      "primary": ["clarity", "infostyle"],
+      "expanded": ["precision"]
+    },
+    "restructure": {
+      "primary": ["composition", "structure"],
+      "expanded": ["coherence"]
+    },
+    "readerfirst": {
+      "primary": ["clarity"],
+      "expanded": ["engagement"]
+    },
+    "cutnoise": {
+      "primary": ["brevity", "clarity"],
+      "expanded": []
+    },
+    "genre": {
+      "primary": ["storytelling", "style"],
+      "expanded": ["narrative"]
+    }
+  },
+  "intents": {
+    "storytelling": {
+      "primary": ["storytelling", "structure"],
+      "expanded": ["narrative", "engagement"]
+    },
+    "analytical": {
+      "primary": ["analytical", "logic"],
+      "expanded": ["reasoning", "argumentation"]
+    },
+    "engagement": {
+      "primary": ["engagement"],
+      "expanded": ["rhetoric", "narrative"]
+    },
+    "marketingpush": {
+      "primary": ["marketing", "marketingpush"],
+      "expanded": ["persuasion", "cta", "promo"]
+    }
+  },
+  "overlays": {
+    "logic": {
+      "primary": ["logic"],
+      "expanded": ["coherence", "argumentation"]
+    },
+    "factcheck": {
+      "primary": ["factcheck"],
+      "expanded": ["accuracy", "verification"]
+    },
+    "infostyle": {
+      "primary": ["infostyle", "clarity"],
+      "expanded": ["precision"]
+    },
+    "composition": {
+      "primary": ["composition"],
+      "expanded": ["structure"]
+    },
+    "cohesion": {
+      "primary": ["cohesion"],
+      "expanded": []
+    },
+    "rhetoric": {
+      "primary": ["rhetoric"],
+      "expanded": []
+    },
+    "marketingpush": {
+      "primary": ["marketing", "marketingpush"],
+      "expanded": ["persuasion", "cta"]
+    },
+    "finalcheck_full": {
+      "primary": ["finalcheck"],
+      "expanded": ["accuracy", "coherence"]
+    },
+    "finalcheck_light": {
+      "primary": ["finalcheck"],
+      "expanded": ["clarity"]
+    },
+    "base": {
+      "primary": ["editing"],
+      "expanded": ["grammar", "style"]
+    },
+    "coldemail": {
+      "primary": ["marketing", "persuasion"],
+      "expanded": ["cta"]
+    },
+    "landing": {
+      "primary": ["landing"],
+      "expanded": []
+    },
+    "no_overwrite": {
+      "primary": ["no_overwrite"],
+      "expanded": []
+    },
+    "pressrelease": {
+      "primary": ["pressrelease"],
+      "expanded": []
+    },
+    "readerfocus": {
+      "primary": ["readerfocus"],
+      "expanded": []
+    },
+    "recommendations": {
+      "primary": ["recommendations"],
+      "expanded": []
+    },
+    "structurefirst": {
+      "primary": ["structurefirst"],
+      "expanded": []
+    },
+    "workdoc": {
+      "primary": ["workdoc"],
+      "expanded": []
+    }
+  }
+}
