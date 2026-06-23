@@ -16,8 +16,11 @@ from __future__ import annotations
 from types import SimpleNamespace
 from typing import Any, Dict, List
 
+import pytest
+
 from src.knowledge_retrieval import (
     FallbackPolicy,
+    FallbackStage,
     RULE_FALLBACK_POLICY,
     STRUCTURAL_FALLBACK_POLICY,
     _collect_with_budget,
@@ -351,3 +354,130 @@ class TestFallbackPolicySmoke:
         assert STRUCTURAL_FALLBACK_POLICY.allow_tag_only is True
         assert STRUCTURAL_FALLBACK_POLICY.allow_neutral_fallback is True
         assert STRUCTURAL_FALLBACK_POLICY.primary_only_for_tag_fallback is True
+
+
+class TestReturnTypesAndEdgeCases:
+    """Проверяем корректность возвращаемых типов после Шага 5 (runtime‑защита)."""
+
+    def test_select_ranked_returns_list_when_return_meta_false(self) -> None:
+        entries = [
+            make_rule_entry(
+                wrong="ихний",
+                correct="их",
+                rule="просторечие",
+                tags=["grammar"],
+            )
+        ]
+        result = _select_ranked_entries(
+            entries=entries,
+            normalized_text="ихний",
+            wanted_tags=["grammar"],
+            limit=1,
+            scorer=score_rule_entry,
+            return_meta=False,
+        )
+        assert isinstance(result, list)
+        assert len(result) == 1
+
+    def test_select_ranked_returns_tuple_when_return_meta_true(self) -> None:
+        entries = [
+            make_rule_entry(
+                wrong="ихний",
+                correct="их",
+                rule="просторечие",
+                tags=["grammar"],
+            )
+        ]
+        result = _select_ranked_entries(
+            entries=entries,
+            normalized_text="ихний",
+            wanted_tags=["grammar"],
+            limit=1,
+            scorer=score_rule_entry,
+            return_meta=True,
+        )
+        assert isinstance(result, tuple)
+        assert len(result) == 3
+        entries_list, stage, dropped = result
+        assert isinstance(entries_list, list)
+        assert isinstance(stage, FallbackStage)
+        assert isinstance(dropped, int)
+
+    def test_select_ranked_empty_entries_with_return_meta(self) -> None:
+        result = _select_ranked_entries(
+            entries=[],
+            normalized_text="",
+            wanted_tags=["grammar"],
+            limit=1,
+            scorer=score_rule_entry,
+            return_meta=True,
+        )
+        assert isinstance(result, tuple)
+        assert len(result) == 3
+        entries_list, stage, dropped = result
+        assert entries_list == []
+        assert stage == FallbackStage.EMPTY
+        assert dropped == 0
+
+    def test_select_ranked_empty_entries_without_meta(self) -> None:
+        result = _select_ranked_entries(
+            entries=[],
+            normalized_text="",
+            wanted_tags=["grammar"],
+            limit=1,
+            scorer=score_rule_entry,
+            return_meta=False,
+        )
+        assert isinstance(result, list)
+        assert result == []
+
+    def test_select_grammar_rules_returns_list_by_default(self) -> None:
+        kb = SimpleNamespace(
+            grammar_errors=[
+                make_rule_entry(
+                    wrong="ихний",
+                    correct="их",
+                    rule="просторечие",
+                    tags=["grammar"],
+                )
+            ]
+        )
+        result = select_grammar_rules(
+            kb=kb,
+            text="ихний",
+            tags=["grammar"],
+            limit=1,
+            return_meta=False,
+        )
+        assert isinstance(result, list)
+
+    def test_select_grammar_rules_returns_tuple_when_meta_requested(self) -> None:
+        kb = SimpleNamespace(
+            grammar_errors=[
+                make_rule_entry(
+                    wrong="ихний",
+                    correct="их",
+                    rule="просторечие",
+                    tags=["grammar"],
+                )
+            ]
+        )
+        result = select_grammar_rules(
+            kb=kb,
+            text="ихний",
+            tags=["grammar"],
+            limit=1,
+            return_meta=True,
+        )
+        assert isinstance(result, tuple)
+        assert len(result) == 3
+
+    def test_ensure_return_type_raises_on_mismatch(self) -> None:
+        """Проверяем, что внутренняя защита срабатывает при неверном типе."""
+        from src.knowledge_retrieval import _ensure_return_type
+
+        with pytest.raises(TypeError, match="должен возвращать tuple"):
+            _ensure_return_type([], return_meta=True)  # type: ignore
+
+        with pytest.raises(TypeError, match="должен возвращать list"):
+            _ensure_return_type(([], FallbackStage.EMPTY, 0), return_meta=False)  # type: ignore
