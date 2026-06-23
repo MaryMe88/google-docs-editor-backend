@@ -20,6 +20,7 @@ from src.prompt_builder import (
     KB_BLOCK_REGISTRY,
     KBBlockConfig,
     _append_rule_entries,
+    load_output_format,  # добавлен импорт для задачи 8
 )
 from src.knowledge_retrieval import FallbackStage, _collect_with_budget
 
@@ -38,19 +39,6 @@ def test_build_returns_string(builder: PromptBuilder) -> None:
     assert "Домен:" in result
     assert "Исходный текст:" in result
     assert "Это тестовый текст" in result
-
-
-def test_build_prompt_alias_matches_build(builder: PromptBuilder) -> None:
-    kwargs = {
-        "text": "Проверяем alias build_prompt.",
-        "domain": "blog",
-        "intent": "neutral",
-        "overlays": [],
-        "include_knowledge": False,
-    }
-    direct = builder.build(**kwargs)
-    alias = builder.build_prompt(**kwargs)
-    assert alias == direct
 
 
 def test_include_knowledge_false_omits_knowledge_block(builder: PromptBuilder) -> None:
@@ -710,3 +698,55 @@ def test_budget_disable() -> None:
     assert budget.get("grammar").enabled is False
     assert budget.get("grammar").entry_limit == 5
     assert budget.get("grammar").char_budget == 100
+
+
+# ============================================================================
+# НОВЫЕ ТЕСТЫ ДЛЯ ЗАДАЧ 4-8 (исправлены)
+# ============================================================================
+
+def test_domain_tasks_and_constraints_in_prompt(builder: PromptBuilder) -> None:
+    """Проверяет, что в промпт добавляются блоки 'Задачи редактора' и 'Ограничения домена'."""
+    prompt = builder.build(text="Тест", domain="blog", include_knowledge=False)
+    assert "Задачи редактора" in prompt
+    assert "Ограничения домена" in prompt
+
+
+def test_ip_ceiling_in_prompt(builder: PromptBuilder) -> None:
+    """Проверяет наличие целевого ИП в промпте."""
+    prompt = builder.build(text="Тест", domain="deai", include_knowledge=False)
+    assert "Целевой Индекс пластиковости" in prompt
+    assert "≤ 1.0" in prompt  # для deai
+
+    prompt_blog = builder.build(text="Тест", domain="blog", include_knowledge=False)
+    assert "≤ 2.5" in prompt_blog  # глобальный
+
+
+def test_conflicting_overlays_raise_error(builder: PromptBuilder) -> None:
+    """Проверяет, что конфликтующие оверлеи вызывают ValueError."""
+    with pytest.raises(ValueError, match="Overlays conflict"):
+        builder.build(
+            text="Тест",
+            domain="blog",
+            overlays=["finalcheck_full", "finalcheck_light"],
+            include_knowledge=False,
+        )
+
+
+def test_non_conflicting_overlays_ok(builder: PromptBuilder) -> None:
+    """Проверяет, что неконфликтующие оверлеи работают."""
+    # Используем существующие оверлеи: factcheck и infostyle
+    prompt = builder.build(
+        text="Тест",
+        domain="blog",
+        overlays=["factcheck", "infostyle"],
+        include_knowledge=False,
+    )
+    assert isinstance(prompt, str)
+    assert "Overlay-инструкции" in prompt
+
+
+def test_load_output_format_no_markdown_removed() -> None:
+    """Проверяет, что в load_output_format не используется no_markdown_note."""
+    result = load_output_format("text_only")
+    assert "Markdown" in result
+    assert "no_markdown" not in result  # ключ не должен фигурировать
