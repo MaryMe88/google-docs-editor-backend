@@ -5,7 +5,15 @@
     "promo",
     "conversion",
     "persuasion",
-    "cta"
+    "cta",
+    "marketingpush",
+    "landing",
+    "no_overwrite",
+    "pressrelease",
+    "readerfocus",
+    "recommendations",
+    "structurefirst",
+    "workdoc"
   ],
   "scope": "marketing_only",
   "example_disclaimer": "Все примеры вымышлены и приведены только для иллюстрации. Не копируйте имена и цифры дословно в реальные тексты.",
@@ -18,7 +26,8 @@
         "marketing",
         "landing",
         "b2b",
-        "b2c"
+        "b2c",
+        "marketingpush"
       ],
       "constraints": [
         "Не искажать факты, не придумывать цифры и кейсы.",
