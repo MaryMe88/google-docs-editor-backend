@@ -11,11 +11,12 @@ from typing import Any, Dict, Optional, Set, Tuple
 
 from fastapi import FastAPI, HTTPException, Request, Response, status
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 from pydantic import ValidationError
 
 from src.config_types import AudienceProfile
-from src.contracts import EditRequest, CONTRACT_VERSION
-from src.llm_client import LLMError, LLMProvider, LLMResponse, create_llm_client, call_with_fallback
+from src.contracts import CONTRACT_VERSION, EditRequest, EditResponse, HealthResponse
+from src.llm_client import LLMError, LLMProvider, LLMResponse, call_with_fallback, create_llm_client
 from src.prompt_builder import PromptBuilder
 from src.shared_contracts import (
     ALLOWED_DOMAINS,
@@ -24,7 +25,7 @@ from src.shared_contracts import (
     ALLOWED_PROVIDERS,
 )
 from src.startup_checks import run_startup_checks
-from src.scoring_weights import load_scoring_weights  # <-- PR-3: предзагрузка весов
+from src.scoring_weights import load_scoring_weights
 
 logging.basicConfig(
     level=logging.INFO,
@@ -42,7 +43,6 @@ async def lifespan(app: FastAPI):
     logger.info("Starting up text editor service...")
     prompt_builder = PromptBuilder()
 
-    # Выносим синхронную тяжёлую работу в поток — event loop не блокируется
     await asyncio.to_thread(prompt_builder.startup_check)
     await asyncio.to_thread(
         run_startup_checks,
@@ -52,7 +52,6 @@ async def lifespan(app: FastAPI):
         Path("config"),
         Path("knowledge_base"),
     )
-    # PR-3: предварительно загружаем веса скоринга в кэш, чтобы первый запрос был быстрее
     await asyncio.to_thread(load_scoring_weights)
 
     logger.info("PromptBuilder initialized successfully")
@@ -163,27 +162,30 @@ async def root() -> dict:
     return {"status": "ok", "version": "1.0.0"}
 
 
-@app.get("/health")
+# PR-3 (НП-3): подключён response_model=HealthResponse; ответ строится через
+# HealthResponse.model_dump() + JSONResponse, чтобы сохранить 503 при degraded.
+# available_domains добавлен в ответ (был в модели, но не возвращался).
+@app.get("/health", response_model=HealthResponse)
 async def health_check(deep: bool = False) -> Response:
     builder = get_prompt_builder()
     any_available, provider_status = await _check_providers_availability(deep=deep)
 
-    response_data = {
-        "status": "ok" if any_available else "degraded",
-        "version": "1.0.0",
-        "available_providers": [p for p, ok in provider_status.items() if ok],
-        "provider_status": provider_status,
-        "available_intents": list(builder.get_available_intents()),
-        "available_overlays": list(builder.get_available_overlays()),
-        "deep_check": deep,
-        "contract_version": CONTRACT_VERSION,
-    }
+    health = HealthResponse(
+        status="ok" if any_available else "degraded",
+        version="1.0.0",
+        available_domains=sorted(ALLOWED_DOMAINS),
+        available_intents=list(builder.get_available_intents()),
+        available_overlays=list(builder.get_available_overlays()),
+        available_providers=[p for p, ok in provider_status.items() if ok],
+        provider_status=provider_status,
+        deep_check=deep,
+        contract_version=CONTRACT_VERSION,
+    )
 
     status_code = status.HTTP_200_OK if any_available else status.HTTP_503_SERVICE_UNAVAILABLE
-    return Response(
-        content=json.dumps(response_data, ensure_ascii=False),
+    return JSONResponse(
+        content=health.model_dump(),
         status_code=status_code,
-        media_type="application/json",
     )
 
 
@@ -220,8 +222,10 @@ def _log_edit_request_meta(request: EditRequest, retrieval_meta: Optional[Dict] 
     logger.info(json.dumps(log_data, ensure_ascii=False))
 
 
-@app.post("/api/edit")
-async def edit_text(request: EditRequest) -> dict:
+# PR-2 (НП-2): подключён response_model=EditResponse; обе ветки возвращают
+# EditResponse(...) вместо dict — Pydantic валидирует ответ на выходе.
+@app.post("/api/edit", response_model=EditResponse)
+async def edit_text(request: EditRequest) -> EditResponse:
     if request.domain not in ALLOWED_DOMAINS:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -251,7 +255,6 @@ async def edit_text(request: EditRequest) -> dict:
 
         prompt_builder = get_prompt_builder()
 
-        # Для всех вызовов запрашиваем метаданные у build (чтобы всегда получать кортеж)
         if request.dry_run:
             prompt, retrieval_meta = prompt_builder.build(
                 text=request.text,
@@ -262,68 +265,63 @@ async def edit_text(request: EditRequest) -> dict:
                 output_mode=request.output_mode,
                 include_knowledge=request.include_knowledge,
                 include_few_shot=request.include_few_shot,
-                include_retrieval_meta=True,   # всегда True для dry_run
+                include_retrieval_meta=True,
             )
-            response_data = {
-                "edited_text": request.text,
-                "report": None,
-                "prompt": prompt,
-                "provider": request.provider,
-                "model": request.model,
-                "dry_run": True,
-                "usage": {},
-                "raw_response": {},
-                "retrieval_meta": retrieval_meta,  # всегда включаем
-            }
-        else:
-            # Всегда запрашиваем метаданные, чтобы распаковка была корректной
-            prompt, retrieval_meta = prompt_builder.build(
-                text=request.text,
-                domain=request.domain,
-                intent=request.intent,
-                audience=audience,
-                overlays=request.overlays,
-                output_mode=request.output_mode,
-                include_knowledge=request.include_knowledge,
-                include_few_shot=request.include_few_shot,
-                include_retrieval_meta=True,   # всегда True, чтобы получить кортеж
-            )
-            providers_to_try = [request.provider] + [
-                p for p in sorted(ALLOWED_PROVIDERS) if p != request.provider
-            ]
-            # REL-2: увеличили количество ретраев на провайдера с 1 до 2 (один повтор)
-            response = await call_with_fallback(
+            _log_edit_request_meta(request, retrieval_meta)
+            return EditResponse(
+                edited_text=request.text,
+                report=None,
                 prompt=prompt,
-                providers=providers_to_try,
+                provider=request.provider,
                 model=request.model,
-                temperature=request.temperature,
-                max_retries_per_provider=2,
+                dry_run=True,
+                usage={},
+                raw_response={},
+                retrieval_meta=retrieval_meta,
             )
 
-            edited_text = response.content
-            report: Optional[str] = None
-            if request.output_mode == "text_and_report":
-                edited_text, report = _parse_text_and_report(response.content)
+        prompt, retrieval_meta = prompt_builder.build(
+            text=request.text,
+            domain=request.domain,
+            intent=request.intent,
+            audience=audience,
+            overlays=request.overlays,
+            output_mode=request.output_mode,
+            include_knowledge=request.include_knowledge,
+            include_few_shot=request.include_few_shot,
+            include_retrieval_meta=True,
+        )
+        providers_to_try = [request.provider] + [
+            p for p in sorted(ALLOWED_PROVIDERS) if p != request.provider
+        ]
+        response = await call_with_fallback(
+            prompt=prompt,
+            providers=providers_to_try,
+            model=request.model,
+            temperature=request.temperature,
+            max_retries_per_provider=2,
+        )
 
-            response_data = {
-                "edited_text": edited_text,
-                "report": report,
-                "prompt": prompt,
-                "model": response.model,
-                "provider": response.provider,
-                "dry_run": False,
-                "usage": {"tokens_used": response.tokens_used},
-                "raw_response": {
-                    "finish_reason": response.finish_reason,
-                    "content": response.content,
-                },
-            }
-            # Добавляем метаданные в ответ, только если клиент явно запросил
-            if request.include_retrieval_meta:
-                response_data["retrieval_meta"] = retrieval_meta
+        edited_text = response.content
+        report: Optional[str] = None
+        if request.output_mode == "text_and_report":
+            edited_text, report = _parse_text_and_report(response.content)
 
         _log_edit_request_meta(request, retrieval_meta)
-        return response_data
+        return EditResponse(
+            edited_text=edited_text,
+            report=report,
+            prompt=prompt,
+            model=response.model,
+            provider=response.provider,
+            dry_run=False,
+            usage={"tokens_used": response.tokens_used},
+            raw_response={
+                "finish_reason": response.finish_reason,
+                "content": response.content,
+            },
+            retrieval_meta=retrieval_meta if request.include_retrieval_meta else None,
+        )
 
     except LLMError as error:
         logger.error("LLM error: %s", error, exc_info=True)
