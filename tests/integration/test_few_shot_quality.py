@@ -87,7 +87,8 @@ def test_no_verbatim_copy_from_few_shot(client: TestClient) -> None:
     assert not has_grammar_error_after_soglasno(result), \
         f"Ошибка 'согласно + род.падеж' осталась: {result}"
     assert len(result) > 20, f"Ответ слишком короткий: {result}"
-    assert "начальника" in result, f"Потерян контекст: {result}"
+    # Проверяем наличие леммы "начальник" (в любом падеже)
+    assert "начальник" in result, f"Потерян контекст: {result}"
 
 
 @skip_no_key
