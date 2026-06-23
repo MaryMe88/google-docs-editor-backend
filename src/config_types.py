@@ -17,6 +17,7 @@ Dataclasses, enum'ы и инфраструктурные типы для кон�
 """
 from __future__ import annotations
 
+import json
 import logging
 import time
 from dataclasses import dataclass, field
@@ -90,47 +91,51 @@ class EditorialTechniqueEntry(TypedDict, total=False):
 FlatEntry = Dict[str, Any]
 
 
+# ============================================================================
+# Исправленные датаклассы для задач 4, 5 и 6
+# ============================================================================
+
 @dataclass(frozen=True)
 class CoreConfig:
     """Базовая конфигурация редактора."""
-
     role: str
     priorities: str
-    basic_audit_instructions: List[str]
-    forbidden: List[str]
+    basic_audit_instructions: tuple   # заменено с List[str] на tuple
+    forbidden: tuple                  # заменено с List[str] на tuple
+    ip_ceiling: float = 2.5           # добавлено
 
 
 @dataclass(frozen=True)
 class DomainConfig:
     """Конфигурация домена."""
-
     name: str
     system_rules: str
     tone: str
     allow_storytelling: bool = True
     allow_marketing: bool = True
+    tasks: tuple = field(default_factory=tuple)          # добавлено
+    constraints: tuple = field(default_factory=tuple)    # добавлено
+    ip_ceiling: Optional[float] = None                   # добавлено
 
 
 @dataclass(frozen=True)
 class IntentConfig:
     """Конфигурация цели обработки."""
-
     name: str
-    instructions: List[str]
+    instructions: List[str]    # пока оставляем List[str], при необходимости можно заменить на tuple
 
 
 @dataclass(frozen=True)
 class OverlayConfig:
     """Конфигурация оверлея."""
-
     name: str
-    instructions: List[str]
+    instructions: tuple                      # заменено с List[str] на tuple
+    conflicts_with: tuple = field(default_factory=tuple)   # добавлено
 
 
 @dataclass(frozen=True)
 class AudienceProfile:
     """Профиль аудитории."""
-
     kind: str
     expertise: str
     formality: str
@@ -140,7 +145,6 @@ class AudienceProfile:
 @dataclass
 class KnowledgeBase:
     """База знаний редактора."""
-
     stop_words: Dict[str, List[str]]
     grammar_errors: List[RuleEntry]
     stylistic_issues: List[RuleEntry]
@@ -609,66 +613,28 @@ class FileCache:
 # Tag constants и helpers
 # ============================================================================
 
-CANONICAL_TAGS: Dict[str, Dict[str, Any]] = {
-    "domains": {
-        "marketing": {
-            "primary": ["marketing"],
-            "expanded": ["sales", "promo", "conversion"],
-        },
-        "blog": {
-            "primary": ["blog"],
-            "expanded": ["nonmarketing", "article", "educational"],
-        },
-        "deai": {
-            "primary": ["deai"],
-            "expanded": ["antiai", "humanize", "natural"],
-        },
-    },
-    "intents": {
-        "storytelling": {
-            "primary": ["storytelling", "structure"],
-            "expanded": ["narrative", "engagement"],
-        },
-        "noragal": {
-            "primary": ["editing", "noragal"],
-            "expanded": ["brevity", "clarity"],
-        },
-        "deai": {
-            "primary": ["antiai", "humanize"],
-            "expanded": ["authentic"],
-        },
-    },
-    "overlays": {
-        "logic": {
-            "primary": ["logic"],
-            "expanded": ["coherence", "argumentation"],
-        },
-        "factcheck": {
-            "primary": ["factcheck"],
-            "expanded": ["accuracy", "verification"],
-        },
-        "infostyle": {
-            "primary": ["infostyle"],
-            "expanded": ["clarity", "precision"],
-        },
-        "composition": {
-            "primary": ["composition"],
-            "expanded": [],
-        },
-        "cohesion": {
-            "primary": ["cohesion"],
-            "expanded": [],
-        },
-        "rhetoric": {
-            "primary": ["rhetoric"],
-            "expanded": [],
-        },
-        "marketingpush": {
-            "primary": ["marketing"],
-            "expanded": ["persuasion", "cta"],
-        },
-    },
-}
+def _load_canonical_tags() -> Dict[str, Dict[str, Any]]:
+    """
+    Загружает CANONICAL_TAGS из config/tag_map.json.
+    Файл ищется относительно корня проекта (два уровня выше этого модуля).
+    При отсутствии файла возвращает пустой словарь и логирует предупреждение.
+    """
+    tag_map_path = Path(__file__).parent.parent / "config" / "tag_map.json"
+    if not tag_map_path.exists():
+        logger.warning(
+            "tag_map.json not found at %s, CANONICAL_TAGS will be empty. "
+            "Tag-based retrieval will degrade to fallback.",
+            tag_map_path,
+        )
+        return {}
+    try:
+        with open(tag_map_path, encoding="utf-8") as f:
+            return json.load(f)
+    except Exception as e:
+        logger.error("Failed to load tag_map.json: %s", e)
+        return {}
+
+CANONICAL_TAGS: Dict[str, Dict[str, Any]] = _load_canonical_tags()
 
 KB_TAGS_STRICT_VALIDATION: bool = False
 

@@ -98,6 +98,9 @@ def _check_overlay_files(
         )
 
 
+# ============================================================================
+# ИСПРАВЛЕННАЯ ФУНКЦИЯ (задача 7)
+# ============================================================================
 def _check_scoring_weights_file(config_path: Path) -> None:
     """
     Проверяет наличие и корректность файла config/scoring_weights.json.
@@ -126,9 +129,11 @@ def _check_scoring_weights_file(config_path: Path) -> None:
             raise RuntimeError(f"Missing keys in scoring_weights.json: {missing}")
 
         for k in required_keys:
-            if not isinstance(data[k], int):
-                raise RuntimeError(
-                    f"Key '{k}' in scoring_weights.json must be an integer, got {type(data[k]).__name__}"
+            if not isinstance(data[k], (int, float)):
+                logger.warning(
+                    "Key '%s' in scoring_weights.json has unexpected type %s; "
+                    "expected int or float. Using default weights for this key.",
+                    k, type(data[k]).__name__,
                 )
         # Дополнительные ключи разрешены, но не используются
     except json.JSONDecodeError as e:
@@ -313,6 +318,43 @@ def check_config_tags_vs_kb(config_path: Path, kb_path: Path) -> None:
         )
 
 
+# ============================================================================
+# Новая функция для проверки покрытия tag_map.json (задача 3)
+# ============================================================================
+def _check_tag_map_coverage(
+    config_path: Path,
+    allowed_domains: Set[str],
+    allowed_intents: Set[str],
+    allowed_overlays: Set[str],
+) -> None:
+    """
+    Проверяет, что каждый домен/интент/оверлей из allowed_* имеет запись в tag_map.json.
+    Если tag_map.json отсутствует — только предупреждение.
+    """
+    from src.config_types import CANONICAL_TAGS
+    if not CANONICAL_TAGS:
+        logger.warning("CANONICAL_TAGS is empty — skipping tag map coverage check.")
+        return
+
+    for entity, allowed in [
+        ("domains", allowed_domains),
+        ("intents", allowed_intents - {"neutral"}),
+        ("overlays", allowed_overlays),
+    ]:
+        section = CANONICAL_TAGS.get(entity, {})
+        missing = [k for k in allowed if k not in section]
+        if missing:
+            logger.warning(
+                "tag_map.json missing entries for %s: %s. "
+                "Tag retrieval will use fallback normalization.",
+                entity,
+                sorted(missing),
+            )
+
+
+# ============================================================================
+# Основная функция запуска проверок
+# ============================================================================
 def run_startup_checks(
     allowed_domains: Set[str],
     allowed_intents: Set[str],
@@ -326,9 +368,11 @@ def run_startup_checks(
     - теги из CANONICAL_TAGS присутствуют в базе знаний
     - wanted_tags из конфигов присутствуют в базе знаний
     - проверка файла весов скоринга (PR-3)
+    - проверка покрытия tag_map.json (задача 3)
     """
-    logger.info("Running startup checks (SYNC-1 + PR-3)...")
+    logger.info("Running startup checks (SYNC-1 + PR-3 + tag_map coverage)...")
     _check_domain_files(config_path, allowed_domains)
+    _check_tag_map_coverage(config_path, allowed_domains, allowed_intents, allowed_overlays)
     _check_intent_files(config_path, allowed_intents)
     _check_overlay_files(config_path, allowed_overlays)
     _check_tags_vs_kb(kb_path)

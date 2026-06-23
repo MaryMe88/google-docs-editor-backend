@@ -2,8 +2,7 @@
 prompt_builder.py
 
 Модуль для сборки финальных промптов из конфигов и базы знаний.
-Фаза 1, Шаг 1: все доменные типы импортируются из config_types.py,
-shared_contracts — единственный источник ALLOWED_*.
+
 """
 
 from __future__ import annotations
@@ -171,11 +170,18 @@ def _derive_seed(text: str) -> int:
 # ---------------------------------------------------------------------------
 def load_core_config(base_path: Path = Path("config")) -> CoreConfig:
     data = load_json_file(base_path / "core.json")
+    ip_ceiling_raw = data.get("ip_ceiling", {})
+    ip_ceiling_value = (
+        ip_ceiling_raw.get("value", 2.5)
+        if isinstance(ip_ceiling_raw, dict)
+        else float(ip_ceiling_raw) if ip_ceiling_raw is not None else 2.5
+    )
     return CoreConfig(
         role=data.get("role", "You are a careful Russian editor."),
         priorities=data.get("priorities", "clarity, accuracy, readability"),
-        basic_audit_instructions=data.get("basic_audit_instructions", []),
-        forbidden=data.get("forbidden", []),
+        basic_audit_instructions=tuple(data.get("basic_audit_instructions", [])),
+        forbidden=tuple(data.get("forbidden", [])),
+        ip_ceiling=ip_ceiling_value,
     )
 
 
@@ -185,12 +191,23 @@ def load_domain_config(
 ) -> DomainConfig:
     normalized_domain = domain.strip().lower()
     data = load_json_file(base_path / "domains" / f"{normalized_domain}.json")
+    raw_tasks = data.get("tasks", [])
+    raw_constraints = data.get("constraints", [])
+    raw_ip = data.get("ip_ceiling")
+    domain_ip_ceiling: Optional[float] = None
+    if isinstance(raw_ip, (int, float)):
+        domain_ip_ceiling = float(raw_ip)
+    elif isinstance(raw_ip, dict):
+        domain_ip_ceiling = float(raw_ip.get("value", 2.5))
     return DomainConfig(
         name=data.get("name", normalized_domain),
         system_rules=data.get("system_rules", ""),
         tone=data.get("tone", "neutral"),
         allow_storytelling=data.get("allow_storytelling", False),
         allow_marketing=data.get("allow_marketing", False),
+        tasks=tuple(t for t in raw_tasks if isinstance(t, str)),
+        constraints=tuple(c for c in raw_constraints if isinstance(c, str)),
+        ip_ceiling=domain_ip_ceiling,
     )
 
 
@@ -208,15 +225,19 @@ def load_intent_config(
     )
 
 
+# ---------------------------------------------------------------------------
+# ИСПРАВЛЕННАЯ ФУНКЦИЯ ДЛЯ ЗАДАЧИ 6 (убрана нормализация)
+# ---------------------------------------------------------------------------
 def load_overlay_config(
     overlay: str,
     base_path: Path = Path("config"),
 ) -> OverlayConfig:
-    normalized_overlay = normalize_tag(overlay)
-    data = load_json_file(base_path / "overlays" / f"{normalized_overlay}.json")
+    # overlay уже приведён к нижнему регистру в _validate_overlays, не нормализуем
+    data = load_json_file(base_path / "overlays" / f"{overlay}.json")
     return OverlayConfig(
-        name=data.get("name", normalized_overlay),
-        instructions=data.get("instructions", []),
+        name=data.get("name", overlay),
+        instructions=tuple(data.get("instructions", [])),
+        conflicts_with=tuple(data.get("conflicts_with", [])),
     )
 
 
@@ -242,6 +263,9 @@ def _cached_load_intent_config(
     return load_intent_config(intent, Path(config_path))
 
 
+# ---------------------------------------------------------------------------
+# ИСПРАВЛЕННАЯ ФУНКЦИЯ ДЛЯ ЗАДАЧИ 8
+# ---------------------------------------------------------------------------
 def load_output_format(
     mode: str,
     base_path: Path = Path("config"),
@@ -252,10 +276,7 @@ def load_output_format(
     if not global_rules:
         return mode_instruction
     global_parts: List[str] = []
-    no_markdown_note = global_rules.get("no_markdown_note", "")
     allowed_formatting = global_rules.get("allowed_formatting", "")
-    if no_markdown_note:
-        global_parts.append(no_markdown_note)
     if allowed_formatting:
         global_parts.append(allowed_formatting)
     if not global_parts:
@@ -957,8 +978,12 @@ class PromptBuilder:
             )
         return normalized
 
+    # ---------------------------------------------------------------------------
+    # ИСПРАВЛЕННАЯ ВАЛИДАЦИЯ ОВЕРЛЕЕВ (задача 6)
+    # ---------------------------------------------------------------------------
     def _validate_overlays(self, overlays: Sequence[str]) -> List[str]:
-        normalized = normalize_tags(overlays)
+        # Приводим к нижнему регистру, но не нормализуем (чтобы сохранить подчёркивания)
+        normalized = [o.lower() for o in overlays]
         available = set(self.get_available_overlays()) | ALLOWED_OVERLAYS
         invalid = [item for item in normalized if item not in available]
         if invalid:
@@ -966,6 +991,16 @@ class PromptBuilder:
                 f"Unsupported overlays: {invalid}. "
                 f"Must be from {sorted(available)}"
             )
+
+        # Проверка конфликтов
+        overlay_configs = load_overlay_configs(normalized, self.config_path)
+        for ov_cfg in overlay_configs:
+            for conflict in ov_cfg.conflicts_with:
+                if conflict.lower() in normalized:
+                    raise ValueError(
+                        f"Overlays conflict: '{ov_cfg.name}' and '{conflict}' "
+                        f"cannot be used together. Choose one."
+                    )
         return normalized
 
     def _validate_output_mode(self, output_mode: str) -> str:
@@ -991,6 +1026,43 @@ class PromptBuilder:
         if getattr(audience, "description", ""):
             parts.append(f"Описание аудитории: {audience.description}")
         return "\n".join(parts)
+
+    # ---- НОВЫЙ МЕТОД (Задача 2) ----
+    def _build_mode_constraints_block(self, domain_config: DomainConfig) -> str:
+        """
+        Формирует блок явных ограничений режима на основе флагов домена.
+        Всегда добавляется в промпт, если хотя бы один флаг False.
+        """
+        lines: List[str] = []
+        if not domain_config.allow_storytelling:
+            lines.append(
+                "Сторителлинг запрещён: не добавляй нарративные отступления, "
+                "личные истории и метафорические сравнения, уводящие от сути."
+            )
+        if not domain_config.allow_marketing:
+            lines.append(
+                "Маркетинг запрещён: удаляй призывы к действию, триггерные слова "
+                "(«уникальный», «лучший», «срочно») и конструкции давления на читателя."
+            )
+        if not lines:
+            return ""
+        return "Режимные ограничения:\n- " + "\n- ".join(lines)
+    # ---- КОНЕЦ НОВОГО МЕТОДА ----
+
+    # ---- НОВЫЙ МЕТОД (Задача 5) ----
+    def _build_ip_ceiling_block(self, domain_config: DomainConfig) -> str:
+        """Формирует блок с целевым значением ИП."""
+        effective_ceiling = (
+            domain_config.ip_ceiling
+            if domain_config.ip_ceiling is not None
+            else (self.core_config.ip_ceiling if self.core_config else 2.5)
+        )
+        return (
+            f"Целевой Индекс пластиковости (ИП): ≤ {effective_ceiling}. "
+            "После редактирования укажи итоговый ИП. "
+            "Если ИП превышает целевое значение — предупреди и предложи второй проход."
+        )
+    # ---- КОНЕЦ НОВОГО МЕТОДА ----
 
     def _ensure_knowledge_base(self) -> Optional[KnowledgeBase]:
         if self.knowledge_base is not None:
@@ -1142,6 +1214,25 @@ class PromptBuilder:
         if domain_config.system_rules:
             blocks.append("Правила домена:\n" + domain_config.system_rules)
 
+        # ---- ВСТАВКА НОВОГО БЛОКА (Задача 2) ----
+        mode_constraints = self._build_mode_constraints_block(domain_config)
+        if mode_constraints:
+            blocks.append(mode_constraints)
+        # -----------------------------------------
+
+        # ---- НОВЫЕ БЛОКИ (Задача 4) ----
+        if domain_config.tasks:
+            blocks.append(
+                "Задачи редактора в этом домене:\n- "
+                + "\n- ".join(domain_config.tasks)
+            )
+        if domain_config.constraints:
+            blocks.append(
+                "Ограничения домена:\n- "
+                + "\n- ".join(domain_config.constraints)
+            )
+        # ---------------------------------
+
         if self.core_config.basic_audit_instructions:
             blocks.append(
                 "Базовые инструкции:\n- "
@@ -1206,6 +1297,10 @@ class PromptBuilder:
             retrieval_meta_total = block_meta
             if knowledge_block:
                 blocks.append("База знаний:\n" + knowledge_block)
+
+        # ---- НОВЫЙ БЛОК (Задача 5) ----
+        blocks.append(self._build_ip_ceiling_block(domain_config))
+        # --------------------------------
 
         blocks.append("Формат ответа:\n" + output_format)
         blocks.append("Исходный текст:\n" + text.strip())
