@@ -13,9 +13,11 @@ from src.shared_contracts import (
 )
 from src.tag_registry import normalize_tag
 
-# Версия контракта между бекендом и клиентом (Google Apps Script)
+# Версия контракта между бекендом и клиентом (Google Apps Script).
 # При несовместимых изменениях увеличивать мажорную версию.
-CONTRACT_VERSION: str = "1.0.0"
+# 1.1.0 — добавлено поле report в EditResponse;
+#          HealthResponse приведён в соответствие с реальным ответом /health.
+CONTRACT_VERSION: str = "1.1.0"
 
 
 class AudienceRequest(BaseModel):
@@ -65,7 +67,7 @@ class EditRequest(BaseModel):
     temperature: float = Field(default=0.3, ge=0.0, le=2.0)
     include_knowledge: bool = Field(default=True)
     include_retrieval_meta: bool = Field(default=False)
-    include_few_shot: bool = Field(default=True)   # <-- НОВОЕ ПОЛЕ (PR‑2)
+    include_few_shot: bool = Field(default=True)
     dry_run: bool = Field(default=False)
 
     @field_validator("domain")
@@ -85,7 +87,12 @@ class EditRequest(BaseModel):
     @field_validator("overlays")
     @classmethod
     def normalize_overlays(cls, value: List[str]) -> List[str]:
-        """Нормализация и дедупликация, проверка допустимости в main.py (400 Bad Request)."""
+        """Нормализация и дедупликация — единственная точка нормализации оверлеев.
+
+        Проверка допустимости происходит в main.py (400 Bad Request).
+        prompt_builder.py доверяет, что оверлеи уже нормализованы здесь,
+        и не выполняет повторную нормализацию.
+        """
         normalized_values: List[str] = []
         seen: set = set()
         for item in value:
@@ -117,7 +124,14 @@ class EditRequest(BaseModel):
 
 
 class EditResponse(BaseModel):
+    """Ответ эндпоинта POST /api/edit.
+
+    Поле report заполняется только в режиме output_mode='text_and_report'.
+    В остальных режимах report=None.
+    """
+
     edited_text: str
+    report: Optional[str] = None  # PR-2 (НП-2): добавлено для режима text_and_report
     prompt: str
     provider: Optional[str] = None
     model: Optional[str] = None
@@ -132,9 +146,19 @@ class PromptResponse(BaseModel):
 
 
 class HealthResponse(BaseModel):
+    """Ответ эндпоинта GET /health.
+
+    PR-3 (НП-3): приведён в соответствие с реальным ответом:
+    - добавлены provider_status, deep_check, version
+    - available_domains добавлен явно (был в модели, но не возвращался эндпоинтом)
+    """
+
     status: str
+    version: str = "1.0.0"
     available_domains: List[str]
     available_intents: List[str]
     available_overlays: List[str]
     available_providers: List[str]
+    provider_status: Dict[str, bool]
+    deep_check: bool = False
     contract_version: str = CONTRACT_VERSION

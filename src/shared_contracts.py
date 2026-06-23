@@ -4,6 +4,8 @@ import logging
 from pathlib import Path
 from typing import Final, Set
 
+from src.llm_client import LLMProvider
+
 logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
@@ -45,7 +47,11 @@ ALLOWED_OVERLAYS: Final[Set[str]] = _scan_config_files("overlays")
 # Остальные белые списки остаются статическими (не зависят от файлов)
 # ---------------------------------------------------------------------------
 ALLOWED_OUTPUT_MODES: Final[Set[str]] = {"text_only", "text_and_report"}
-ALLOWED_PROVIDERS: Final[Set[str]] = {"openrouter", "perplexity", "openai", "anthropic"}
+
+# PR-1 (НП-4): ALLOWED_PROVIDERS выводится из LLMProvider — единственный источник правды.
+# При добавлении нового провайдера достаточно добавить значение в LLMProvider enum.
+ALLOWED_PROVIDERS: Final[Set[str]] = {p.value for p in LLMProvider}
+
 ALLOWED_KIND: Final[Set[str]] = {"b2b", "b2c", "mixed", "custom"}
 ALLOWED_EXPERTISE: Final[Set[str]] = {"novice", "pro", "expert"}
 ALLOWED_FORMALITY: Final[Set[str]] = {"casual", "neutral", "formal"}
