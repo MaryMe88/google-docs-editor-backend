@@ -98,6 +98,28 @@ def _check_overlay_files(
         )
 
 
+def _check_overlay_names_idempotent(allowed_overlays: Set[str]) -> None:
+    """PR-4 (НП-1): проверяет, что имена файлов оверлеев идемпотентны к normalize_tag.
+
+    Гарантирует, что нормализация в contracts.py (normalize_tag) и проверка
+    допустимости в prompt_builder.py работают с одинаковыми строками —
+    без скрытых расхождений при добавлении новых оверлеев.
+
+    Пример нарушения: файл 'Final-Check.json' → normalize_tag даст 'final_check',
+    а ALLOWED_OVERLAYS будет содержать 'Final-Check' → несовпадение.
+    """
+    bad: list[str] = []
+    for name in allowed_overlays:
+        if normalize_tag(name) != name:
+            bad.append(f"'{name}' → normalize_tag → '{normalize_tag(name)}'")
+    if bad:
+        raise RuntimeError(
+            "Overlay filenames are not idempotent to normalize_tag. "
+            "Rename the following config/overlays/*.json files so their stem "
+            "matches the normalized form:\n" + "\n".join(bad)
+        )
+
+
 # ============================================================================
 # ИСПРАВЛЕННАЯ ФУНКЦИЯ (задача 7)
 # ============================================================================
@@ -363,19 +385,21 @@ def run_startup_checks(
     kb_path: Path = Path("knowledge_base"),
 ) -> None:
     """
-    Выполняет все проверки SYNC-1:
+    Выполняет все проверки при старте сервиса:
     - домены, интенты, оверлеи → файлы существуют и корректны
+    - PR-4 (НП-1): имена оверлеев идемпотентны к normalize_tag
     - теги из CANONICAL_TAGS присутствуют в базе знаний
     - wanted_tags из конфигов присутствуют в базе знаний
-    - проверка файла весов скоринга (PR-3)
-    - проверка покрытия tag_map.json (задача 3)
+    - проверка файла весов скоринга
+    - проверка покрытия tag_map.json
     """
-    logger.info("Running startup checks (SYNC-1 + PR-3 + tag_map coverage)...")
+    logger.info("Running startup checks...")
     _check_domain_files(config_path, allowed_domains)
     _check_tag_map_coverage(config_path, allowed_domains, allowed_intents, allowed_overlays)
     _check_intent_files(config_path, allowed_intents)
     _check_overlay_files(config_path, allowed_overlays)
+    _check_overlay_names_idempotent(allowed_overlays)  # PR-4 (НП-1)
     _check_tags_vs_kb(kb_path)
     check_config_tags_vs_kb(config_path, kb_path)
-    _check_scoring_weights_file(config_path)   # PR-3
+    _check_scoring_weights_file(config_path)
     logger.info("Startup checks passed successfully.")
