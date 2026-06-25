@@ -21,7 +21,7 @@
  *                 списком инструкций; noragal/deai как intent всё ещё дают 500 —
  *                 их специфика выражается через domain)
  *     overlays : base | infostyle | landing | coldemail | pressrelease | workdoc | ...
- *                base    — нейтральный overlay, не навязывает стиль
+ *                base    — нейтральный, не навязывает стиль
  *                infostyle — информационный деловой стиль
  *     output_mode : 'text_only' | 'text_and_report'
  */
@@ -292,7 +292,7 @@ const MODE_CONFIG = {
     order: 10,
     domain: 'readerfirst',   // реальный файл config/domains/readerfirst.json
     intent: null,
-    overlays: ['infostyle', 'readerfocus'],
+    overlays: ['infostyle'], // FIX: убран несуществующий overlay 'readerfocus' (давал 422)
     temperature: 0.25,
     handler: 'editSelection_readerfirst'
   },
@@ -334,7 +334,7 @@ const MODE_CONFIG = {
     order: 40,
     domain: 'restructure',   // реальный файл config/domains/restructure.json
     intent: null,
-    overlays: ['base', 'structurefirst'], // base: структурная правка не зависит от стиля
+    overlays: ['base'],      // FIX: убран несуществующий overlay 'structurefirst' (давал 422)
     temperature: 0.2,
     handler: 'editSelection_restructure'
   },
@@ -1179,9 +1179,10 @@ function callBackend_(text, mode, maxRetries = 2) {
         continue;
       }
 
-      // Неповторяемая ошибка — сразу кидаем понятное сообщение (обрезаем длинный HTML)
+      // Неповторяемая ошибка — показываем тело ответа для диагностики (до 500 символов).
+      // FIX: увеличен порог с 200 до 500, чтобы FastAPI detail-сообщения читались целиком.
       let errorMsg = `HTTP ${statusCode}`;
-      if (responseBody && responseBody.length < 200) {
+      if (responseBody && responseBody.length < 500) {
         errorMsg += `: ${responseBody}`;
       } else {
         errorMsg += ' (сервер вернул некорректный ответ)';
