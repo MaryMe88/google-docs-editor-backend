@@ -5,10 +5,13 @@ from typing import Any, Dict, List, Optional
 from pydantic import BaseModel, Field, field_validator
 
 from src.shared_contracts import (
+    ALLOWED_DOMAINS,
     ALLOWED_EXPERTISE,
     ALLOWED_FORMALITY,
+    ALLOWED_INTENTS,
     ALLOWED_KIND,
     ALLOWED_OUTPUT_MODES,
+    ALLOWED_OVERLAYS,
     ALLOWED_PROVIDERS,
 )
 from src.tag_registry import normalize_tag
@@ -70,37 +73,41 @@ class EditRequest(BaseModel):
     include_few_shot: bool = Field(default=True)
     dry_run: bool = Field(default=False)
 
+    # ИЗМЕНЕНИЕ A-1: валидаторы теперь проверяют допустимость и нормализуют через normalize_tag
     @field_validator("domain")
     @classmethod
-    def normalize_domain(cls, value: str) -> str:
-        """Только нормализация, проверка допустимости в main.py (400 Bad Request)."""
-        return value.strip().lower()
+    def validate_domain(cls, v: str) -> str:
+        """Нормализует и проверяет domain через ALLOWED_DOMAINS."""
+        normalized = normalize_tag(v)
+        if normalized not in ALLOWED_DOMAINS:
+            raise ValueError(f"Unknown domain: {v!r}. Allowed: {sorted(ALLOWED_DOMAINS)}")
+        return normalized
 
     @field_validator("intent")
     @classmethod
-    def normalize_intent(cls, value: Optional[str]) -> Optional[str]:
-        """Только нормализация, проверка допустимости в main.py (400 Bad Request)."""
-        if value is None or not value.strip():
+    def validate_intent(cls, v: Optional[str]) -> Optional[str]:
+        """Нормализует и проверяет intent через ALLOWED_INTENTS."""
+        if v is None or not v.strip():
             return None
-        return normalize_tag(value)
+        normalized = normalize_tag(v)
+        if normalized not in ALLOWED_INTENTS:
+            raise ValueError(f"Unknown intent: {v!r}. Allowed: {sorted(ALLOWED_INTENTS)}")
+        return normalized
 
-    @field_validator("overlays")
+    @field_validator("overlays", mode="before")
     @classmethod
-    def normalize_overlays(cls, value: List[str]) -> List[str]:
-        """Нормализация и дедупликация — единственная точка нормализации оверлеев.
-
-        Проверка допустимости происходит в main.py (400 Bad Request).
-        prompt_builder.py доверяет, что оверлеи уже нормализованы здесь,
-        и не выполняет повторную нормализацию.
-        """
-        normalized_values: List[str] = []
-        seen: set = set()
-        for item in value:
-            normalized = normalize_tag(item)
-            if normalized and normalized not in seen:
+    def validate_overlays(cls, v: list) -> list[str]:
+        """Нормализует, проверяет через ALLOWED_OVERLAYS и дедуплицирует."""
+        result = []
+        seen = set()
+        for item in v:
+            normalized = normalize_tag(str(item))
+            if normalized not in ALLOWED_OVERLAYS:
+                raise ValueError(f"Unknown overlay: {item!r}. Allowed: {sorted(ALLOWED_OVERLAYS)}")
+            if normalized not in seen:
                 seen.add(normalized)
-                normalized_values.append(normalized)
-        return normalized_values
+                result.append(normalized)
+        return result
 
     @field_validator("output_mode")
     @classmethod

@@ -4,7 +4,9 @@ import logging
 from pathlib import Path
 from typing import Final, Set
 
-from src.llm_client import LLMProvider
+# Шаг A-2: LLMProvider вынесен в отдельный реестр, чтобы shared_contracts
+# не зависел от тяжёлого llm_client (и, соответственно, от httpx).
+from src.provider_registry import LLMProvider
 
 logger = logging.getLogger(__name__)
 

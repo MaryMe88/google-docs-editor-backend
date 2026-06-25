@@ -15,7 +15,7 @@ import random
 import warnings
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Callable, Dict, List, Optional, Sequence, Set, Tuple, Union
+from typing import Any, Callable, Dict, List, Optional, Sequence, Set, Tuple, Union, overload, Literal
 
 from src.config_types import (
     AudienceProfile,
@@ -225,9 +225,6 @@ def load_intent_config(
     )
 
 
-# ---------------------------------------------------------------------------
-# ИСПРАВЛЕННАЯ ФУНКЦИЯ ДЛЯ ЗАДАЧИ 6 (убрана нормализация)
-# ---------------------------------------------------------------------------
 def load_overlay_config(
     overlay: str,
     base_path: Path = Path("config"),
@@ -263,9 +260,7 @@ def _cached_load_intent_config(
     return load_intent_config(intent, Path(config_path))
 
 
-# ---------------------------------------------------------------------------
-# ИСПРАВЛЕННАЯ ФУНКЦИЯ ДЛЯ ЗАДАЧИ 8
-# ---------------------------------------------------------------------------
+# D-4: добавлено предупреждение о неизвестных ключах в global_formatting_rules
 def load_output_format(
     mode: str,
     base_path: Path = Path("config"),
@@ -273,6 +268,16 @@ def load_output_format(
     data = load_json_file(base_path / "output_format.json")
     mode_instruction = data.get(mode, data.get("text_only", "Верни только отредактированный текст."))
     global_rules = data.get("global_formatting_rules", {})
+    
+    # Проверяем неизвестные ключи
+    known_keys = {"allowed_formatting"}
+    unknown_keys = set(global_rules.keys()) - known_keys
+    if unknown_keys:
+        logger.warning(
+            "load_output_format: ключи %s в 'global_formatting_rules' не используются. Файл: %s",
+            unknown_keys, base_path / "output_format.json"
+        )
+    
     if not global_rules:
         return mode_instruction
     global_parts: List[str] = []
@@ -906,7 +911,10 @@ class PromptBuilder:
         self.kb_path = kb_path
         self._limits = limits or LimitsConfig()
         self.core_config: Optional[CoreConfig] = None
-        self.knowledge_base: Optional[KnowledgeBase] = None
+        # A-3: загружаем KB сразу при создании объекта (если путь указан)
+        self.knowledge_base: Optional[KnowledgeBase] = (
+            load_knowledge_base(kb_path) if kb_path else None
+        )
 
     # ------------------------------------------------------------------
     # Startup / reload
@@ -955,44 +963,31 @@ class PromptBuilder:
         return self.get_available_overlays()
 
     # ------------------------------------------------------------------
-    # Валидация
+    # ИЗМЕНЕНИЕ A-1в: методы валидации упрощены до защитных assert
     # ------------------------------------------------------------------
     def _validate_domain(self, domain: str) -> str:
-        normalized = domain.strip().lower()
-        if normalized not in ALLOWED_DOMAINS:
-            raise ValueError(
-                f"Unsupported domain: {domain!r}. "
-                f"Must be one of {sorted(ALLOWED_DOMAINS)}"
-            )
-        return normalized
+        """Данные уже провалидированы в EditRequest. Защитный assert."""
+        assert domain in ALLOWED_DOMAINS, f"Invalid domain passed to PromptBuilder: {domain!r}"
+        return domain
 
     def _validate_intent(self, intent: Optional[str]) -> Optional[str]:
-        if intent is None or not intent.strip():
+        """Данные уже провалидированы в EditRequest. Защитный assert."""
+        if intent is None:
             return None
-        normalized = normalize_tag(intent)
-        available = set(self.get_available_intents()) | ALLOWED_INTENTS
-        if normalized not in available:
-            raise ValueError(
-                f"Unsupported intent: {intent!r}. "
-                f"Must be one of {sorted(available)}"
-            )
-        return normalized
+        assert intent in ALLOWED_INTENTS, f"Invalid intent passed to PromptBuilder: {intent!r}"
+        return intent
 
-    # ---------------------------------------------------------------------------
-    # ИСПРАВЛЕННАЯ ВАЛИДАЦИЯ ОВЕРЛЕЕВ (задача 6)
-    # ---------------------------------------------------------------------------
     def _validate_overlays(self, overlays: Sequence[str]) -> List[str]:
-        # Приводим к нижнему регистру, но не нормализуем (чтобы сохранить подчёркивания)
+        """
+        Данные уже провалидированы и нормализованы в EditRequest.
+        Защитный assert + дополнительная проверка конфликтов.
+        """
+        # Приводим к нижнему регистру для единообразия (но нормализация уже сделана)
         normalized = [o.lower() for o in overlays]
-        available = set(self.get_available_overlays()) | ALLOWED_OVERLAYS
-        invalid = [item for item in normalized if item not in available]
-        if invalid:
-            raise ValueError(
-                f"Unsupported overlays: {invalid}. "
-                f"Must be from {sorted(available)}"
-            )
+        for o in normalized:
+            assert o in ALLOWED_OVERLAYS, f"Invalid overlay passed to PromptBuilder: {o!r}"
 
-        # Проверка конфликтов
+        # Проверка конфликтов (дополнительная бизнес-логика)
         overlay_configs = load_overlay_configs(normalized, self.config_path)
         for ov_cfg in overlay_configs:
             for conflict in ov_cfg.conflicts_with:
@@ -1027,7 +1022,6 @@ class PromptBuilder:
             parts.append(f"Описание аудитории: {audience.description}")
         return "\n".join(parts)
 
-    # ---- НОВЫЙ МЕТОД (Задача 2) ----
     def _build_mode_constraints_block(self, domain_config: DomainConfig) -> str:
         """
         Формирует блок явных ограничений режима на основе флагов домена.
@@ -1047,9 +1041,7 @@ class PromptBuilder:
         if not lines:
             return ""
         return "Режимные ограничения:\n- " + "\n- ".join(lines)
-    # ---- КОНЕЦ НОВОГО МЕТОДА ----
 
-    # ---- НОВЫЙ МЕТОД (Задача 5) ----
     def _build_ip_ceiling_block(self, domain_config: DomainConfig) -> str:
         """Формирует блок с целевым значением ИП."""
         effective_ceiling = (
@@ -1062,16 +1054,10 @@ class PromptBuilder:
             "После редактирования укажи итоговый ИП. "
             "Если ИП превышает целевое значение — предупреди и предложи второй проход."
         )
-    # ---- КОНЕЦ НОВОГО МЕТОДА ----
 
+    # A-3: метод упрощён до простого возврата self.knowledge_base
     def _ensure_knowledge_base(self) -> Optional[KnowledgeBase]:
-        if self.knowledge_base is not None:
-            return self.knowledge_base
-        try:
-            self.knowledge_base = load_knowledge_base(self.kb_path)
-        except FileNotFoundError:
-            logger.warning("Knowledge base directory not found: %s", self.kb_path)
-            return None
+        """Возвращает уже загруженную базу знаний (загружена в __init__)."""
         return self.knowledge_base
 
     # ------------------------------------------------------------------
@@ -1154,8 +1140,44 @@ class PromptBuilder:
         return "\n\n".join(block for block in blocks if block.strip())
 
     # ------------------------------------------------------------------
-    # Главный метод — build()
+    # D-5: overload для метода build (исправлено: добавлены значения по умолчанию)
     # ------------------------------------------------------------------
+    @overload
+    def build(
+        self,
+        text: str,
+        domain: str,
+        intent: Optional[str] = None,
+        audience: Optional[AudienceProfile] = None,
+        overlays: Optional[Sequence[str]] = None,
+        output_mode: str = "text_only",
+        include_knowledge: bool = True,
+        include_few_shot: bool = True,
+        knowledge_level: KnowledgeLevel = KnowledgeLevel.STANDARD,
+        token_budget: Optional[int] = None,
+        include_retrieval_meta: Literal[False] = False,
+        few_shot_seed: Optional[int] = None,
+        **legacy_kwargs: Any,
+    ) -> str: ...
+
+    @overload
+    def build(
+        self,
+        text: str,
+        domain: str,
+        intent: Optional[str] = None,
+        audience: Optional[AudienceProfile] = None,
+        overlays: Optional[Sequence[str]] = None,
+        output_mode: str = "text_only",
+        include_knowledge: bool = True,
+        include_few_shot: bool = True,
+        knowledge_level: KnowledgeLevel = KnowledgeLevel.STANDARD,
+        token_budget: Optional[int] = None,
+        include_retrieval_meta: Literal[True] = True,
+        few_shot_seed: Optional[int] = None,
+        **legacy_kwargs: Any,
+    ) -> Tuple[str, Dict[str, Any]]: ...
+
     def build(
         self,
         text: str,
@@ -1214,13 +1236,10 @@ class PromptBuilder:
         if domain_config.system_rules:
             blocks.append("Правила домена:\n" + domain_config.system_rules)
 
-        # ---- ВСТАВКА НОВОГО БЛОКА (Задача 2) ----
         mode_constraints = self._build_mode_constraints_block(domain_config)
         if mode_constraints:
             blocks.append(mode_constraints)
-        # -----------------------------------------
 
-        # ---- НОВЫЕ БЛОКИ (Задача 4) ----
         if domain_config.tasks:
             blocks.append(
                 "Задачи редактора в этом домене:\n- "
@@ -1231,7 +1250,6 @@ class PromptBuilder:
                 "Ограничения домена:\n- "
                 + "\n- ".join(domain_config.constraints)
             )
-        # ---------------------------------
 
         if self.core_config.basic_audit_instructions:
             blocks.append(
@@ -1298,14 +1316,10 @@ class PromptBuilder:
             if knowledge_block:
                 blocks.append("База знаний:\n" + knowledge_block)
 
-        # ---- НОВЫЙ БЛОК (Задача 5) ----
         blocks.append(self._build_ip_ceiling_block(domain_config))
-        # --------------------------------
-
         blocks.append("Формат ответа:\n" + output_format)
         blocks.append("Исходный текст:\n" + text.strip())
 
-        # Используем вспомогательный метод для сборки промпта
         prompt = self._assemble_prompt(blocks)
 
         if include_retrieval_meta:

@@ -64,6 +64,15 @@ def load_scoring_weights() -> Dict[str, int]:
     return _WEIGHTS_CACHE
 
 
+# D-7: добавлено предупреждение при запросе неизвестного ключа
 def get_scoring_weight(name: str) -> int:
     """Возвращает значение веса по имени."""
-    return load_scoring_weights().get(name, 0)
+    weights = load_scoring_weights()
+    if name not in weights:
+        logger.warning(
+            "Ключ %r не найден в scoring_weights.json. "
+            "Правило получит вес 0 и не будет отобрано. "
+            "Добавь ключ в конфиг.", name
+        )
+        return 0
+    return weights[name]

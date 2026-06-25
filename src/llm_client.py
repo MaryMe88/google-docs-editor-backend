@@ -22,24 +22,17 @@ import os
 import random
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
-from enum import Enum
 from typing import Any, Dict, List, Optional
 
 import httpx
 from dotenv import load_dotenv
 
+# Шаг A-2: LLMProvider вынесен в отдельный реестр, чтобы избежать зависимости shared_contracts от httpx
+from src.provider_registry import LLMProvider
+
 load_dotenv()
 
 logger = logging.getLogger(__name__)
-
-
-class LLMProvider(str, Enum):
-    """Поддерживаемые LLM-провайдеры."""
-
-    PERPLEXITY = "perplexity"
-    OPENAI = "openai"
-    ANTHROPIC = "anthropic"
-    OPENROUTER = "openrouter"
 
 
 @dataclass(frozen=True)

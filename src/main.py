@@ -7,6 +7,7 @@ import os
 import re
 import time
 from contextlib import asynccontextmanager
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Dict, Optional, Set, Tuple
 
@@ -17,8 +18,9 @@ from pydantic import ValidationError
 
 from src.config_types import AudienceProfile
 from src.contracts import CONTRACT_VERSION, EditRequest, EditResponse, HealthResponse
-from src.llm_client import LLMError, LLMProvider, LLMResponse, call_with_fallback, create_llm_client
+from src.llm_client import LLMError, call_with_fallback, create_llm_client
 from src.prompt_builder import PromptBuilder
+from src.provider_registry import LLMProvider
 from src.shared_contracts import (
     ALLOWED_DOMAINS,
     ALLOWED_INTENTS,
@@ -35,10 +37,41 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 
-_provider_cache: Dict[str, Any] = {}
-_PROVIDER_CACHE_TTL = 60
+# ---------------------------------------------------------------------------
+# Кэш доступности провайдеров (A-5)
+# ---------------------------------------------------------------------------
+@dataclass
+class _ProviderCacheEntry:
+    available: bool
+    checked_at: float = field(default_factory=time.monotonic)
 
-# Шаг 2а: маппинг провайдер -> переменная окружения для API-ключа
+    def is_fresh(self, ttl: float) -> bool:
+        return (time.monotonic() - self.checked_at) < ttl
+
+
+_provider_cache: dict[str, _ProviderCacheEntry] = {}
+_PROVIDER_CACHE_TTL = 60.0
+
+
+def _get_cached_availability(provider: str) -> bool | None:
+    entry = _provider_cache.get(provider)
+    if entry and entry.is_fresh(_PROVIDER_CACHE_TTL):
+        return entry.available
+    return None
+
+
+def _set_cached_availability(provider: str, available: bool) -> None:
+    _provider_cache[provider] = _ProviderCacheEntry(available=available)
+
+
+def invalidate_provider_cache() -> None:
+    """Принудительная инвалидация кэша (для тестов и диагностики)."""
+    _provider_cache.clear()
+
+
+# ---------------------------------------------------------------------------
+# Маппинг провайдер → переменная окружения для light‑check
+# ---------------------------------------------------------------------------
 _PROVIDER_KEY_ENV: Dict[str, str] = {
     "perplexity": "PERPLEXITY_API_KEY",
     "openai": "OPENAI_API_KEY",
@@ -46,7 +79,9 @@ _PROVIDER_KEY_ENV: Dict[str, str] = {
     "openrouter": "OPENROUTER_API_KEY",
 }
 
-# Шаг 3: CORS – разрешённые источники из переменной окружения
+# ---------------------------------------------------------------------------
+# CORS
+# ---------------------------------------------------------------------------
 _CORS_ORIGINS_RAW = os.getenv("CORS_ALLOWED_ORIGINS", "")
 _CORS_ORIGINS: list[str] = (
     [origin.strip() for origin in _CORS_ORIGINS_RAW.split(",") if origin.strip()]
@@ -55,6 +90,9 @@ _CORS_ORIGINS: list[str] = (
 )
 
 
+# ---------------------------------------------------------------------------
+# Lifespan
+# ---------------------------------------------------------------------------
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     logger.info("Starting up text editor service...")
@@ -84,7 +122,6 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
-# Шаг 3: CORS – безопасная конфигурация с конкретными источниками
 app.add_middleware(
     CORSMiddleware,
     allow_origins=_CORS_ORIGINS,
@@ -118,10 +155,9 @@ def get_prompt_builder() -> PromptBuilder:
     return prompt_builder
 
 
-def _supported_providers() -> Set[str]:
-    return set(ALLOWED_PROVIDERS)
-
-
+# ---------------------------------------------------------------------------
+# Проверка провайдеров (глубокая и лёгкая)
+# ---------------------------------------------------------------------------
 async def _check_provider_deep(provider_name: str) -> bool:
     try:
         provider_enum = LLMProvider(provider_name)
@@ -141,50 +177,54 @@ async def _check_provider_deep(provider_name: str) -> bool:
 
 
 async def _check_providers_availability(deep: bool = False) -> Tuple[bool, Dict[str, bool]]:
-    global _provider_cache
-    now = time.time()
-    if deep and _provider_cache.get("_timestamp", 0) + _PROVIDER_CACHE_TTL > now:
-        cached = _provider_cache.get("_data")
-        if cached:
-            return cached
-    availability: Dict[str, bool] = {}
-    for provider_name in ALLOWED_PROVIDERS:
-        if deep:
-            available = await _check_provider_deep(provider_name)
+    """
+    Возвращает (any_available, {provider: available}).
+    При deep=False использует кэш (TTL 60 сек) и light‑check (наличие API‑ключа).
+    При deep=True выполняет реальные запросы и обновляет кэш.
+    """
+    results: Dict[str, bool] = {}
+    for provider in ALLOWED_PROVIDERS:
+        if not deep:
+            cached = _get_cached_availability(provider)
+            if cached is not None:
+                results[provider] = cached
+                continue
+            # light‑check – только по env
+            env_var = _PROVIDER_KEY_ENV.get(provider.lower())
+            available = bool(os.getenv(env_var)) if env_var else False
+            _set_cached_availability(provider, available)
+            results[provider] = available
         else:
-            # Шаг 2а: light‑check только по наличию переменной окружения
-            env_var = _PROVIDER_KEY_ENV.get(provider_name.lower())
-            if env_var is None:
-                available = False
-            else:
-                available = bool(os.getenv(env_var))
-            if not available:
-                logger.debug(f"Light check failed for {provider_name}: missing API key")
-        availability[provider_name] = available
-    any_available = any(availability.values())
-    if deep:
-        _provider_cache = {
-            "_timestamp": now,
-            "_data": (any_available, availability),
-        }
-    return any_available, availability
+            available = await _check_provider_deep(provider)
+            _set_cached_availability(provider, available)
+            results[provider] = available
+
+    any_available = any(results.values())
+    return any_available, results
 
 
+# ---------------------------------------------------------------------------
+# Эндпоинты
+# ---------------------------------------------------------------------------
 @app.get("/")
 async def root() -> dict:
     return {"status": "ok", "version": "1.0.0"}
 
 
-@app.get("/health", response_model=HealthResponse)
+# ИСПРАВЛЕНИЕ: добавляем явное описание в декоратор, чтобы гарантировать наличие в OpenAPI
+@app.get(
+    "/health",
+    response_model=HealthResponse,
+    description="""
+Проверка состояния сервиса.
+
+- deep=false (по умолчанию): проверяет только наличие API-ключей в env.
+- deep=true: выполняет реальный тестовый запрос к каждому LLM-провайдеру.
+  ВНИМАНИЕ: deep=true потребляет реальные токены и может тарифицироваться.
+  Использовать только для диагностики, не в автоматическом мониторинге.
+"""
+)
 async def health_check(deep: bool = False) -> Response:
-    """
-    Проверка состояния сервиса.
-    
-    - deep=false (по умолчанию): проверяет только наличие API-ключей в env.
-    - deep=true: выполняет реальный тестовый запрос к каждому LLM-провайдеру.
-      ВНИМАНИЕ: deep=true потребляет реальные токены и может тарифицироваться.
-      Использовать только для диагностики, не в автоматическом мониторинге.
-    """
     builder = get_prompt_builder()
     any_available, provider_status = await _check_providers_availability(deep=deep)
 
@@ -207,21 +247,6 @@ async def health_check(deep: bool = False) -> Response:
     )
 
 
-async def _call_llm_with_provider(
-    prompt: str,
-    provider_name: str,
-    model: Optional[str],
-    temperature: float,
-) -> LLMResponse:
-    provider_enum = LLMProvider(provider_name)
-    async with create_llm_client(
-        provider=provider_enum,
-        model=model,
-        temperature=temperature,
-    ) as client:
-        return await client.generate(prompt)
-
-
 def _log_edit_request_meta(request: EditRequest, retrieval_meta: Optional[Dict] = None) -> None:
     log_data = {
         "event": "edit_request",
@@ -242,23 +267,8 @@ def _log_edit_request_meta(request: EditRequest, retrieval_meta: Optional[Dict] 
 
 @app.post("/api/edit", response_model=EditResponse)
 async def edit_text(request: EditRequest) -> EditResponse:
-    if request.domain not in ALLOWED_DOMAINS:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Invalid domain: {request.domain}. Allowed: {sorted(ALLOWED_DOMAINS)}",
-        )
-    if request.intent is not None and request.intent not in ALLOWED_INTENTS:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Invalid intent: {request.intent}. Allowed: {sorted(ALLOWED_INTENTS)}",
-        )
-    for overlay in request.overlays:
-        if overlay not in ALLOWED_OVERLAYS:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail=f"Invalid overlay: {overlay}. Allowed: {sorted(ALLOWED_OVERLAYS)}",
-            )
-
+    # Валидация domain/intent/overlays теперь выполняется в Pydantic (A-1)
+    # Ручные проверки УДАЛЕНЫ.
     try:
         audience: Optional[AudienceProfile] = None
         if request.audience is not None:
@@ -284,16 +294,14 @@ async def edit_text(request: EditRequest) -> EditResponse:
                 include_retrieval_meta=True,
             )
             _log_edit_request_meta(request, retrieval_meta)
-            # Шаг 4: убираем prompt из ответа
             return EditResponse(
                 edited_text=request.text,
                 report=None,
-                # prompt=prompt,  # удалено
                 provider=request.provider,
                 model=request.model,
                 dry_run=True,
                 usage={},
-                raw_response={},  # в dry-run raw_response пустой
+                raw_response={},
                 retrieval_meta=retrieval_meta,
             )
 
@@ -325,18 +333,15 @@ async def edit_text(request: EditRequest) -> EditResponse:
             edited_text, report = _parse_text_and_report(response.content)
 
         _log_edit_request_meta(request, retrieval_meta)
-        # Шаг 4: убираем prompt и content из ответа
         return EditResponse(
             edited_text=edited_text,
             report=report,
-            # prompt=prompt,  # удалено
             model=response.model,
             provider=response.provider,
             dry_run=False,
             usage={"tokens_used": response.tokens_used},
             raw_response={
                 "finish_reason": response.finish_reason,
-                # "content": response.content,  # удалено — не возвращаем полный ответ LLM
             },
             retrieval_meta=retrieval_meta if request.include_retrieval_meta else None,
         )
@@ -369,55 +374,33 @@ async def edit_text(request: EditRequest) -> EditResponse:
         ) from error
 
 
-_TEXT_MARKERS: Tuple[str, ...] = (
-    "===ТЕКСТ===",
-    "=== ТЕКСТ ===",
-    "## ТЕКСТ",
-    "**ТЕКСТ**",
-    "ТЕКСТ:",
-)
-
-_REPORT_MARKERS: Tuple[str, ...] = (
-    "===ОТЧЁТ===",
-    "=== ОТЧЁТ ===",
-    "===ОТЧЕТ===",
-    "=== ОТЧЕТ ===",
-    "## ОТЧЁТ",
-    "## ОТЧЕТ",
-    "**ОТЧЁТ**",
-    "**ОТЧЕТ**",
-    "ОТЧЁТ:",
-    "ОТЧЕТ:",
-)
+# ---------------------------------------------------------------------------
+# Парсинг ответа LLM с маркерами ТЕКСТ/ОТЧЁТ (A-4)
+# ---------------------------------------------------------------------------
+_MARKER_TEXT = re.compile(r"={2,}\s*ТЕКСТ\s*={2,}", re.IGNORECASE)
+_MARKER_REPORT = re.compile(r"={2,}\s*ОТЧЁТ\s*={2,}", re.IGNORECASE)
 
 
-def _find_marker(content_upper: str, markers: Tuple[str, ...]) -> Optional[str]:
-    for marker in markers:
-        if marker.upper() in content_upper:
-            return marker
-    return None
+def _parse_text_and_report(raw: str) -> Tuple[str, Optional[str]]:
+    """
+    Разбирает ответ LLM на отредактированный текст и отчёт.
+    Устойчив к вариациям маркеров (пробелы, регистр).
+    """
+    parts_by_text = _MARKER_TEXT.split(raw, maxsplit=1)
+    if len(parts_by_text) < 2:
+        logger.warning(
+            "Маркер ТЕКСТ не найден в ответе LLM. "
+            "Возвращаем весь ответ как текст. Длина: %d символов", len(raw)
+        )
+        return raw.strip(), None
 
+    after_text_marker = parts_by_text[1]
+    parts_by_report = _MARKER_REPORT.split(after_text_marker, maxsplit=1)
 
-def _parse_text_and_report(content: str) -> Tuple[str, Optional[str]]:
-    content_upper = content.upper()
-    text_marker = _find_marker(content_upper, _TEXT_MARKERS)
-    report_marker = _find_marker(content_upper, _REPORT_MARKERS)
+    edited_text = parts_by_report[0].strip()
+    report = parts_by_report[1].strip() if len(parts_by_report) > 1 else None
 
-    if text_marker and report_marker:
-        text_pat = re.compile(re.escape(text_marker), re.IGNORECASE)
-        report_pat = re.compile(re.escape(report_marker), re.IGNORECASE)
-        text_match = text_pat.search(content)
-        report_match = report_pat.search(content)
-        if text_match and report_match:
-            edited_text = content[text_match.end():report_match.start()].strip()
-            report = content[report_match.end():].strip() or None
-            return edited_text, report
+    if not edited_text:
+        logger.warning("Блок ТЕКСТ найден, но содержимое пустое.")
 
-    if text_marker and not report_marker:
-        text_pat = re.compile(re.escape(text_marker), re.IGNORECASE)
-        text_match = text_pat.search(content)
-        if text_match:
-            return content[text_match.end():].strip(), None
-
-    logger.warning("parse_text_and_report: no markers found, returning whole response as text")
-    return content.strip(), None
+    return edited_text, report
