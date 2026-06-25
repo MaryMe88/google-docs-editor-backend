@@ -73,12 +73,16 @@ class EditRequest(BaseModel):
     include_few_shot: bool = Field(default=True)
     dry_run: bool = Field(default=False)
 
-    # ИЗМЕНЕНИЕ A-1: валидаторы теперь проверяют допустимость и нормализуют через normalize_tag
     @field_validator("domain")
     @classmethod
     def validate_domain(cls, v: str) -> str:
-        """Нормализует и проверяет domain через ALLOWED_DOMAINS."""
-        normalized = normalize_tag(v)
+        """Нормализует и проверяет domain через ALLOWED_DOMAINS.
+
+        Используем strip().lower() — НЕ normalize_tag(), потому что
+        normalize_tag удаляет подчёркивания («basic_edit» → «basicedit»),
+        тогда как имена доменов содержат значимые подчёркивания.
+        """
+        normalized = v.strip().lower()
         if normalized not in ALLOWED_DOMAINS:
             raise ValueError(f"Unknown domain: {v!r}. Allowed: {sorted(ALLOWED_DOMAINS)}")
         return normalized
@@ -86,10 +90,14 @@ class EditRequest(BaseModel):
     @field_validator("intent")
     @classmethod
     def validate_intent(cls, v: Optional[str]) -> Optional[str]:
-        """Нормализует и проверяет intent через ALLOWED_INTENTS."""
+        """Нормализует и проверяет intent через ALLOWED_INTENTS.
+
+        Используем strip().lower() — НЕ normalize_tag(), по той же причине:
+        имена интентов содержат значимые подчёркивания (fix_flow, add_hooks и т.д.).
+        """
         if v is None or not v.strip():
             return None
-        normalized = normalize_tag(v)
+        normalized = v.strip().lower()
         if normalized not in ALLOWED_INTENTS:
             raise ValueError(f"Unknown intent: {v!r}. Allowed: {sorted(ALLOWED_INTENTS)}")
         return normalized
@@ -97,7 +105,11 @@ class EditRequest(BaseModel):
     @field_validator("overlays", mode="before")
     @classmethod
     def validate_overlays(cls, v: list) -> list[str]:
-        """Нормализует, проверяет через ALLOWED_OVERLAYS и дедуплицирует."""
+        """Нормализует, проверяет через ALLOWED_OVERLAYS и дедуплицирует.
+
+        Для оверлеев normalize_tag() уместен: у них есть алиасы и
+        варианты написания (finalcheck / final_check / FinalCheck).
+        """
         result = []
         seen = set()
         for item in v:
