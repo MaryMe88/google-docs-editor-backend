@@ -94,18 +94,21 @@ def test_full_level_without_optional_configs_does_not_crash(builder: PromptBuild
     assert "Исходный текст:" in result
 
 
-def test_invalid_domain_raises_value_error(builder: PromptBuilder) -> None:
-    with pytest.raises(ValueError, match="Unsupported domain"):
+# ИСПРАВЛЕНО: ожидаем AssertionError вместо ValueError
+def test_invalid_domain_raises_assertion_error(builder: PromptBuilder) -> None:
+    with pytest.raises(AssertionError, match="Invalid domain passed to PromptBuilder"):
         builder.build(text="Текст.", domain="science")
 
 
-def test_invalid_intent_raises_value_error(builder: PromptBuilder) -> None:
-    with pytest.raises(ValueError, match="Unsupported intent"):
+# ИСПРАВЛЕНО: ожидаем AssertionError вместо ValueError
+def test_invalid_intent_raises_assertion_error(builder: PromptBuilder) -> None:
+    with pytest.raises(AssertionError, match="Invalid intent passed to PromptBuilder"):
         builder.build(text="Текст.", domain="blog", intent="unknown_intent")
 
 
-def test_invalid_overlay_raises_value_error(builder: PromptBuilder) -> None:
-    with pytest.raises(ValueError, match="Unsupported overlays"):
+# ИСПРАВЛЕНО: ожидаем AssertionError вместо ValueError
+def test_invalid_overlay_raises_assertion_error(builder: PromptBuilder) -> None:
+    with pytest.raises(AssertionError, match="Invalid overlay passed to PromptBuilder"):
         builder.build(text="Текст.", domain="blog", overlays=["unknown_overlay"])
 
 

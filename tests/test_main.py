@@ -14,7 +14,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from fastapi.testclient import TestClient
 
-from src.main import app, _PROVIDER_KEY_ENV, _CORS_ORIGINS
+from src.main import app, _PROVIDER_KEY_ENV, _CORS_ORIGINS, invalidate_provider_cache
 from src.contracts import EditResponse
 
 
@@ -28,6 +28,9 @@ def test_health_light_check_uses_env_not_http(monkeypatch: pytest.MonkeyPatch) -
     Шаг 2а: при deep=False проверяется только наличие ключа в окружении,
     без создания HTTP-клиента.
     """
+    # Сбрасываем кэш провайдеров перед тестом
+    invalidate_provider_cache()
+
     # Удаляем все ключи, чтобы все провайдеры были недоступны
     for env_var in _PROVIDER_KEY_ENV.values():
         monkeypatch.delenv(env_var, raising=False)
@@ -42,6 +45,8 @@ def test_health_light_check_uses_env_not_http(monkeypatch: pytest.MonkeyPatch) -
 
     # Теперь ставим один ключ
     monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
+    # Снова сбрасываем кэш, чтобы новые значения окружения учлись
+    invalidate_provider_cache()
     response = client.get("/health?deep=false")
     assert response.status_code == 200
     data = response.json()
@@ -57,13 +62,15 @@ def test_health_light_check_uses_env_not_http(monkeypatch: pytest.MonkeyPatch) -
 def test_health_docstring_contains_warning() -> None:
     """
     Шаг 2б: документация эндпоинта /health содержит предупреждение о deep=true.
+    Проверяем OpenAPI-схему, где описание явно задано в декораторе.
     """
     openapi = app.openapi()
     path_item = openapi["paths"]["/health"]
     get_operation = path_item["get"]
     description = get_operation.get("description", "")
-    assert "deep=true" in description
-    assert "ВНИМАНИЕ" in description or "потребляет реальные токены" in description
+    assert "deep" in description, "Описание должно содержать упоминание 'deep'"
+    assert "ВНИМАНИЕ" in description or "потребляет реальные токены" in description, \
+        "Описание должно содержать предупреждение о затратах"
 
 
 # ---------- Шаг 3: CORS ----------

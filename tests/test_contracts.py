@@ -361,14 +361,14 @@ class TestFastAPIContractEdit:
     def test_edit_rejects_unknown_intent(self, api_client):
         payload = {**self.BASE_PAYLOAD, "intent": "nonexistent_intent_xyz"}
         r = api_client.post("/api/edit", json=payload)
-        # Явная валидация в main.py возвращает 400 для intent (шаг 2)
-        assert r.status_code == 400, "Неизвестный intent должен давать 400 Bad Request"
+        # Валидация выполняется в Pydantic (contracts.py), которая возвращает 422
+        assert r.status_code == 422, "Неизвестный intent должен давать 422 Unprocessable Entity"
 
     def test_edit_rejects_unknown_overlay(self, api_client):
         payload = {**self.BASE_PAYLOAD, "overlays": ["unknown_overlay_xyz"]}
         r = api_client.post("/api/edit", json=payload)
-        # Явная валидация в main.py возвращает 400 для overlays
-        assert r.status_code == 400, "Неизвестный overlay должен давать 400 Bad Request"
+        # Валидация выполняется в Pydantic (contracts.py), которая возвращает 422
+        assert r.status_code == 422, "Неизвестный overlay должен давать 422 Unprocessable Entity"
 
     def test_edit_rejects_unknown_provider(self, api_client):
         payload = {**self.BASE_PAYLOAD, "provider": "unknown_provider"}
