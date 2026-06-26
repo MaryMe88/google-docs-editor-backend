@@ -5,3 +5,4 @@ python-dotenv
 httpx
 pytest
 pytest-asyncio
+slowapi==0.1.9

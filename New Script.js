@@ -1145,7 +1145,8 @@ function buildPayload_(text, mode) {
  */
 function callBackend_(text, mode, maxRetries = 2) {
   const payload = buildPayload_(text, mode);
-  Logger.log('PAYLOAD -> ' + JSON.stringify(payload));
+  // SEC-11: убрано логирование полного payload для безопасности
+  // Logger.log('PAYLOAD -> ' + JSON.stringify(payload));
 
   const options = {
     method: 'post',
