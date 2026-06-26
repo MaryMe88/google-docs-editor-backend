@@ -282,13 +282,9 @@ class OpenAIClient(BaseLLMClient):
             "model": self.config.model,
             "messages": [
                 {
-                    "role": "system",
-                    "content": "You are a helpful writing assistant.",
-                },
-                {
                     "role": "user",
                     "content": prompt,
-                },
+                }
             ],
             "temperature": self.config.temperature,
             "max_tokens": self.config.max_tokens,
@@ -361,20 +357,16 @@ class OpenRouterClient(BaseLLMClient):
         headers = {
             "Authorization": f"Bearer {self.config.api_key}",
             "Content-Type": "application/json",
-            "HTTP-Referer": os.getenv("OPENROUTER_SITE_URL", "https://example.com"),
+            "HTTP-Referer": os.getenv("OPENROUTER_SITE_URL", ""),  # SEC-08: пустой fallback
             "X-Title": os.getenv("OPENROUTER_APP_NAME", "text-editor-api"),
         }
         payload: Dict[str, Any] = {
             "model": self.config.model,
             "messages": [
                 {
-                    "role": "system",
-                    "content": "You are a helpful writing assistant.",
-                },
-                {
                     "role": "user",
                     "content": prompt,
-                },
+                }
             ],
             "temperature": self.config.temperature,
             "max_tokens": self.config.max_tokens,
