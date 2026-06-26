@@ -181,10 +181,12 @@ class BaseLLMClient(ABC):
 
             attempt += 1
 
+        # SEC: логируем только тип ошибки, не str(last_error) —
+        # httpx.HTTPError может содержать URL с query-параметрами или фрагменты заголовков.
         logger.error(
             "All %s attempts failed",
             self.config.max_retries,
-            extra={"last_error": str(last_error) if last_error else None},
+            extra={"last_error": type(last_error).__name__ if last_error else None},
         )
         raise LLMError(f"Failed after {self.config.max_retries} attempts") from last_error
 
