@@ -296,7 +296,9 @@ class TestFastAPIContractHealth:
         assert r.status_code == 200
         data = r.json()
         assert data["status"] == "ok"
-        assert isinstance(data["version"], str)
+        # SEC: поле version намеренно убрано из GET / — не раскрываем
+        # внутренние детали публично. Версия доступна в /health (с аутентификацией).
+        assert "version" not in data
 
     def test_health_returns_ok(self, api_client):
         """
