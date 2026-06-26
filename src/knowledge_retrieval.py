@@ -3,6 +3,8 @@ knowledge_retrieval.py
 
 Логика нормализации текста, скоринга и ранжирования записей базы знаний.
 Отдельный модуль, чтобы разгрузить prompt_builder.py.
+Поддерживает hybrid search: keyword-результаты дополняются
+семантическим re-rankingом через SemanticIndex.
 """
 
 from __future__ import annotations
@@ -38,7 +40,6 @@ class FallbackPolicy:
     min_info_score_for_neutral: int = 1
 
 
-# Исправлено: добавлена закрывающая скобка
 RULE_FALLBACK_POLICY = FallbackPolicy(
     min_strong_score=1,
     allow_text_only=True,
@@ -46,9 +47,8 @@ RULE_FALLBACK_POLICY = FallbackPolicy(
     allow_neutral_fallback=False,
     primary_only_for_tag_fallback=True,
     min_info_score_for_neutral=2,
-)   # <-- закрывающая скобка добавлена
+)
 
-# Исправлено: добавлена закрывающая скобка
 STRUCTURAL_FALLBACK_POLICY = FallbackPolicy(
     min_strong_score=1,
     allow_text_only=True,
@@ -57,7 +57,7 @@ STRUCTURAL_FALLBACK_POLICY = FallbackPolicy(
     neutral_tags=("neutral", "editing", "clarity"),
     primary_only_for_tag_fallback=True,
     min_info_score_for_neutral=2,
-)   # <-- закрывающая скобка добавлена
+)
 
 
 def normalize_text_for_match(text: str) -> str:
@@ -290,7 +290,6 @@ def score_structural_entry(
 _score_entry = score_rule_entry
 
 
-# Исправлено: добавлена закрывающая скобка для кортежа
 def _make_dedupe_key(entry: Dict[str, Any]) -> Tuple[Any, ...]:
     if "id" in entry:
         return ("id", entry["id"])
@@ -300,7 +299,7 @@ def _make_dedupe_key(entry: Dict[str, Any]) -> Tuple[Any, ...]:
         entry.get("rule", ""),
         entry.get("description", ""),
         entry.get("name", ""),
-    )   # <-- закрывающая скобка добавлена
+    )
 
 
 def _normalize_tag_set(tags: Iterable[str]) -> Set[str]:
@@ -366,7 +365,6 @@ def _is_neutral_candidate(entry: Dict[str, Any], policy: FallbackPolicy) -> bool
     return _entry_info_score(entry) >= policy.min_info_score_for_neutral
 
 
-# Исправлено: убрано условие `and result`, чтобы первая запись тоже проверялась на бюджет
 def _collect_with_budget(
     ranked_entries: List[Dict[str, Any]],
     limit: int,
@@ -387,7 +385,6 @@ def _collect_with_budget(
             continue
 
         entry_chars = _estimate_entry_chars(entry)
-        # Теперь бюджет проверяется для всех записей, включая первую
         if char_budget is not None and chars_used + entry_chars > char_budget:
             dropped += 1
             continue
@@ -432,14 +429,12 @@ def _sort_ranked(
     return [entry for _, _, entry in scored]
 
 
-# Шаг 5: вспомогательная функция для проверки типа возвращаемого значения
 def _ensure_return_type(
     result: Union[List[Dict[str, Any]], Tuple[List[Dict[str, Any]], FallbackStage, int]],
     return_meta: bool,
 ) -> Union[List[Dict[str, Any]], Tuple[List[Dict[str, Any]], FallbackStage, int]]:
     """
     Проверяет, что тип результата соответствует ожидаемому в зависимости от return_meta.
-    Если не соответствует, бросает TypeError.
     """
     if return_meta:
         if not isinstance(result, tuple) or len(result) != 3:
@@ -455,6 +450,78 @@ def _ensure_return_type(
             )
     return result
 
+
+# ---------------------------------------------------------------------------
+# Semantic re-ranking (hybrid search)
+# ---------------------------------------------------------------------------
+
+def _semantic_rerank(
+    entries: List[Dict[str, Any]],
+    query: str,
+    semantic_weight: float = 0.35,
+    top_k_factor: int = 3,
+) -> List[Dict[str, Any]]:
+    """
+    Дополняет keyword-ранжированные записи семантическим re-rankingом.
+
+    Алгоритм:
+    1. Берём keyword-результат (entries) как есть.
+    2. Через SemanticIndex получаем семантический скор для каждой записи.
+    3. Смешиваем: позиция в keyword-списке (1 - безразмерная, 0 - первая)
+       + semantic_score * semantic_weight.
+    4. Если индекс недоступен — возвращаем entries без изменений.
+
+    :param entries: записи, уже отфильтрованные keyword-поиском
+    :param query: оригинальный текст пользователя
+    :param semantic_weight: доля семантики (0.0 — отключено, 1.0 — только семантика)
+    :param top_k_factor: сколько кандидатов запрашивать у индекса (множитель len(entries))
+    """
+    if not entries or not query or not query.strip() or semantic_weight <= 0:
+        return entries
+
+    try:
+        from src.semantic_index import get_semantic_index
+        index = get_semantic_index()
+        if index is None or not index.is_ready():
+            return entries
+    except ImportError:
+        return entries
+
+    n = len(entries)
+    top_k = min(n * top_k_factor, 200)
+    semantic_results = index.search(query.strip(), top_k=top_k)
+
+    # Строим карту entry_id → semantic_score
+    sem_score_map: Dict[int, float] = {
+        id(entry): score for entry, score in semantic_results
+    }
+
+    # Нормализуем позицию keyword-списка в [0, 1] (для первой = 1.0, для последней = 0.0)
+    def keyword_rank_score(pos: int) -> float:
+        return 1.0 - (pos / n) if n > 1 else 1.0
+
+    combined: List[Tuple[float, int, Dict[str, Any]]] = []
+    for pos, entry in enumerate(entries):
+        kw_score = keyword_rank_score(pos)
+        sem_score = sem_score_map.get(id(entry), 0.0)
+        total = kw_score * (1.0 - semantic_weight) + sem_score * semantic_weight
+        combined.append((total, pos, entry))
+
+    combined.sort(key=lambda x: (x[0], -x[1]), reverse=True)
+    reranked = [entry for _, _, entry in combined]
+
+    if logger.isEnabledFor(logging.DEBUG):
+        before = [e.get("name", e.get("wrong", "?"))[:30] for e in entries[:3]]
+        after = [e.get("name", e.get("wrong", "?"))[:30] for e in reranked[:3]]
+        if before != after:
+            logger.debug("Семантический re-ranking изменил порядок. До: %s. После: %s", before, after)
+
+    return reranked
+
+
+# ---------------------------------------------------------------------------
+# Основной pipeline отбора
+# ---------------------------------------------------------------------------
 
 @overload
 def _select_ranked_entries(
@@ -706,6 +773,10 @@ def _select_by_tags_or_all(
     )
 
 
+# ---------------------------------------------------------------------------
+# Публичный API — сигнатуры не изменяются
+# ---------------------------------------------------------------------------
+
 @overload
 def select_grammar_rules(
     kb: Any,
@@ -746,7 +817,7 @@ def select_grammar_rules(
 ) -> Union[List[Dict[str, Any]], Tuple[List[Dict[str, Any]], FallbackStage, int]]:
     normalized_text = normalize_text_for_match(text)
     effective_tags = list(tags) or ["grammar"]
-    return _select_ranked_entries(
+    raw = _select_ranked_entries(
         entries=kb.grammar_errors,
         normalized_text=normalized_text,
         wanted_tags=effective_tags,
@@ -759,6 +830,10 @@ def select_grammar_rules(
         fallback_policy=RULE_FALLBACK_POLICY,
         return_meta=return_meta,
     )
+    if return_meta:
+        entries, stage, dropped = raw  # type: ignore[misc]
+        return _semantic_rerank(entries, text), stage, dropped
+    return _semantic_rerank(raw, text)  # type: ignore[arg-type]
 
 
 @overload
@@ -801,7 +876,7 @@ def select_style_issues(
 ) -> Union[List[Dict[str, Any]], Tuple[List[Dict[str, Any]], FallbackStage, int]]:
     normalized_text = normalize_text_for_match(text)
     effective_tags = list(tags) or ["style"]
-    return _select_ranked_entries(
+    raw = _select_ranked_entries(
         entries=kb.stylistic_issues,
         normalized_text=normalized_text,
         wanted_tags=effective_tags,
@@ -814,6 +889,10 @@ def select_style_issues(
         fallback_policy=RULE_FALLBACK_POLICY,
         return_meta=return_meta,
     )
+    if return_meta:
+        entries, stage, dropped = raw  # type: ignore[misc]
+        return _semantic_rerank(entries, text), stage, dropped
+    return _semantic_rerank(raw, text)  # type: ignore[arg-type]
 
 
 @overload
@@ -844,7 +923,6 @@ def select_logic_issues(
     ...
 
 
-# ТП-3: строгий режим для logic_issues — без тихой деградации
 def select_logic_issues(
     kb: Any,
     text: str,
@@ -855,7 +933,6 @@ def select_logic_issues(
     char_budget: Optional[int] = None,
     return_meta: bool = False,
 ) -> Union[List[Dict[str, Any]], Tuple[List[Dict[str, Any]], FallbackStage, int]]:
-    # Если логических правил нет – возвращаем EMPTY с предупреждением
     if not kb.logic_issues:
         logger.warning(
             "select_logic_issues: kb.logic_issues пустой. "
@@ -868,8 +945,8 @@ def select_logic_issues(
 
     normalized_text = normalize_text_for_match(text)
     wanted_tags = list(tags) + ["logic"]
-    return _select_ranked_entries(
-        entries=kb.logic_issues,   # только logic_issues, без подмены
+    raw = _select_ranked_entries(
+        entries=kb.logic_issues,
         normalized_text=normalized_text,
         wanted_tags=wanted_tags,
         limit=limit,
@@ -881,6 +958,10 @@ def select_logic_issues(
         fallback_policy=RULE_FALLBACK_POLICY,
         return_meta=return_meta,
     )
+    if return_meta:
+        entries, stage, dropped = raw  # type: ignore[misc]
+        return _semantic_rerank(entries, text), stage, dropped
+    return _semantic_rerank(raw, text)  # type: ignore[arg-type]
 
 
 @overload
