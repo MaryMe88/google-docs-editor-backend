@@ -494,16 +494,47 @@ class TestFastAPIContractEdit:
 
     def test_edit_rejects_oversized_model(self, api_client, auth_headers):
         """
-        SEC: поле model без max_length позволяет отправить произвольно длинную строку,
-        которая передаётся в payload LLM API. Ограничение 200 символов защищает от
-        header injection и засорения логов.
-        При наличии max_length=200 в contracts.py Pydantic вернёт 422.
+        SEC: поле model с max_length=200 (contracts.py) не должно принимать строку длиннее 200 символов.
+        Ограничение предотвращает передачу произвольной строки напрямую в payload[\"model\"]
+        к LLM API и потенциальный header injection.
         """
         payload = {**self.BASE_PAYLOAD, "model": "a" * 201}
         r = api_client.post("/api/edit", json=payload, headers=auth_headers)
         assert r.status_code == 422, (
             "model длиннее 200 символов должна давать 422. "
-            "Если тест падает — добавь max_length=200 в contracts.py"
+            "Если тест падает — убедись, что в contracts.py задан max_length=200"
+        )
+
+    def test_edit_rejects_oversized_text(self, api_client, auth_headers):
+        """
+        SEC: text ограничен max_length=10000 (contracts.py).
+        Текст длиннее 10 000 символов должен отклоняться с 422 до вызова LLM.
+        Это предотвращает злоупотребление токен-бюджетом и DoS через гигантские промпты.
+        """
+        payload = {**self.BASE_PAYLOAD, "text": "а" * 10001}
+        r = api_client.post("/api/edit", json=payload, headers=auth_headers)
+        assert r.status_code == 422, (
+            "text длиннее 10 000 символов должен давать 422. "
+            "Если тест падает — убедись, что в contracts.py задан max_length=10000"
+        )
+
+    def test_edit_rejects_oversized_audience_description(self, api_client, auth_headers):
+        """
+        SEC: поле audience.description ограничено max_length=500 (contracts.py).
+        Поле попадает в LLM-промпт через _build_audience_block без санитизации —
+        без ограничения длины открывается вектор prompt injection.
+        """
+        payload = {
+            **self.BASE_PAYLOAD,
+            "audience": {
+                **self.BASE_PAYLOAD["audience"],
+                "description": "x" * 501,
+            },
+        }
+        r = api_client.post("/api/edit", json=payload, headers=auth_headers)
+        assert r.status_code == 422, (
+            "audience.description длиннее 500 символов должно давать 422. "
+            "Если тест падает — убедись, что в contracts.py задан max_length=500"
         )
 
     def test_edit_dry_run_contract(self, api_client, auth_headers):
@@ -519,4 +550,22 @@ class TestFastAPIContractEdit:
         assert data.get("dry_run") is True, "Поле dry_run должно быть True в ответе"
         assert data["edited_text"] == original, (
             "При dry_run=True edited_text должен совпадать с исходным текстом"
+        )
+
+    # ------------------------------------------------------------------
+    # SEC: response contract — чувствительные данные не раскрываются
+    # ------------------------------------------------------------------
+
+    def test_edit_response_does_not_expose_prompt(self, api_client, auth_headers):
+        """
+        SEC: поле prompt удалено из EditResponse (contracts.py).
+        Промпт содержит внутренние инструкции, системные правила и конфиг домена —
+        раскрывать их клиенту недопустимо.
+        """
+        r = api_client.post("/api/edit", json=self.BASE_PAYLOAD, headers=auth_headers)
+        assert r.status_code == 200
+        data = r.json()
+        assert "prompt" not in data, (
+            "SEC: поле prompt не должно присутствовать в EditResponse. "
+            "Проверь, что оно закомментировано/удалено из contracts.py"
         )
