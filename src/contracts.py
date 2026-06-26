@@ -27,7 +27,9 @@ class AudienceRequest(BaseModel):
     kind: str = Field(default="b2b")
     expertise: str = Field(default="pro")
     formality: str = Field(default="neutral")
-    description: str = Field(default="")
+    # SEC: ограничение длины предотвращает prompt injection через свободное текстовое поле,
+    # которое попадает в LLM-промпт через _build_audience_block без санитизации.
+    description: str = Field(default="", max_length=500)
 
     @field_validator("kind")
     @classmethod
@@ -66,7 +68,9 @@ class EditRequest(BaseModel):
     overlays: List[str] = Field(default_factory=list)
     output_mode: str = Field(default="text_only")
     provider: str = Field(default="openrouter")
-    model: Optional[str] = Field(default=None)
+    # SEC: max_length предотвращает передачу произвольной строки напрямую
+    # в payload["model"] к LLM API без ограничений.
+    model: Optional[str] = Field(default=None, max_length=200)
     temperature: float = Field(default=0.3, ge=0.0, le=2.0)
     include_knowledge: bool = Field(default=True)
     include_retrieval_meta: bool = Field(default=False)
