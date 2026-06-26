@@ -27,6 +27,7 @@ from src.contracts import CONTRACT_VERSION, EditRequest, EditResponse, HealthRes
 from src.llm_client import LLMError, call_with_fallback, create_llm_client
 from src.prompt_builder import PromptBuilder
 from src.provider_registry import LLMProvider
+from src.semantic_index import init_semantic_index
 from src.shared_contracts import (
     ALLOWED_DOMAINS,
     ALLOWED_INTENTS,
@@ -129,6 +130,29 @@ async def lifespan(app: FastAPI):
 
     logger.info("PromptBuilder initialized successfully")
     app.state.prompt_builder = prompt_builder
+
+    # ---------------------------------------------------------------------------
+    # Семантический индекс: инициализируем один раз при старте.
+    # Собираем все записи из базы знаний через уже загруженный kb внутри prompt_builder.
+    # Если библиотека sentence-transformers не установлена или модель недоступна,
+    # сервис всё равно запустится — semantic search будет просто отключён.
+    # ---------------------------------------------------------------------------
+    try:
+        kb = prompt_builder.kb
+        all_entries: list[dict] = [
+            *getattr(kb, "grammar_errors", []),
+            *getattr(kb, "stylistic_issues", []),
+            *getattr(kb, "logic_issues", []),
+        ]
+        if all_entries:
+            await asyncio.to_thread(init_semantic_index, all_entries)
+            logger.info("SemanticIndex: инициализирован (%d записей)", len(all_entries))
+        else:
+            logger.warning("SemanticIndex: база знаний пуста, индекс не построен")
+    except Exception as exc:
+        # Намеренно не прерываем старт — semantic search опциональный
+        logger.warning("SemanticIndex: не удалось инициализировать (%s). Поиск по смыслу отключён.", exc)
+
     yield
     logger.info("Shutting down text editor service...")
 
