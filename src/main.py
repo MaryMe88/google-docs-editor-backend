@@ -16,6 +16,11 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from pydantic import ValidationError
 
+# slowapi
+from slowapi import Limiter, _rate_limit_exceeded_handler
+from slowapi.util import get_remote_address
+from slowapi.errors import RateLimitExceeded
+
 from src.auth import verify_api_key
 from src.config_types import AudienceProfile
 from src.contracts import CONTRACT_VERSION, EditRequest, EditResponse, HealthResponse
@@ -36,6 +41,10 @@ logging.basicConfig(
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
 )
 logger = logging.getLogger(__name__)
+
+# Определяем, запущены ли тесты
+_is_testing = os.getenv("PYTEST_RUNNING", "false").lower() == "true"
+_rate_limit = "1000/minute" if _is_testing else "10/minute"
 
 
 # ---------------------------------------------------------------------------
@@ -97,6 +106,14 @@ _CORS_ORIGINS: list[str] = (
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     logger.info("Starting up text editor service...")
+    
+    # SEC-05: Проверка обязательных переменных окружения
+    _required_env = ["OPENROUTER_API_KEY"]
+    _missing = [k for k in _required_env if not os.getenv(k)]
+    if _missing:
+        logger.critical("Missing required env variables: %s. Refusing to start.", _missing)
+        raise RuntimeError(f"Missing required env variables: {_missing}")
+    
     prompt_builder = PromptBuilder()
 
     await asyncio.to_thread(prompt_builder.startup_check)
@@ -123,6 +140,11 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
+# Настройка rate limiting
+limiter = Limiter(key_func=get_remote_address)
+app.state.limiter = limiter
+app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=_CORS_ORIGINS,
@@ -146,6 +168,17 @@ async def log_requests(request: Request, call_next):
         "client_ip": request.client.host if request.client else None,
     }
     logger.info(json.dumps(log_entry, ensure_ascii=False))
+    return response
+
+
+# SEC-10: Добавление security headers
+@app.middleware("http")
+async def add_security_headers(request: Request, call_next):
+    response = await call_next(request)
+    response.headers["X-Content-Type-Options"] = "nosniff"
+    response.headers["X-Frame-Options"] = "DENY"
+    response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
+    response.headers["Permissions-Policy"] = "geolocation=(), microphone=(), camera=()"
     return response
 
 
@@ -212,13 +245,12 @@ async def root() -> dict:
     return {"status": "ok", "version": "1.0.0"}
 
 
-# Быстрый эндпоинт для проверки жизнеспособности (liveness probe) без аутентификации
 @app.get("/livez")
 async def liveness_check() -> dict:
+    """Быстрый health check для Render (без аутентификации)."""
     return {"status": "alive"}
 
 
-# ИСПРАВЛЕНИЕ: убираем аутентификацию с /health, чтобы Render мог его проверять
 @app.get(
     "/health",
     response_model=HealthResponse,
@@ -254,18 +286,18 @@ async def health_check(deep: bool = False) -> Response:
     )
 
 
-def _log_edit_request_meta(request: EditRequest, retrieval_meta: Optional[Dict] = None) -> None:
+def _log_edit_request_meta(body: EditRequest, retrieval_meta: Optional[Dict] = None) -> None:
     log_data = {
         "event": "edit_request",
-        "domain": request.domain,
-        "intent": request.intent,
-        "overlays": request.overlays,
-        "provider": request.provider,
-        "output_mode": request.output_mode,
-        "dry_run": request.dry_run,
-        "text_length": len(request.text),
-        "include_knowledge": request.include_knowledge,
-        "include_few_shot": request.include_few_shot,
+        "domain": body.domain,
+        "intent": body.intent,
+        "overlays": body.overlays,
+        "provider": body.provider,
+        "output_mode": body.output_mode,
+        "dry_run": body.dry_run,
+        "text_length": len(body.text),
+        "include_knowledge": body.include_knowledge,
+        "include_few_shot": body.include_few_shot,
     }
     if retrieval_meta:
         log_data["retrieval_meta"] = retrieval_meta
@@ -273,39 +305,40 @@ def _log_edit_request_meta(request: EditRequest, retrieval_meta: Optional[Dict] 
 
 
 @app.post("/api/edit", response_model=EditResponse, dependencies=[Depends(verify_api_key)])
-async def edit_text(request: EditRequest) -> EditResponse:
+@limiter.limit(_rate_limit)
+async def edit_text(request: Request, body: EditRequest) -> EditResponse:
     # Валидация domain/intent/overlays теперь выполняется в Pydantic (A-1)
     # Ручные проверки УДАЛЕНЫ.
     try:
         audience: Optional[AudienceProfile] = None
-        if request.audience is not None:
+        if body.audience is not None:
             audience = AudienceProfile(
-                kind=request.audience.kind,
-                expertise=request.audience.expertise,
-                formality=request.audience.formality,
-                description=request.audience.description,
+                kind=body.audience.kind,
+                expertise=body.audience.expertise,
+                formality=body.audience.formality,
+                description=body.audience.description,
             )
 
         prompt_builder = get_prompt_builder()
 
-        if request.dry_run:
+        if body.dry_run:
             prompt, retrieval_meta = prompt_builder.build(
-                text=request.text,
-                domain=request.domain,
-                intent=request.intent,
+                text=body.text,
+                domain=body.domain,
+                intent=body.intent,
                 audience=audience,
-                overlays=request.overlays,
-                output_mode=request.output_mode,
-                include_knowledge=request.include_knowledge,
-                include_few_shot=request.include_few_shot,
+                overlays=body.overlays,
+                output_mode=body.output_mode,
+                include_knowledge=body.include_knowledge,
+                include_few_shot=body.include_few_shot,
                 include_retrieval_meta=True,
             )
-            _log_edit_request_meta(request, retrieval_meta)
+            _log_edit_request_meta(body, retrieval_meta)
             return EditResponse(
-                edited_text=request.text,
+                edited_text=body.text,
                 report=None,
-                provider=request.provider,
-                model=request.model,
+                provider=body.provider,
+                model=body.model,
                 dry_run=True,
                 usage={},
                 raw_response={},
@@ -313,33 +346,33 @@ async def edit_text(request: EditRequest) -> EditResponse:
             )
 
         prompt, retrieval_meta = prompt_builder.build(
-            text=request.text,
-            domain=request.domain,
-            intent=request.intent,
+            text=body.text,
+            domain=body.domain,
+            intent=body.intent,
             audience=audience,
-            overlays=request.overlays,
-            output_mode=request.output_mode,
-            include_knowledge=request.include_knowledge,
-            include_few_shot=request.include_few_shot,
+            overlays=body.overlays,
+            output_mode=body.output_mode,
+            include_knowledge=body.include_knowledge,
+            include_few_shot=body.include_few_shot,
             include_retrieval_meta=True,
         )
-        providers_to_try = [request.provider] + [
-            p for p in sorted(ALLOWED_PROVIDERS) if p != request.provider
+        providers_to_try = [body.provider] + [
+            p for p in sorted(ALLOWED_PROVIDERS) if p != body.provider
         ]
         response = await call_with_fallback(
             prompt=prompt,
             providers=providers_to_try,
-            model=request.model,
-            temperature=request.temperature,
+            model=body.model,
+            temperature=body.temperature,
             max_retries_per_provider=2,
         )
 
         edited_text = response.content
         report: Optional[str] = None
-        if request.output_mode == "text_and_report":
+        if body.output_mode == "text_and_report":
             edited_text, report = _parse_text_and_report(response.content)
 
-        _log_edit_request_meta(request, retrieval_meta)
+        _log_edit_request_meta(body, retrieval_meta)
         return EditResponse(
             edited_text=edited_text,
             report=report,
@@ -350,7 +383,7 @@ async def edit_text(request: EditRequest) -> EditResponse:
             raw_response={
                 "finish_reason": response.finish_reason,
             },
-            retrieval_meta=retrieval_meta if request.include_retrieval_meta else None,
+            retrieval_meta=retrieval_meta if body.include_retrieval_meta else None,
         )
 
     except LLMError as error:
