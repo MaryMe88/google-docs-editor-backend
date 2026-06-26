@@ -9,6 +9,7 @@ tests/test_contracts.py
 """
 from __future__ import annotations
 
+import os
 from typing import Any, Dict
 from unittest.mock import AsyncMock, patch
 
@@ -262,11 +263,21 @@ class TestLLMClientContract:
 # Контракт 4: FastAPI-эндпоинты
 # ---------------------------------------------------------------------------
 
+# SEC: тестовый API-ключ для аутентифицированных эндпоинтов.
+# Значение должно совпадать с тем, что вернёт verify_api_key при тестовом запуске.
+# В реальном окружении ключ берётся из env-переменной API_SECRET_KEY.
+_TEST_API_KEY = "test-secret-key-for-contracts"
+
+
 @pytest.fixture(scope="module")
 def api_client():
     """
     Создаём тестовый клиент с замоканным LLM — реального вызова нет,
     проверяем только маршрутизацию, схемы и коды ответов.
+
+    SEC: выставляем API_SECRET_KEY в окружение так, чтобы verify_api_key
+    принял тестовый ключ _TEST_API_KEY. Без этого все защищённые эндпоинты
+    вернут 401, и тесты не смогут проверить логику маршрутизации.
     """
     from src.llm_client import LLMResponse
 
@@ -284,10 +295,17 @@ def api_client():
 
     # Отключаем проверку тегов базы знаний, так как в тестовой среде KB может не содержать всех канонических тегов
     with patch("src.llm_client.create_llm_client", return_value=mock_client), \
-         patch("src.startup_checks._check_tags_vs_kb"):
+         patch("src.startup_checks._check_tags_vs_kb"), \
+         patch.dict(os.environ, {"API_SECRET_KEY": _TEST_API_KEY}):
         from src.main import app
         with TestClient(app) as client:
             yield client
+
+
+@pytest.fixture(scope="module")
+def auth_headers() -> Dict[str, str]:
+    """Заголовок аутентификации для защищённых эндпоинтов."""
+    return {"X-API-Key": _TEST_API_KEY}
 
 
 class TestFastAPIContractHealth:
@@ -300,18 +318,49 @@ class TestFastAPIContractHealth:
         # внутренние детали публично. Версия доступна в /health (с аутентификацией).
         assert "version" not in data
 
-    def test_health_returns_ok(self, api_client):
+    def test_health_requires_auth(self, api_client):
         """
-        /health возвращает 200 (все провайдеры доступны) или 503 (деградация —
-        нет API-ключей в CI). Оба кода корректны; проверяем структуру ответа.
+        SEC: /health защищён verify_api_key.
+        Запрос без заголовка X-API-Key должен вернуть 401, а не данные сервиса.
+        Это предотвращает бесплатную инвентаризацию провайдеров и DoS через deep=true.
         """
         r = api_client.get("/health")
+        assert r.status_code == 401, (
+            f"/health без ключа должен возвращать 401, получили {r.status_code}: {r.text}"
+        )
+
+    def test_health_with_auth_returns_200_or_503(self, api_client, auth_headers):
+        """
+        /health с валидным ключом возвращает 200 (все провайдеры доступны) или 503
+        (деградация — нет API-ключей в CI). Оба кода корректны.
+        Проверяем структуру ответа.
+        """
+        r = api_client.get("/health", headers=auth_headers)
         assert r.status_code in (200, 503), (
             f"/health вернул неожиданный код {r.status_code}: {r.text}"
         )
         data = r.json()
         assert "status" in data, "Поле 'status' обязательно в ответе /health"
         assert "version" in data, "Поле 'version' обязательно в ответе /health"
+
+    def test_health_deep_requires_auth(self, api_client):
+        """
+        SEC: /health?deep=true без ключа должен вернуть 401.
+        deep=true потребляет реальные токены — доступ без аутентификации недопустим.
+        """
+        r = api_client.get("/health?deep=true")
+        assert r.status_code == 401, (
+            f"/health?deep=true без ключа должен давать 401, получили {r.status_code}"
+        )
+
+    def test_livez_does_not_require_auth(self, api_client):
+        """
+        /livez — быстрый liveness probe для Render, не требует аутентификации.
+        Используется инфраструктурой, а не клиентами.
+        """
+        r = api_client.get("/livez")
+        assert r.status_code == 200
+        assert r.json().get("status") == "alive"
 
 
 class TestFastAPIContractEdit:
@@ -320,6 +369,9 @@ class TestFastAPIContractEdit:
     - принимает EditRequest (схема),
     - возвращает EditResponse (схема),
     - поля edited_text, model, provider обязательны.
+
+    SEC: все запросы включают заголовок X-API-Key.
+    Тесты без ключа проверяют, что эндпоинт действительно защищён.
     """
 
     BASE_PAYLOAD: Dict[str, Any] = {
@@ -339,73 +391,132 @@ class TestFastAPIContractEdit:
         "temperature": 0.3,
     }
 
-    def test_edit_returns_200(self, api_client):
+    # ------------------------------------------------------------------
+    # SEC: проверка аутентификации
+    # ------------------------------------------------------------------
+
+    def test_edit_requires_auth(self, api_client):
+        """
+        SEC: POST /api/edit без X-API-Key должен вернуть 401.
+        Любой, кто знает URL, не должен иметь возможность отправить текст на обработку.
+        """
         r = api_client.post("/api/edit", json=self.BASE_PAYLOAD)
+        assert r.status_code == 401, (
+            f"/api/edit без ключа должен давать 401, получили {r.status_code}"
+        )
+
+    def test_edit_rejects_invalid_api_key(self, api_client):
+        """SEC: неверный ключ → 401, не 403 или 200."""
+        r = api_client.post(
+            "/api/edit",
+            json=self.BASE_PAYLOAD,
+            headers={"X-API-Key": "totally-wrong-key"},
+        )
+        assert r.status_code == 401
+
+    # ------------------------------------------------------------------
+    # Контракт: схема запроса и ответа
+    # ------------------------------------------------------------------
+
+    def test_edit_returns_200(self, api_client, auth_headers):
+        r = api_client.post("/api/edit", json=self.BASE_PAYLOAD, headers=auth_headers)
         assert r.status_code == 200, f"Ожидали 200, получили {r.status_code}: {r.text}"
 
-    def test_edit_response_has_required_fields(self, api_client):
-        r = api_client.post("/api/edit", json=self.BASE_PAYLOAD)
+    def test_edit_response_has_required_fields(self, api_client, auth_headers):
+        r = api_client.post("/api/edit", json=self.BASE_PAYLOAD, headers=auth_headers)
         assert r.status_code == 200
         data = r.json()
         assert "edited_text" in data, "Поле edited_text обязательно"
         assert "model" in data, "Поле model обязательно"
         assert "provider" in data, "Поле provider обязательно"
 
-    def test_edit_edited_text_is_str(self, api_client):
-        r = api_client.post("/api/edit", json=self.BASE_PAYLOAD)
+    def test_edit_edited_text_is_str(self, api_client, auth_headers):
+        r = api_client.post("/api/edit", json=self.BASE_PAYLOAD, headers=auth_headers)
         assert isinstance(r.json()["edited_text"], str)
 
-    def test_edit_rejects_empty_text(self, api_client):
+    def test_edit_rejects_empty_text(self, api_client, auth_headers):
         payload = {**self.BASE_PAYLOAD, "text": ""}
-        r = api_client.post("/api/edit", json=payload)
+        r = api_client.post("/api/edit", json=payload, headers=auth_headers)
         assert r.status_code == 422, "Пустой текст должен давать 422"
 
-    def test_edit_rejects_unknown_intent(self, api_client):
+    def test_edit_rejects_unknown_intent(self, api_client, auth_headers):
         payload = {**self.BASE_PAYLOAD, "intent": "nonexistent_intent_xyz"}
-        r = api_client.post("/api/edit", json=payload)
+        r = api_client.post("/api/edit", json=payload, headers=auth_headers)
         # Валидация выполняется в Pydantic (contracts.py), которая возвращает 422
         assert r.status_code == 422, "Неизвестный intent должен давать 422 Unprocessable Entity"
 
-    def test_edit_rejects_unknown_overlay(self, api_client):
+    def test_edit_rejects_unknown_overlay(self, api_client, auth_headers):
         payload = {**self.BASE_PAYLOAD, "overlays": ["unknown_overlay_xyz"]}
-        r = api_client.post("/api/edit", json=payload)
+        r = api_client.post("/api/edit", json=payload, headers=auth_headers)
         # Валидация выполняется в Pydantic (contracts.py), которая возвращает 422
         assert r.status_code == 422, "Неизвестный overlay должен давать 422 Unprocessable Entity"
 
-    def test_edit_rejects_unknown_provider(self, api_client):
+    def test_edit_rejects_unknown_provider(self, api_client, auth_headers):
         payload = {**self.BASE_PAYLOAD, "provider": "unknown_provider"}
-        r = api_client.post("/api/edit", json=payload)
+        r = api_client.post("/api/edit", json=payload, headers=auth_headers)
         # Валидация Pydantic (через field_validator) возвращает 422
-        # Это не переопределено явной проверкой в main.py, поэтому остаётся 422
         assert r.status_code == 422, "Неизвестный provider должен давать 422 Unprocessable Entity"
 
-    def test_edit_with_storytelling_intent(self, api_client):
+    def test_edit_with_storytelling_intent(self, api_client, auth_headers):
         payload = {**self.BASE_PAYLOAD, "intent": "storytelling"}
-        r = api_client.post("/api/edit", json=payload)
+        r = api_client.post("/api/edit", json=payload, headers=auth_headers)
         assert r.status_code == 200
 
-    def test_edit_text_and_report_mode(self, api_client):
+    def test_edit_text_and_report_mode(self, api_client, auth_headers):
         payload = {**self.BASE_PAYLOAD, "output_mode": "text_and_report"}
-        r = api_client.post("/api/edit", json=payload)
+        r = api_client.post("/api/edit", json=payload, headers=auth_headers)
         assert r.status_code == 200
         data = r.json()
         assert "edited_text" in data
 
-    def test_edit_request_has_include_few_shot_field(self, api_client):
+    def test_edit_request_has_include_few_shot_field(self, api_client, auth_headers):
         """
         Проверка контракта: в EditRequest есть поле include_few_shot со значением по умолчанию.
         (PR‑2)
         """
         # Отправляем запрос без явного указания поля — не должно быть ошибки
-        r = api_client.post("/api/edit", json=self.BASE_PAYLOAD)
+        r = api_client.post("/api/edit", json=self.BASE_PAYLOAD, headers=auth_headers)
         assert r.status_code == 200
 
         # Явно выключаем few‑shot
         payload_false = {**self.BASE_PAYLOAD, "include_few_shot": False}
-        r2 = api_client.post("/api/edit", json=payload_false)
+        r2 = api_client.post("/api/edit", json=payload_false, headers=auth_headers)
         assert r2.status_code == 200
 
         # Явно включаем few‑shot
         payload_true = {**self.BASE_PAYLOAD, "include_few_shot": True}
-        r3 = api_client.post("/api/edit", json=payload_true)
+        r3 = api_client.post("/api/edit", json=payload_true, headers=auth_headers)
         assert r3.status_code == 200
+
+    # ------------------------------------------------------------------
+    # SEC: input validation
+    # ------------------------------------------------------------------
+
+    def test_edit_rejects_oversized_model(self, api_client, auth_headers):
+        """
+        SEC: поле model без max_length позволяет отправить произвольно длинную строку,
+        которая передаётся в payload LLM API. Ограничение 200 символов защищает от
+        header injection и засорения логов.
+        При наличии max_length=200 в contracts.py Pydantic вернёт 422.
+        """
+        payload = {**self.BASE_PAYLOAD, "model": "a" * 201}
+        r = api_client.post("/api/edit", json=payload, headers=auth_headers)
+        assert r.status_code == 422, (
+            "model длиннее 200 символов должна давать 422. "
+            "Если тест падает — добавь max_length=200 в contracts.py"
+        )
+
+    def test_edit_dry_run_contract(self, api_client, auth_headers):
+        """
+        dry_run=True: LLM не вызывается, возвращается исходный текст.
+        Контракт: dry_run=True в ответе, edited_text == исходному тексту.
+        """
+        original = "Текст для dry run проверки."
+        payload = {**self.BASE_PAYLOAD, "text": original, "dry_run": True}
+        r = api_client.post("/api/edit", json=payload, headers=auth_headers)
+        assert r.status_code == 200
+        data = r.json()
+        assert data.get("dry_run") is True, "Поле dry_run должно быть True в ответе"
+        assert data["edited_text"] == original, (
+            "При dry_run=True edited_text должен совпадать с исходным текстом"
+        )
