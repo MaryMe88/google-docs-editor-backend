@@ -259,12 +259,13 @@ class PerplexityClient(BaseLLMClient):
         try:
             error_data = response.json()
             if "error" in error_data:
-                if isinstance(error_data["error"], dict):
-                    return error_data["error"].get("message", str(error_data["error"]))
-                return str(error_data["error"])
-            return response.text
+                err = error_data["error"]
+                if isinstance(err, dict):
+                    return err.get("message", "API error")
+                return "API error"
+            return f"HTTP {response.status_code}"
         except Exception:
-            return response.text
+            return f"HTTP {response.status_code}"
 
 
 class OpenAIClient(BaseLLMClient):
@@ -342,12 +343,13 @@ class OpenAIClient(BaseLLMClient):
         try:
             error_data = response.json()
             if "error" in error_data:
-                if isinstance(error_data["error"], dict):
-                    return error_data["error"].get("message", str(error_data["error"]))
-                return str(error_data["error"])
-            return response.text
+                err = error_data["error"]
+                if isinstance(err, dict):
+                    return err.get("message", "API error")
+                return "API error"
+            return f"HTTP {response.status_code}"
         except Exception:
-            return response.text
+            return f"HTTP {response.status_code}"
 
 
 class OpenRouterClient(BaseLLMClient):
@@ -429,11 +431,11 @@ class OpenRouterClient(BaseLLMClient):
             if "error" in error_data:
                 err = error_data["error"]
                 if isinstance(err, dict):
-                    return err.get("message", str(err))
-                return str(err)
-            return response.text
+                    return err.get("message", "API error")
+                return "API error"
+            return f"HTTP {response.status_code}"
         except Exception:
-            return response.text
+            return f"HTTP {response.status_code}"
 
 
 class AnthropicClient(BaseLLMClient):
@@ -527,11 +529,11 @@ class AnthropicClient(BaseLLMClient):
             if "error" in error_data:
                 err = error_data["error"]
                 if isinstance(err, dict):
-                    return err.get("message", str(err))
-                return str(err)
-            return response.text
+                    return err.get("message", "API error")
+                return "API error"
+            return f"HTTP {response.status_code}"
         except Exception:
-            return response.text
+            return f"HTTP {response.status_code}"
 
 
 def create_llm_client(

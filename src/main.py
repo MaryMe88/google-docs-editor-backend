@@ -11,11 +11,12 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Dict, Optional, Set, Tuple
 
-from fastapi import FastAPI, HTTPException, Request, Response, status
+from fastapi import Depends, FastAPI, HTTPException, Request, Response, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from pydantic import ValidationError
 
+from src.auth import verify_api_key
 from src.config_types import AudienceProfile
 from src.contracts import CONTRACT_VERSION, EditRequest, EditResponse, HealthResponse
 from src.llm_client import LLMError, call_with_fallback, create_llm_client
@@ -222,7 +223,8 @@ async def root() -> dict:
 - deep=true: выполняет реальный тестовый запрос к каждому LLM-провайдеру.
   ВНИМАНИЕ: deep=true потребляет реальные токены и может тарифицироваться.
   Использовать только для диагностики, не в автоматическом мониторинге.
-"""
+""",
+    dependencies=[Depends(verify_api_key)],
 )
 async def health_check(deep: bool = False) -> Response:
     builder = get_prompt_builder()
@@ -265,7 +267,7 @@ def _log_edit_request_meta(request: EditRequest, retrieval_meta: Optional[Dict] 
     logger.info(json.dumps(log_data, ensure_ascii=False))
 
 
-@app.post("/api/edit", response_model=EditResponse)
+@app.post("/api/edit", response_model=EditResponse, dependencies=[Depends(verify_api_key)])
 async def edit_text(request: EditRequest) -> EditResponse:
     # Валидация domain/intent/overlays теперь выполняется в Pydantic (A-1)
     # Ручные проверки УДАЛЕНЫ.
@@ -350,13 +352,13 @@ async def edit_text(request: EditRequest) -> EditResponse:
         logger.error("LLM error: %s", error, exc_info=True)
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
-            detail=f"LLM generation failed: {error}",
+            detail="LLM service temporarily unavailable. Try again later.",
         ) from error
     except FileNotFoundError as error:
         logger.error("Config file not found: %s", error, exc_info=True)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Configuration error: {error}",
+            detail="Service configuration error. Contact support.",
         ) from error
     except HTTPException:
         raise
@@ -370,7 +372,7 @@ async def edit_text(request: EditRequest) -> EditResponse:
         logger.error("Unexpected error: %s", error, exc_info=True)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Internal server error: {error}",
+            detail="Internal server error.",
         ) from error
 
 
