@@ -16,6 +16,9 @@ import pytest
 from src.prompt_builder import AudienceProfile, PromptBuilder, load_knowledge_base
 from src.knowledge_retrieval import FallbackStage
 
+# Устанавливаем фейковый API-ключ для тестов, чтобы lifespan не падал
+os.environ["OPENROUTER_API_KEY"] = "test-key"
+
 # Устанавливаем флаг, чтобы приложение знало, что запущены тесты
 # (используется для отключения rate limiting в тестах)
 os.environ["PYTEST_RUNNING"] = "true"
