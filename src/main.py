@@ -80,7 +80,7 @@ def invalidate_provider_cache() -> None:
 
 
 # ---------------------------------------------------------------------------
-# Маппинг провайдер → переменная окружения для light‑check
+# Маппинг провайдер → переменная окружения для light-check
 # ---------------------------------------------------------------------------
 _PROVIDER_KEY_ENV: Dict[str, str] = {
     "perplexity": "PERPLEXITY_API_KEY",
@@ -106,14 +106,14 @@ _CORS_ORIGINS: list[str] = (
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     logger.info("Starting up text editor service...")
-    
+
     # SEC-05: Проверка обязательных переменных окружения
     _required_env = ["OPENROUTER_API_KEY"]
     _missing = [k for k in _required_env if not os.getenv(k)]
     if _missing:
         logger.critical("Missing required env variables: %s. Refusing to start.", _missing)
         raise RuntimeError(f"Missing required env variables: {_missing}")
-    
+
     prompt_builder = PromptBuilder()
 
     await asyncio.to_thread(prompt_builder.startup_check)
@@ -159,13 +159,20 @@ async def log_requests(request: Request, call_next):
     start_time = time.perf_counter()
     response = await call_next(request)
     duration_ms = (time.perf_counter() - start_time) * 1000
+    # SEC: читаем реальный IP из X-Forwarded-For (за Render reverse proxy),
+    # берём только первый адрес в цепочке — он ближайший к клиенту.
+    # Fallback на request.client.host если заголовок отсутствует.
+    forwarded_for = request.headers.get("X-Forwarded-For")
+    client_ip = forwarded_for.split(",")[0].strip() if forwarded_for else (
+        request.client.host if request.client else None
+    )
     log_entry = {
         "timestamp": time.time(),
         "method": request.method,
         "path": request.url.path,
         "status_code": response.status_code,
         "duration_ms": round(duration_ms, 2),
-        "client_ip": request.client.host if request.client else None,
+        "client_ip": client_ip,
     }
     logger.info(json.dumps(log_entry, ensure_ascii=False))
     return response
@@ -213,7 +220,7 @@ async def _check_provider_deep(provider_name: str) -> bool:
 async def _check_providers_availability(deep: bool = False) -> Tuple[bool, Dict[str, bool]]:
     """
     Возвращает (any_available, {provider: available}).
-    При deep=False использует кэш (TTL 60 сек) и light‑check (наличие API‑ключа).
+    При deep=False использует кэш (TTL 60 сек) и light-check (наличие API-ключа).
     При deep=True выполняет реальные запросы и обновляет кэш.
     """
     results: Dict[str, bool] = {}
@@ -223,7 +230,7 @@ async def _check_providers_availability(deep: bool = False) -> Tuple[bool, Dict[
             if cached is not None:
                 results[provider] = cached
                 continue
-            # light‑check – только по env
+            # light-check – только по env
             env_var = _PROVIDER_KEY_ENV.get(provider.lower())
             available = bool(os.getenv(env_var)) if env_var else False
             _set_cached_availability(provider, available)
@@ -242,7 +249,8 @@ async def _check_providers_availability(deep: bool = False) -> Tuple[bool, Dict[
 # ---------------------------------------------------------------------------
 @app.get("/")
 async def root() -> dict:
-    return {"status": "ok", "version": "1.0.0"}
+    # SEC: version убрана — не раскрываем внутренние детали публично.
+    return {"status": "ok"}
 
 
 @app.get("/livez")
