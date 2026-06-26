@@ -5,6 +5,7 @@ services:
     plan: free
     region: frankfurt
     buildCommand: pip install -r requirements.txt
+    preDeployCommand: python3 scripts/validate_kb_tags.py
     startCommand: uvicorn src.main:app --host 0.0.0.0 --port $PORT --workers 2
     healthCheckPath: /livez
     envVars:
