@@ -262,6 +262,7 @@ async def liveness_check() -> dict:
 @app.get(
     "/health",
     response_model=HealthResponse,
+    dependencies=[Depends(verify_api_key)],
     description="""
 Проверка состояния сервиса.
 
