@@ -7,6 +7,7 @@ conftest.py
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 from typing import Any, Dict, List
 
@@ -14,6 +15,10 @@ import pytest
 
 from src.prompt_builder import AudienceProfile, PromptBuilder, load_knowledge_base
 from src.knowledge_retrieval import FallbackStage
+
+# Устанавливаем флаг, чтобы приложение знало, что запущены тесты
+# (используется для отключения rate limiting в тестах)
+os.environ["PYTEST_RUNNING"] = "true"
 
 
 # ============================================================================
@@ -95,3 +100,22 @@ def golden_set() -> List[Dict[str, Any]]:
 def load_json(path: Path) -> Dict[str, Any]:
     """Утилита для загрузки JSON в тестах."""
     return json.loads(path.read_text(encoding="utf-8"))
+
+
+# ============================================================================
+# Настройка пропуска интеграционных тестов (SEC-07)
+# ============================================================================
+
+def pytest_configure(config):
+    """Читаем INTEGRATION_TESTS_ENABLED и сохраняем в конфиг."""
+    enabled = os.getenv("INTEGRATION_TESTS_ENABLED", "").lower() in ("true", "1", "yes")
+    config._integration_enabled = enabled
+
+
+def pytest_collection_modifyitems(config, items):
+    """Пропускаем интеграционные тесты, если флаг не установлен."""
+    enabled = config._integration_enabled
+    skip_integration = pytest.mark.skip(reason="INTEGRATION_TESTS_ENABLED not set to true")
+    for item in items:
+        if item.get_closest_marker("integration") and not enabled:
+            item.add_marker(skip_integration)
