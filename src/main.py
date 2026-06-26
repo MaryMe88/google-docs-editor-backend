@@ -212,7 +212,13 @@ async def root() -> dict:
     return {"status": "ok", "version": "1.0.0"}
 
 
-# ИСПРАВЛЕНИЕ: добавляем явное описание в декоратор, чтобы гарантировать наличие в OpenAPI
+# Быстрый эндпоинт для проверки жизнеспособности (liveness probe) без аутентификации
+@app.get("/livez")
+async def liveness_check() -> dict:
+    return {"status": "alive"}
+
+
+# ИСПРАВЛЕНИЕ: убираем аутентификацию с /health, чтобы Render мог его проверять
 @app.get(
     "/health",
     response_model=HealthResponse,
@@ -224,7 +230,6 @@ async def root() -> dict:
   ВНИМАНИЕ: deep=true потребляет реальные токены и может тарифицироваться.
   Использовать только для диагностики, не в автоматическом мониторинге.
 """,
-    dependencies=[Depends(verify_api_key)],
 )
 async def health_check(deep: bool = False) -> Response:
     builder = get_prompt_builder()
