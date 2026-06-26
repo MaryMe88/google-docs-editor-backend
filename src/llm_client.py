@@ -87,9 +87,14 @@ def _backoff_with_jitter(base_delay: float, attempt: int) -> float:
     Формула: uniform(0, base_delay * 2^attempt).
     Full jitter лучше рассеивает повторные запросы при пиковой нагрузке,
     чем равномерный или additive jitter.
+
+    SEC: используется random.uniform — намеренно, не secrets.
+    Jitter не является security-critical: его цель — рассеять
+    нагрузку при retry, а не генерировать непредсказуемые токены.
+    Криптографическая стойкость здесь не требуется.
     """
     cap = base_delay * (2 ** attempt)
-    return random.uniform(0, cap)
+    return random.uniform(0, cap)  # noqa: S311 — non-security use
 
 
 class BaseLLMClient(ABC):
