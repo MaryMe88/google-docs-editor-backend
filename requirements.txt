@@ -6,3 +6,5 @@ httpx
 pytest
 pytest-asyncio
 slowapi==0.1.9
+sentence-transformers>=3.0.0
+numpy>=1.26.0
