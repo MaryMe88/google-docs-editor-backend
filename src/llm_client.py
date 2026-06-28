@@ -97,12 +97,66 @@ def _backoff_with_jitter(base_delay: float, attempt: int) -> float:
     return random.uniform(0, cap)  # noqa: S311 — non-security use
 
 
+# ---------------------------------------------------------------------------
+# Адаптивный расчёт max_tokens
+# ---------------------------------------------------------------------------
+# Нижняя/верхняя границы для адаптивного режима. Защищают от обрезки длинных
+# текстов (input ≤ 10000 символов + большой промпт из базы знаний) и от
+# чрезмерного потребления токенов на коротких запросах.
+_DEFAULT_MAX_TOKENS = 4000
+_MIN_MAX_TOKENS = 1024
+_MAX_MAX_TOKENS = 8192
+# Эвристика: ~4 символа на токен для смешанного RU/EN текста; ответ обычно
+# не длиннее промпта, поэтому закладываем 1.0× от оценки входных токенов.
+_CHARS_PER_TOKEN = 4
+
+
+def estimate_max_tokens(prompt: str) -> int:
+    """Оценивает разумный max_tokens исходя из длины промпта.
+
+    Возвращает значение, ограниченное диапазоном
+    [``_MIN_MAX_TOKENS``, ``_MAX_MAX_TOKENS``]. Цель — не дать модели
+    обрезать ответ на длинных текстах и не переплачивать на коротких.
+
+    Args:
+        prompt: финальный текст промпта, отправляемый модели.
+
+    Returns:
+        Рекомендуемое значение max_tokens.
+    """
+    estimated_input_tokens = max(len(prompt), 0) // _CHARS_PER_TOKEN
+    # Резервируем как минимум столько же токенов на ответ, сколько во входе.
+    budget = max(estimated_input_tokens, _MIN_MAX_TOKENS)
+    return min(max(budget, _MIN_MAX_TOKENS), _MAX_MAX_TOKENS)
+
+
 class BaseLLMClient(ABC):
     """Базовый async-клиент для LLM."""
 
     def __init__(self, config: LLMConfig) -> None:
         self.config = config
         self.client = httpx.AsyncClient(timeout=config.timeout, trust_env=False)
+
+    @staticmethod
+    def extract_error_message(response: httpx.Response) -> str:
+        """Извлекает человекочитаемое сообщение об ошибке из ответа провайдера.
+
+        Единая реализация для всех провайдеров: поддерживает формат
+        ``{"error": {"message": ...}}`` и ``{"error": "..."}``,
+        с безопасным fallback на ``HTTP <status_code>``.
+        """
+        try:
+            error_data = response.json()
+            if "error" in error_data:
+                err = error_data["error"]
+                if isinstance(err, dict):
+                    return err.get("message", "API error")
+                if isinstance(err, str):
+                    return err
+                return "API error"
+            return f"HTTP {response.status_code}"
+        except Exception:  # noqa: BLE001 — ответ может быть не-JSON
+            return f"HTTP {response.status_code}"
 
     async def __aenter__(self) -> "BaseLLMClient":
         return self
@@ -195,246 +249,100 @@ class BaseLLMClient(ABC):
         """Выполняет вызов API провайдера."""
 
 
-class PerplexityClient(BaseLLMClient):
+class _OpenAICompatibleClient(BaseLLMClient):
+    """Базовый клиент для провайдеров с OpenAI-совместимым API.
+
+    Perplexity, OpenAI и OpenRouter используют идентичный формат
+    ``/chat/completions``: одинаковый payload и схема ответа
+    (``choices[0].message.content``). Наследники переопределяют только
+    ``API_URL`` и при необходимости ``_build_headers``.
+    """
+
+    API_URL: str = ""
+
+    def _build_headers(self) -> Dict[str, str]:
+        """Стандартные заголовки Bearer-авторизации. Наследники могут расширить."""
+        return {
+            "Authorization": f"Bearer {self.config.api_key}",
+            "Content-Type": "application/json",
+        }
+
+    def _build_payload(self, prompt: str) -> Dict[str, Any]:
+        return {
+            "model": self.config.model,
+            "messages": [{"role": "user", "content": prompt}],
+            "temperature": self.config.temperature,
+            "max_tokens": self.config.max_tokens,
+        }
+
+    async def call_api(self, prompt: str) -> LLMResponse:
+        try:
+            response = await self.client.post(
+                self.API_URL,
+                json=self._build_payload(prompt),
+                headers=self._build_headers(),
+            )
+
+            if response.status_code == 429:
+                raise LLMRateLimitError("Rate limit exceeded")
+
+            if response.status_code >= 400:
+                error_detail = self.extract_error_message(response)
+                raise LLMAPIError(
+                    f"API error: {error_detail}",
+                    status_code=response.status_code,
+                )
+
+            return self.parse_response(response.json())
+
+        except httpx.TimeoutException as error:
+            raise LLMTimeoutError("Request timed out") from error
+        except httpx.HTTPError as error:
+            raise LLMAPIError(f"HTTP error: {error}") from error
+
+    def parse_response(self, data: Dict[str, Any]) -> LLMResponse:
+        try:
+            content = data["choices"][0]["message"]["content"]
+            finish_reason = data["choices"][0].get("finish_reason")
+            tokens_used = None
+            if "usage" in data and isinstance(data["usage"], dict):
+                tokens_used = data["usage"].get("total_tokens")
+
+            return LLMResponse(
+                content=content,
+                model=self.config.model,
+                provider=self.config.provider.value,
+                tokens_used=tokens_used,
+                finish_reason=finish_reason,
+            )
+
+        except (KeyError, IndexError, TypeError) as error:
+            raise LLMError(f"Failed to parse response: {error}") from error
+
+
+class PerplexityClient(_OpenAICompatibleClient):
     """Клиент Perplexity API."""
 
     API_URL = "https://api.perplexity.ai/chat/completions"
 
-    async def call_api(self, prompt: str) -> LLMResponse:
-        headers = {
-            "Authorization": f"Bearer {self.config.api_key}",
-            "Content-Type": "application/json",
-        }
-        payload = {
-            "model": self.config.model,
-            "messages": [
-                {
-                    "role": "user",
-                    "content": prompt,
-                }
-            ],
-            "temperature": self.config.temperature,
-            "max_tokens": self.config.max_tokens,
-        }
 
-        try:
-            response = await self.client.post(
-                self.API_URL,
-                json=payload,
-                headers=headers,
-            )
-
-            if response.status_code == 429:
-                raise LLMRateLimitError("Rate limit exceeded")
-
-            if response.status_code >= 400:
-                error_detail = self.extract_error_message(response)
-                raise LLMAPIError(
-                    f"API error: {error_detail}",
-                    status_code=response.status_code,
-                )
-
-            data = response.json()
-            return self.parse_response(data)
-
-        except httpx.TimeoutException as error:
-            raise LLMTimeoutError("Request timed out") from error
-        except httpx.HTTPError as error:
-            raise LLMAPIError(f"HTTP error: {error}") from error
-
-    def parse_response(self, data: Dict[str, Any]) -> LLMResponse:
-        try:
-            content = data["choices"][0]["message"]["content"]
-            finish_reason = data["choices"][0].get("finish_reason")
-            tokens_used = None
-            if "usage" in data and isinstance(data["usage"], dict):
-                tokens_used = data["usage"].get("total_tokens")
-
-            return LLMResponse(
-                content=content,
-                model=self.config.model,
-                provider=self.config.provider.value,
-                tokens_used=tokens_used,
-                finish_reason=finish_reason,
-            )
-
-        except (KeyError, IndexError, TypeError) as error:
-            raise LLMError(f"Failed to parse response: {error}") from error
-
-    @staticmethod
-    def extract_error_message(response: httpx.Response) -> str:
-        try:
-            error_data = response.json()
-            if "error" in error_data:
-                err = error_data["error"]
-                if isinstance(err, dict):
-                    return err.get("message", "API error")
-                return "API error"
-            return f"HTTP {response.status_code}"
-        except Exception:
-            return f"HTTP {response.status_code}"
-
-
-class OpenAIClient(BaseLLMClient):
+class OpenAIClient(_OpenAICompatibleClient):
     """Клиент OpenAI API."""
 
     API_URL = "https://api.openai.com/v1/chat/completions"
 
-    async def call_api(self, prompt: str) -> LLMResponse:
-        headers = {
-            "Authorization": f"Bearer {self.config.api_key}",
-            "Content-Type": "application/json",
-        }
-        payload = {
-            "model": self.config.model,
-            "messages": [
-                {
-                    "role": "user",
-                    "content": prompt,
-                }
-            ],
-            "temperature": self.config.temperature,
-            "max_tokens": self.config.max_tokens,
-        }
 
-        try:
-            response = await self.client.post(
-                self.API_URL,
-                json=payload,
-                headers=headers,
-            )
-
-            if response.status_code == 429:
-                raise LLMRateLimitError("Rate limit exceeded")
-
-            if response.status_code >= 400:
-                error_detail = self.extract_error_message(response)
-                raise LLMAPIError(
-                    f"API error: {error_detail}",
-                    status_code=response.status_code,
-                )
-
-            data = response.json()
-            return self.parse_response(data)
-
-        except httpx.TimeoutException as error:
-            raise LLMTimeoutError("Request timed out") from error
-        except httpx.HTTPError as error:
-            raise LLMAPIError(f"HTTP error: {error}") from error
-
-    def parse_response(self, data: Dict[str, Any]) -> LLMResponse:
-        try:
-            content = data["choices"][0]["message"]["content"]
-            finish_reason = data["choices"][0].get("finish_reason")
-            tokens_used = None
-            if "usage" in data and isinstance(data["usage"], dict):
-                tokens_used = data["usage"].get("total_tokens")
-
-            return LLMResponse(
-                content=content,
-                model=self.config.model,
-                provider=self.config.provider.value,
-                tokens_used=tokens_used,
-                finish_reason=finish_reason,
-            )
-
-        except (KeyError, IndexError, TypeError) as error:
-            raise LLMError(f"Failed to parse response: {error}") from error
-
-    @staticmethod
-    def extract_error_message(response: httpx.Response) -> str:
-        try:
-            error_data = response.json()
-            if "error" in error_data:
-                err = error_data["error"]
-                if isinstance(err, dict):
-                    return err.get("message", "API error")
-                return "API error"
-            return f"HTTP {response.status_code}"
-        except Exception:
-            return f"HTTP {response.status_code}"
-
-
-class OpenRouterClient(BaseLLMClient):
+class OpenRouterClient(_OpenAICompatibleClient):
     """Клиент OpenRouter API."""
 
     API_URL = "https://openrouter.ai/api/v1/chat/completions"
 
-    async def call_api(self, prompt: str) -> LLMResponse:
-        headers = {
-            "Authorization": f"Bearer {self.config.api_key}",
-            "Content-Type": "application/json",
-            "HTTP-Referer": os.getenv("OPENROUTER_SITE_URL", ""),  # SEC-08: пустой fallback
-            "X-Title": os.getenv("OPENROUTER_APP_NAME", "text-editor-api"),
-        }
-        payload: Dict[str, Any] = {
-            "model": self.config.model,
-            "messages": [
-                {
-                    "role": "user",
-                    "content": prompt,
-                }
-            ],
-            "temperature": self.config.temperature,
-            "max_tokens": self.config.max_tokens,
-        }
-
-        try:
-            response = await self.client.post(
-                self.API_URL,
-                json=payload,
-                headers=headers,
-            )
-
-            if response.status_code == 429:
-                raise LLMRateLimitError("Rate limit exceeded")
-
-            if response.status_code >= 400:
-                error_detail = self.extract_error_message(response)
-                raise LLMAPIError(
-                    f"API error: {error_detail}",
-                    status_code=response.status_code,
-                )
-
-            data = response.json()
-            return self.parse_response(data)
-
-        except httpx.TimeoutException as error:
-            raise LLMTimeoutError("Request timed out") from error
-        except httpx.HTTPError as error:
-            raise LLMAPIError(f"HTTP error: {error}") from error
-
-    def parse_response(self, data: Dict[str, Any]) -> LLMResponse:
-        try:
-            content = data["choices"][0]["message"]["content"]
-            finish_reason = data["choices"][0].get("finish_reason")
-            tokens_used = None
-            if "usage" in data and isinstance(data["usage"], dict):
-                tokens_used = data["usage"].get("total_tokens")
-
-            return LLMResponse(
-                content=content,
-                model=self.config.model,
-                provider=self.config.provider.value,
-                tokens_used=tokens_used,
-                finish_reason=finish_reason,
-            )
-
-        except (KeyError, IndexError, TypeError) as error:
-            raise LLMError(f"Failed to parse response: {error}") from error
-
-    @staticmethod
-    def extract_error_message(response: httpx.Response) -> str:
-        try:
-            error_data = response.json()
-            if "error" in error_data:
-                err = error_data["error"]
-                if isinstance(err, dict):
-                    return err.get("message", "API error")
-                return "API error"
-            return f"HTTP {response.status_code}"
-        except Exception:
-            return f"HTTP {response.status_code}"
+    def _build_headers(self) -> Dict[str, str]:
+        headers = super()._build_headers()
+        # SEC-08: пустой fallback для HTTP-Referer
+        headers["HTTP-Referer"] = os.getenv("OPENROUTER_SITE_URL", "")
+        headers["X-Title"] = os.getenv("OPENROUTER_APP_NAME", "text-editor-api")
+        return headers
 
 
 class AnthropicClient(BaseLLMClient):
@@ -520,19 +428,6 @@ class AnthropicClient(BaseLLMClient):
 
         except (KeyError, IndexError, TypeError) as error:
             raise LLMError(f"Failed to parse response: {error}") from error
-
-    @staticmethod
-    def extract_error_message(response: httpx.Response) -> str:
-        try:
-            error_data = response.json()
-            if "error" in error_data:
-                err = error_data["error"]
-                if isinstance(err, dict):
-                    return err.get("message", "API error")
-                return "API error"
-            return f"HTTP {response.status_code}"
-        except Exception:
-            return f"HTTP {response.status_code}"
 
 
 def create_llm_client(
@@ -633,6 +528,7 @@ async def call_with_fallback(
     model: Optional[str] = None,
     temperature: float = 0.3,
     max_retries_per_provider: int = 1,
+    max_tokens: Optional[int] = None,
 ) -> LLMResponse:
     """Последовательно пробует провайдеров из списка.
 
@@ -645,7 +541,11 @@ async def call_with_fallback(
         model: имя модели (None — использовать дефолтную для провайдера).
         temperature: температура генерации.
         max_retries_per_provider: количество попыток на каждого провайдера.
+        max_tokens: лимит токенов ответа. None — рассчитывается адаптивно
+            из длины промпта через ``estimate_max_tokens``.
     """
+    if max_tokens is None:
+        max_tokens = estimate_max_tokens(prompt)
     # Проверка на пустой список провайдеров (Шаг 1)
     if not providers:
         raise LLMError("No providers specified. Cannot execute LLM call.")
@@ -664,6 +564,7 @@ async def call_with_fallback(
                 model=model,
                 temperature=temperature,
                 max_retries=max_retries_per_provider,
+                max_tokens=max_tokens,
             ) as client:
                 response = await client.generate(prompt)
             logger.info("call_with_fallback: success with provider=%s", provider_name)
