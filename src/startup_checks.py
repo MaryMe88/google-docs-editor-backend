@@ -39,6 +39,40 @@ def _check_domain_files(
         )
 
 
+def _check_domain_files_soft(
+    config_path: Path,
+    allowed_domains: Set[str],
+) -> None:
+    """Мягкая версия: предупреждает о недостающих файлах доменов вместо исключения.
+
+    Используется в run_startup_checks, чтобы сервис мог стартовать даже при
+    удалении конфига домена — load_domain_config вернёт дефолтный конфиг.
+    """
+    domains_dir = config_path / "domains"
+    if not domains_dir.is_dir():
+        logger.warning(
+            "_check_domain_files_soft: domains directory not found: %s — "
+            "all domain requests will use default config.",
+            domains_dir,
+        )
+        return
+
+    for domain in allowed_domains:
+        file_path = domains_dir / f"{domain}.json"
+        if not file_path.is_file():
+            logger.warning(
+                "Domain config file missing: %s — "
+                "requests for domain=%r will use default domain config (neutral tone).",
+                file_path, domain,
+            )
+        else:
+            try:
+                with open(file_path, encoding="utf-8") as f:
+                    json.load(f)
+            except Exception as e:
+                raise RuntimeError(f"Failed to parse domain file {domain}.json: {e}") from e
+
+
 def _check_intent_files(
     config_path: Path,
     allowed_intents: Set[str],
@@ -71,6 +105,54 @@ def _check_intent_files(
             raise RuntimeError(f"Invalid intent file {intent}.json: {e}") from e
 
 
+def _check_intent_files_soft(
+    config_path: Path,
+    allowed_intents: Set[str],
+) -> None:
+    """Мягкая версия: предупреждает о недостающих файлах интентов вместо исключения.
+
+    Используется в run_startup_checks. При отсутствии файла load_intent_config
+    вернёт None (обрабатывается как neutral).
+    """
+    intents_dir = config_path / "intents"
+    if not intents_dir.is_dir():
+        logger.warning(
+            "_check_intent_files_soft: intents directory not found: %s — "
+            "all intent-specific instructions will be skipped.",
+            intents_dir,
+        )
+        return
+
+    for intent in allowed_intents:
+        if intent == "neutral":
+            continue
+        file_path = intents_dir / f"{intent}.json"
+        if not file_path.is_file():
+            logger.warning(
+                "Intent config file missing: %s — "
+                "requests with intent=%r will be treated as neutral.",
+                file_path, intent,
+            )
+        else:
+            try:
+                with open(file_path, encoding="utf-8") as f:
+                    data = json.load(f)
+                instructions = data.get("instructions")
+                if not isinstance(instructions, list):
+                    raise TypeError(
+                        f"Intent {intent}: 'instructions' must be a list, "
+                        f"got {type(instructions).__name__}"
+                    )
+                for idx, item in enumerate(instructions):
+                    if not isinstance(item, str):
+                        raise TypeError(
+                            f"Intent {intent}: instructions[{idx}] must be a string, "
+                            f"got {type(item).__name__}"
+                        )
+            except Exception as e:
+                raise RuntimeError(f"Invalid intent file {intent}.json: {e}") from e
+
+
 def _check_overlay_files(
     config_path: Path,
     allowed_overlays: Set[str],
@@ -96,6 +178,40 @@ def _check_overlay_files(
         raise FileNotFoundError(
             f"Missing overlay config files: {', '.join(missing)}"
         )
+
+
+def _check_overlay_files_soft(
+    config_path: Path,
+    allowed_overlays: Set[str],
+) -> None:
+    """Мягкая версия: предупреждает о недостающих файлах оверлеев вместо исключения.
+
+    Используется в run_startup_checks. При отсутствии файла load_overlay_config
+    вернёт пустой OverlayConfig (без инструкций).
+    """
+    overlays_dir = config_path / "overlays"
+    if not overlays_dir.is_dir():
+        logger.warning(
+            "_check_overlay_files_soft: overlays directory not found: %s — "
+            "all overlay instructions will be skipped.",
+            overlays_dir,
+        )
+        return
+
+    for overlay in allowed_overlays:
+        file_path = overlays_dir / f"{overlay}.json"
+        if not file_path.is_file():
+            logger.warning(
+                "Overlay config file missing: %s — "
+                "requests with overlay=%r will use empty overlay (no overlay instructions applied).",
+                file_path, overlay,
+            )
+        else:
+            try:
+                with open(file_path, encoding="utf-8") as f:
+                    json.load(f)
+            except Exception as e:
+                raise RuntimeError(f"Failed to parse overlay file {overlay}.json: {e}") from e
 
 
 def _check_overlay_names_idempotent(allowed_overlays: Set[str]) -> None:
@@ -394,19 +510,26 @@ def run_startup_checks(
     kb_path: Path = Path("knowledge_base"),
 ) -> None:
     """
-    Выполняет все проверки при старте сервиса:
-    - домены, интенты, оверлеи → файлы существуют и корректны
-    - PR-4 (НП-1): имена оверлеев идемпотентны к normalize_tag
-    - теги из CANONICAL_TAGS присутствуют в базе знаний
-    - wanted_tags из конфигов присутствуют в базе знаний
-    - проверка файла весов скоринга
-    - проверка покрытия tag_map.json
+    Выполняет все проверки при старте сервиса.
+
+    Жёсткие проверки (сервис не стартует при ошибке):
+    - директории доменов/интентов/оверлеев существуют
+    - существующие файлы конфигов валидны (корректный JSON, нужные поля)
+    - имена оверлеев идемпотентны к normalize_tag (PR-4)
+
+    Мягкие проверки (только WARNING, сервис стартует):
+    - отдельные файлы доменов/интентов/оверлеев могут отсутствовать —
+      load_*_config вернёт дефолтный конфиг
+    - теги из CANONICAL_TAGS / wanted_tags могут не покрываться KB —
+      retrieval деградирует до NEUTRAL stage
+    - scoring_weights.json может отсутствовать — используются дефолтные веса
+    - покрытие tag_map.json может быть неполным
     """
     logger.info("Running startup checks...")
-    _check_domain_files(config_path, allowed_domains)
     _check_tag_map_coverage(config_path, allowed_domains, allowed_intents, allowed_overlays)
-    _check_intent_files(config_path, allowed_intents)
-    _check_overlay_files(config_path, allowed_overlays)
+    _check_domain_files_soft(config_path, allowed_domains)
+    _check_intent_files_soft(config_path, allowed_intents)
+    _check_overlay_files_soft(config_path, allowed_overlays)
     _check_overlay_names_idempotent(allowed_overlays)  # PR-4 (НП-1)
     _check_tags_vs_kb(kb_path)
     check_config_tags_vs_kb(config_path, kb_path)
