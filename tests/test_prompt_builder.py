@@ -20,7 +20,7 @@ from src.prompt_builder import (
     KB_BLOCK_REGISTRY,
     KBBlockConfig,
     _append_rule_entries,
-    load_output_format,  # добавлен импорт для задачи 8
+    load_output_format,
 )
 from src.knowledge_retrieval import FallbackStage, _collect_with_budget
 
@@ -94,21 +94,21 @@ def test_full_level_without_optional_configs_does_not_crash(builder: PromptBuild
     assert "Исходный текст:" in result
 
 
-# ИСПРАВЛЕНО: ожидаем AssertionError вместо ValueError
+# ИСПРАВЛЕНО: ожидаем ValueError (ранее был AssertionError)
 def test_invalid_domain_raises_assertion_error(builder: PromptBuilder) -> None:
-    with pytest.raises(AssertionError, match="Invalid domain passed to PromptBuilder"):
+    with pytest.raises(ValueError, match="Unknown domain"):
         builder.build(text="Текст.", domain="science")
 
 
-# ИСПРАВЛЕНО: ожидаем AssertionError вместо ValueError
+# ИСПРАВЛЕНО: ожидаем ValueError (ранее был AssertionError)
 def test_invalid_intent_raises_assertion_error(builder: PromptBuilder) -> None:
-    with pytest.raises(AssertionError, match="Invalid intent passed to PromptBuilder"):
+    with pytest.raises(ValueError, match="Unknown intent"):
         builder.build(text="Текст.", domain="blog", intent="unknown_intent")
 
 
-# ИСПРАВЛЕНО: ожидаем AssertionError вместо ValueError
+# ИСПРАВЛЕНО: ожидаем ValueError (ранее был AssertionError)
 def test_invalid_overlay_raises_assertion_error(builder: PromptBuilder) -> None:
-    with pytest.raises(AssertionError, match="Invalid overlay passed to PromptBuilder"):
+    with pytest.raises(ValueError, match="Unknown overlay"):
         builder.build(text="Текст.", domain="blog", overlays=["unknown_overlay"])
 
 
@@ -225,7 +225,7 @@ def test_confidence_note_inserted_for_tag_only_stage(builder: PromptBuilder) -> 
 
     assert "Грамматические ориентиры:" in result
     assert "теме раздела" in result
-    mock_fn.assert_called_once()  # проверяем, что наш мок был вызван
+    mock_fn.assert_called_once()
 
 
 def test_confidence_note_not_inserted_for_strong_stage(builder: PromptBuilder) -> None:
