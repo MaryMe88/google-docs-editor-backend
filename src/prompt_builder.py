@@ -49,6 +49,27 @@ from src.tag_registry import normalize_tag, normalize_tags
 
 logger = logging.getLogger(__name__)
 
+# ---------------------------------------------------------------------------
+# Дефолтные конфиги — используются если файл на диске не найден (Уровень 2)
+# ---------------------------------------------------------------------------
+_DEFAULT_DOMAIN_CONFIG: DomainConfig = DomainConfig(
+    name="general",
+    system_rules="",
+    tone="neutral",
+    allow_storytelling=False,
+    allow_marketing=False,
+    tasks=(),
+    constraints=(),
+    ip_ceiling=None,
+)
+
+def _make_default_overlay_config(name: str) -> OverlayConfig:
+    return OverlayConfig(
+        name=name,
+        instructions=(),
+        conflicts_with=(),
+    )
+
 # Интенты, для которых отсутствие знаний из KB — реальная проблема.
 # Для intent=None или intent="neutral" WARNING не нужен.
 _KNOWLEDGE_DEPENDENT_INTENTS: frozenset = frozenset({
@@ -185,12 +206,23 @@ def load_core_config(base_path: Path = Path("config")) -> CoreConfig:
     )
 
 
+# ============================================================================
+# ИЗМЕНЕНИЕ 2.2
+# ============================================================================
 def load_domain_config(
     domain: str,
     base_path: Path = Path("config"),
 ) -> DomainConfig:
     normalized_domain = domain.strip().lower()
-    data = load_json_file(base_path / "domains" / f"{normalized_domain}.json")
+    domain_path = base_path / "domains" / f"{normalized_domain}.json"
+    if not domain_path.exists():
+        logger.warning(
+            "load_domain_config: file not found for domain=%r at %s — "
+            "using default domain config (neutral tone, no storytelling/marketing).",
+            normalized_domain, domain_path,
+        )
+        return _DEFAULT_DOMAIN_CONFIG
+    data = load_json_file(domain_path)
     raw_tasks = data.get("tasks", [])
     raw_constraints = data.get("constraints", [])
     raw_ip = data.get("ip_ceiling")
@@ -211,6 +243,9 @@ def load_domain_config(
     )
 
 
+# ============================================================================
+# ИЗМЕНЕНИЕ 2.3
+# ============================================================================
 def load_intent_config(
     intent: Optional[str],
     base_path: Path = Path("config"),
@@ -218,19 +253,38 @@ def load_intent_config(
     if intent is None or intent == "neutral":
         return None
     normalized_intent = normalize_tag(intent)
-    data = load_json_file(base_path / "intents" / f"{normalized_intent}.json")
+    intent_path = base_path / "intents" / f"{normalized_intent}.json"
+    if not intent_path.exists():
+        logger.warning(
+            "load_intent_config: file not found for intent=%r at %s — "
+            "intent-specific instructions will be skipped (treated as neutral).",
+            normalized_intent, intent_path,
+        )
+        return None
+    data = load_json_file(intent_path)
     return IntentConfig(
         name=data.get("name", normalized_intent),
         instructions=data.get("instructions", []),
     )
 
 
+# ============================================================================
+# ИЗМЕНЕНИЕ 2.4
+# ============================================================================
 def load_overlay_config(
     overlay: str,
     base_path: Path = Path("config"),
 ) -> OverlayConfig:
     # overlay уже приведён к нижнему регистру в _validate_overlays, не нормализуем
-    data = load_json_file(base_path / "overlays" / f"{overlay}.json")
+    overlay_path = base_path / "overlays" / f"{overlay}.json"
+    if not overlay_path.exists():
+        logger.warning(
+            "load_overlay_config: file not found for overlay=%r at %s — "
+            "using empty overlay config (no overlay instructions applied).",
+            overlay, overlay_path,
+        )
+        return _make_default_overlay_config(overlay)
+    data = load_json_file(overlay_path)
     return OverlayConfig(
         name=data.get("name", overlay),
         instructions=tuple(data.get("instructions", [])),
@@ -514,6 +568,9 @@ def load_knowledge_base(base_path: Path = Path("knowledge_base")) -> KnowledgeBa
 # ---------------------------------------------------------------------------
 # Вспомогательные функции для сборки тегов и блоков
 # ---------------------------------------------------------------------------
+# ============================================================================
+# ИЗМЕНЕНИЕ 1.6
+# ============================================================================
 def _collect_retrieval_tags(
     domain: str,
     intent: Optional[str],
@@ -521,7 +578,14 @@ def _collect_retrieval_tags(
 ) -> Dict[str, Set[str]]:
     primary: Set[str] = set()
     expanded: Set[str] = set()
-    primary.update(get_primary_tags_for_category("domains", domain))
+    domain_primary = get_primary_tags_for_category("domains", domain)
+    if not domain_primary:
+        logger.warning(
+            "_collect_retrieval_tags: no tags found for domain=%r in tag_map.json — "
+            "KB retrieval will use generic fallback tags only (grammar, style, editing, clarity).",
+            domain,
+        )
+    primary.update(domain_primary)
     expanded.update(get_canonical_tags_for_category("domains", domain))
     if intent and intent != "neutral":
         primary.update(get_primary_tags_for_category("intents", intent))
@@ -963,18 +1027,26 @@ class PromptBuilder:
         return self.get_available_overlays()
 
     # ------------------------------------------------------------------
-    # ИЗМЕНЕНИЕ A-1в: методы валидации упрощены до защитных assert
+    # ИЗМЕНЕНИЯ 1.3, 1.4, 1.5
     # ------------------------------------------------------------------
     def _validate_domain(self, domain: str) -> str:
         """Данные уже провалидированы в EditRequest. Защитный assert."""
-        assert domain in ALLOWED_DOMAINS, f"Invalid domain passed to PromptBuilder: {domain!r}"
+        if domain not in ALLOWED_DOMAINS:
+            raise ValueError(
+                f"Unknown domain: {domain!r}. "
+                f"Available domains: {sorted(ALLOWED_DOMAINS)}"
+            )
         return domain
 
     def _validate_intent(self, intent: Optional[str]) -> Optional[str]:
         """Данные уже провалидированы в EditRequest. Защитный assert."""
         if intent is None:
             return None
-        assert intent in ALLOWED_INTENTS, f"Invalid intent passed to PromptBuilder: {intent!r}"
+        if intent not in ALLOWED_INTENTS:
+            raise ValueError(
+                f"Unknown intent: {intent!r}. "
+                f"Available intents: {sorted(ALLOWED_INTENTS)}"
+            )
         return intent
 
     def _validate_overlays(self, overlays: Sequence[str]) -> List[str]:
@@ -985,7 +1057,11 @@ class PromptBuilder:
         # Приводим к нижнему регистру для единообразия (но нормализация уже сделана)
         normalized = [o.lower() for o in overlays]
         for o in normalized:
-            assert o in ALLOWED_OVERLAYS, f"Invalid overlay passed to PromptBuilder: {o!r}"
+            if o not in ALLOWED_OVERLAYS:
+                raise ValueError(
+                    f"Unknown overlay: {o!r}. "
+                    f"Available overlays: {sorted(ALLOWED_OVERLAYS)}"
+                )
 
         # Проверка конфликтов (дополнительная бизнес-логика)
         overlay_configs = load_overlay_configs(normalized, self.config_path)

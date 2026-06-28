@@ -267,6 +267,9 @@ def _collect_kb_tags(kb_path: Path) -> Set[str]:
     return kb_tags
 
 
+# ============================================================================
+# ИЗМЕНЕНИЕ 1.1
+# ============================================================================
 def _check_tags_vs_kb(kb_path: Path) -> None:
     """
     Собирает все теги, которые могут быть запрошены (из CANONICAL_TAGS),
@@ -294,9 +297,11 @@ def _check_tags_vs_kb(kb_path: Path) -> None:
     kb_tags = _collect_kb_tags(kb_path)
     missing_tags = expected_tags - kb_tags
     if missing_tags:
-        raise RuntimeError(
-            f"Tags missing in knowledge base: {', '.join(sorted(missing_tags))}\n"
-            "Each of these tags must appear in at least one KB record (field 'tags')."
+        logger.warning(
+            "Tags declared in CANONICAL_TAGS but missing in KB: %s. "
+            "KB retrieval for these tags will fall back to NEUTRAL stage "
+            "(rules will be selected without tag matching).",
+            sorted(missing_tags),
         )
 
 
@@ -323,6 +328,9 @@ def _collect_wanted_tags_from_configs(config_path: Path) -> Set[str]:
     return wanted
 
 
+# ============================================================================
+# ИЗМЕНЕНИЕ 1.2
+# ============================================================================
 def check_config_tags_vs_kb(config_path: Path, kb_path: Path) -> None:
     """Проверяет, что каждый wanted_tag из конфигов присутствует
     хотя бы в одной записи базы знаний.
@@ -334,9 +342,10 @@ def check_config_tags_vs_kb(config_path: Path, kb_path: Path) -> None:
     kb_tags = _collect_kb_tags(kb_path)
     missing = wanted - kb_tags
     if missing:
-        raise RuntimeError(
-            f"Tags declared in configs but missing in KB: {', '.join(sorted(missing))}. "
-            "Each wanted_tag must appear in at least one KB record's 'tags' field."
+        logger.warning(
+            "wanted_tags declared in configs but missing in KB: %s. "
+            "Retrieval for these tags will use fallback (NEUTRAL stage).",
+            sorted(missing),
         )
 
 
