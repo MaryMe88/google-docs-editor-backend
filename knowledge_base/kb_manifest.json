@@ -34,7 +34,7 @@
     {
       "file": "editorial_techniques/anti_ai_techniques.json",
       "subfolder": "editorial_techniques",
-      "size_kb": 16.9,
+      "size_kb": 40.4,
       "stage": "deai_cleanup",
       "priority": 1,
       "load_mode": "always",
@@ -70,7 +70,7 @@
     {
       "file": "stop_words.json",
       "subfolder": "",
-      "size_kb": 16.8,
+      "size_kb": 17.1,
       "stage": "deai_cleanup",
       "priority": 1,
       "load_mode": "always",
@@ -88,7 +88,7 @@
     {
       "file": "stylistic_issues/anti_ai_patterns.json",
       "subfolder": "stylistic_issues",
-      "size_kb": 8.8,
+      "size_kb": 20.9,
       "stage": "deai_cleanup",
       "priority": 1,
       "load_mode": "always",
@@ -140,7 +140,7 @@
     {
       "file": "editorial_techniques/editorial_analysis_algorithm.json",
       "subfolder": "editorial_techniques",
-      "size_kb": 7.9,
+      "size_kb": 8.4,
       "stage": "editorial_core",
       "priority": 2,
       "load_mode": "always",
@@ -805,7 +805,7 @@
     {
       "file": "marketing_web.json",
       "subfolder": "",
-      "size_kb": 10.2,
+      "size_kb": 10.4,
       "stage": "overlay_marketing",
       "priority": 9,
       "load_mode": "by_intent",
