@@ -345,7 +345,7 @@ def load_output_format(
 
 
 # ---------------------------------------------------------------------------
-# Загрузка базы знаний (НОВАЯ ВЕРСИЯ)
+# Загрузка базы знаний (только новая, legacy удалён)
 # ---------------------------------------------------------------------------
 
 def _load_kb_file(path: Path) -> List[Dict[str, Any]]:
@@ -374,79 +374,9 @@ def _load_kb_file(path: Path) -> List[Dict[str, Any]]:
                     "templates", "common_mistakes", "issues"):
             if key in data and isinstance(data[key], list):
                 return data[key]
-        # Если ничего не нашли, но есть поле "techniques" как словарь с другими ключами
-        # (обрабатывается в _extract_records, но мы упрощаем)
         logger.debug("No known list key in %s, treating as empty", path)
         return []
     return []
-
-
-# ---------------------------------------------------------------------------
-# Старая загрузка (legacy) — оставлена для обратной совместимости
-# ---------------------------------------------------------------------------
-def _load_knowledge_base_legacy(base_path: Path = Path("knowledge_base")) -> KnowledgeBase:
-    """
-    УСТАРЕВШАЯ ВЕРСИЯ. Загружает KB жёстко заданными файлами.
-    Используется только для обратной совместимости.
-    """
-    sw_path = base_path / "stop_words.json"
-    if not sw_path.exists():
-        logger.warning("stop_words.json not found at %s — stop-word filtering disabled", sw_path)
-    stop_words = _load_optional_json(sw_path, {})
-    domain_glossary = _load_optional_json(base_path / "domain_glossary.json", {})
-    nkrj = _load_optional_json(base_path / "nkrj_structure_patterns.json", {})
-
-    grammar_errors = _load_kb_list("grammar_errors.json", base_path, "common_mistakes")
-    stylistic_issues = _load_kb_list("stylistic_issues", base_path)
-    logic_issues = _load_kb_list("logic_issues.json", base_path, "issues")
-    composition_principles = _load_kb_list("composition_principles.json", base_path, "composition_principles")
-    local_cohesion = _load_kb_list("local_cohesion.json", base_path, "local_cohesion")
-    composition_errors = _load_kb_list("composition_errors.json", base_path, "composition_errors")
-    editorial_techniques = _load_kb_list("editorial_techniques", base_path)
-
-    rhetoric_frameworks = _load_kb_multi(
-        prefixes=["rhetoric_figures", "rhetoric_topoi", "rhetoric_tropes_and_strategies"],
-        base_path=base_path,
-        key="frameworks",
-        fallback_name="rhetoric_frameworks.json",
-    )
-    storytelling_frameworks = _load_kb_multi(
-        prefixes=["storytelling_macrostructures", "storytelling_microtechniques"],
-        base_path=base_path,
-        key="frameworks",
-        fallback_name="storytelling_frameworks.json",
-    )
-    marketing_templates = _load_kb_multi(
-        prefixes=["marketing_email", "marketing_social", "marketing_web", "marketing_other"],
-        base_path=base_path,
-        key="templates",
-        fallback_name="marketing_templates.json",
-    )
-
-    total_records = (
-        len(grammar_errors) + len(stylistic_issues) + len(logic_issues) +
-        len(storytelling_frameworks) + len(marketing_templates) +
-        len(composition_principles) + len(local_cohesion) +
-        len(composition_errors) + len(rhetoric_frameworks) +
-        len(editorial_techniques)
-    )
-    logger.info(f"Loaded {total_records} knowledge base records from multiple files")
-
-    return KnowledgeBase(
-        stop_words=stop_words,
-        grammar_errors=grammar_errors,
-        stylistic_issues=stylistic_issues,
-        logic_issues=logic_issues,
-        storytelling_frameworks=storytelling_frameworks,
-        marketing_templates=marketing_templates,
-        domain_glossary=domain_glossary,
-        composition_principles=composition_principles,
-        local_cohesion=local_cohesion,
-        composition_errors=composition_errors,
-        rhetoric_frameworks=rhetoric_frameworks,
-        editorial_techniques=editorial_techniques,
-        nkrj_structure_patterns=nkrj,
-    )
 
 
 # ---------------------------------------------------------------------------
@@ -470,7 +400,8 @@ def load_knowledge_base(
     """
     manifest = load_manifest(kb_path / "kb_manifest.json")
     if load_all:
-        selected = [e for e in manifest if e.status == "active"]
+        # load_manifest уже вернул только active, так что просто берём все записи
+        selected = list(manifest)
     else:
         selected = select_files_for_request(manifest, active_tags or set(), intent)
 
@@ -507,7 +438,8 @@ def load_knowledge_base(
             try:
                 data = json.loads(domain_glossary_path.read_text(encoding="utf-8"))
                 if isinstance(data, dict):
-                    block_data["domain_glossary"] = [data]  # сохраняем как список из одного элемента
+                    # domain_glossary должен быть словарём, а не списком
+                    block_data["domain_glossary"] = data
                 else:
                     logger.warning("domain_glossary.json has unexpected format, skipping")
             except Exception as e:
