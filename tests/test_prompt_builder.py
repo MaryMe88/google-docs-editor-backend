@@ -26,6 +26,27 @@ from src.knowledge_retrieval import FallbackStage, _collect_with_budget
 
 
 # ============================================================================
+# Вспомогательная функция для создания мока KB с поддержкой .get()
+# ============================================================================
+
+def make_mock_kb(data: dict) -> MagicMock:
+    """
+    Создаёт MagicMock, который ведёт себя как KnowledgeBase:
+    - имеет все ключи из data как атрибуты (например, kb.grammar_errors)
+    - поддерживает метод .get(key, default)
+    """
+    kb = MagicMock()
+    # Добавляем атрибуты
+    for key, value in data.items():
+        setattr(kb, key, value)
+    # Реализуем метод get
+    def get_side_effect(key, default=None):
+        return data.get(key, default)
+    kb.get.side_effect = get_side_effect
+    return kb
+
+
+# ============================================================================
 # Старые тесты (без изменений)
 # ============================================================================
 
@@ -94,19 +115,16 @@ def test_full_level_without_optional_configs_does_not_crash(builder: PromptBuild
     assert "Исходный текст:" in result
 
 
-# ИСПРАВЛЕНО: ожидаем ValueError (ранее был AssertionError)
 def test_invalid_domain_raises_assertion_error(builder: PromptBuilder) -> None:
     with pytest.raises(ValueError, match="Unknown domain"):
         builder.build(text="Текст.", domain="science")
 
 
-# ИСПРАВЛЕНО: ожидаем ValueError (ранее был AssertionError)
 def test_invalid_intent_raises_assertion_error(builder: PromptBuilder) -> None:
     with pytest.raises(ValueError, match="Unknown intent"):
         builder.build(text="Текст.", domain="blog", intent="unknown_intent")
 
 
-# ИСПРАВЛЕНО: ожидаем ValueError (ранее был AssertionError)
 def test_invalid_overlay_raises_assertion_error(builder: PromptBuilder) -> None:
     with pytest.raises(ValueError, match="Unknown overlay"):
         builder.build(text="Текст.", domain="blog", overlays=["unknown_overlay"])
@@ -233,25 +251,26 @@ def test_confidence_note_not_inserted_for_strong_stage(builder: PromptBuilder) -
     При stage=STRONG квалификатор не должен появляться.
     Используем запись с точным совпадением по wrong (без correct, чтобы это было правило).
     """
-    kb = SimpleNamespace(
-        grammar_errors=[
+    data = {
+        "grammar_errors": [
             {"wrong": "Тестовый текст", "rule": "правило грамматики", "tags": ["grammar"]}
         ],
-        stylistic_issues=[],
-        logic_issues=[],
-        composition_principles=[],
-        composition_errors=[],
-        local_cohesion=[],
-        storytelling_frameworks=[],
-        marketing_templates=[],
-        rhetoric_frameworks=[],
-        editorial_techniques=[],
-        stop_words={},
-        domain_glossary={},
-        nkrj_structure_patterns={},
-    )
+        "stylistic_issues": [],
+        "logic_issues": [],
+        "composition_principles": [],
+        "composition_errors": [],
+        "local_cohesion": [],
+        "storytelling_frameworks": [],
+        "marketing_templates": [],
+        "rhetoric_frameworks": [],
+        "editorial_techniques": [],
+        "stop_words": {},
+        "domain_glossary": {},
+        "nkrj_structure_patterns": {},
+    }
+    kb = make_mock_kb(data)
 
-    with patch.object(builder, '_ensure_knowledge_base', return_value=kb):
+    with patch('src.prompt_builder.load_knowledge_base', return_value=kb):
         result = builder.build(
             text="Тестовый текст",
             domain="blog",
@@ -271,23 +290,24 @@ def test_confidence_note_not_inserted_when_no_knowledge(builder: PromptBuilder) 
     """
     Если блоки знаний пусты, квалификатор не добавляется.
     """
-    kb = SimpleNamespace(
-        grammar_errors=[],
-        stylistic_issues=[],
-        logic_issues=[],
-        composition_principles=[],
-        composition_errors=[],
-        local_cohesion=[],
-        storytelling_frameworks=[],
-        marketing_templates=[],
-        rhetoric_frameworks=[],
-        editorial_techniques=[],
-        stop_words={},
-        domain_glossary={},
-        nkrj_structure_patterns={},
-    )
+    data = {
+        "grammar_errors": [],
+        "stylistic_issues": [],
+        "logic_issues": [],
+        "composition_principles": [],
+        "composition_errors": [],
+        "local_cohesion": [],
+        "storytelling_frameworks": [],
+        "marketing_templates": [],
+        "rhetoric_frameworks": [],
+        "editorial_techniques": [],
+        "stop_words": {},
+        "domain_glossary": {},
+        "nkrj_structure_patterns": {},
+    }
+    kb = make_mock_kb(data)
 
-    with patch.object(builder, '_ensure_knowledge_base', return_value=kb):
+    with patch('src.prompt_builder.load_knowledge_base', return_value=kb):
         result = builder.build(
             text="Тестовый текст.",
             domain="blog",
@@ -414,7 +434,6 @@ def test_collect_with_budget_applies_to_first_entry() -> None:
 
 def test_process_kb_block_grammar() -> None:
     """Проверяет, что _process_kb_block правильно обрабатывает блок grammar."""
-    # Запись без correct, чтобы она была правилом, а не парой (иначе попадёт в few-shot)
     fake_entry = {"wrong": "ошибка", "rule": "правило", "tags": ["grammar"]}
     mock_fn = MagicMock(return_value=([fake_entry], FallbackStage.STRONG, 0))
 
@@ -485,22 +504,23 @@ def test_process_kb_block_skips_disabled(builder: PromptBuilder) -> None:
         budget = KnowledgeBudget({
             "grammar": BlockBudget(entry_limit=5, char_budget=None, enabled=False),
         })
-        kb = SimpleNamespace(
-            grammar_errors=[{"wrong": "x", "rule": "y", "tags": ["grammar"]}],
-            stylistic_issues=[],
-            logic_issues=[],
-            composition_principles=[],
-            composition_errors=[],
-            local_cohesion=[],
-            storytelling_frameworks=[],
-            marketing_templates=[],
-            rhetoric_frameworks=[],
-            editorial_techniques=[],
-            stop_words={},
-            domain_glossary={},
-            nkrj_structure_patterns={},
-        )
-        with patch.object(builder, '_ensure_knowledge_base', return_value=kb):
+        data = {
+            "grammar_errors": [{"wrong": "x", "rule": "y", "tags": ["grammar"]}],
+            "stylistic_issues": [],
+            "logic_issues": [],
+            "composition_principles": [],
+            "composition_errors": [],
+            "local_cohesion": [],
+            "storytelling_frameworks": [],
+            "marketing_templates": [],
+            "rhetoric_frameworks": [],
+            "editorial_techniques": [],
+            "stop_words": {},
+            "domain_glossary": {},
+            "nkrj_structure_patterns": {},
+        }
+        kb = make_mock_kb(data)
+        with patch('src.prompt_builder.load_knowledge_base', return_value=kb):
             builder._build_knowledge_block(
                 text="Тест",
                 primary_tags=set(),
@@ -521,7 +541,6 @@ def test_process_kb_block_skips_disabled(builder: PromptBuilder) -> None:
 
 def test_build_knowledge_block_order(builder: PromptBuilder) -> None:
     """Проверяем, что блоки выводятся в порядке, заданном в KB_BLOCK_REGISTRY."""
-    # Исправлено: используем kwargs, так как _process_kb_block вызывается с именованными аргументами
     def mock_process(*args, **kwargs):
         config = kwargs["config"]
         lines = kwargs["lines"]
@@ -529,22 +548,23 @@ def test_build_knowledge_block_order(builder: PromptBuilder) -> None:
         return kwargs.get('total_few_shot_used', 0)
 
     with patch('src.prompt_builder._process_kb_block', side_effect=mock_process) as mock_proc:
-        kb = SimpleNamespace(
-            grammar_errors=[{"wrong": "g"}],
-            stylistic_issues=[{"wrong": "s"}],
-            logic_issues=[{"wrong": "l"}],
-            composition_principles=[{"name": "c1"}],
-            composition_errors=[{"name": "ce1"}],
-            local_cohesion=[{"name": "coh1"}],
-            storytelling_frameworks=[{"name": "st1"}],
-            marketing_templates=[{"name": "m1"}],
-            rhetoric_frameworks=[{"name": "r1"}],
-            editorial_techniques=[{"name": "e1"}],
-            stop_words={},
-            domain_glossary={},
-            nkrj_structure_patterns={},
-        )
-        with patch.object(builder, '_ensure_knowledge_base', return_value=kb):
+        data = {
+            "grammar_errors": [{"wrong": "g"}],
+            "stylistic_issues": [{"wrong": "s"}],
+            "logic_issues": [{"wrong": "l"}],
+            "composition_principles": [{"name": "c1"}],
+            "composition_errors": [{"name": "ce1"}],
+            "local_cohesion": [{"name": "coh1"}],
+            "storytelling_frameworks": [{"name": "st1"}],
+            "marketing_templates": [{"name": "m1"}],
+            "rhetoric_frameworks": [{"name": "r1"}],
+            "editorial_techniques": [{"name": "e1"}],
+            "stop_words": {},
+            "domain_glossary": {},
+            "nkrj_structure_patterns": {},
+        }
+        kb = make_mock_kb(data)
+        with patch('src.prompt_builder.load_knowledge_base', return_value=kb):
             budget_dict = {
                 block.budget_key: BlockBudget(entry_limit=10, char_budget=None, enabled=True)
                 for block in KB_BLOCK_REGISTRY
@@ -584,7 +604,6 @@ def test_allow_storytelling_false(builder: PromptBuilder) -> None:
 
     called_blocks = []
 
-    # Исправлено: используем kwargs
     def mock_process(*args, **kwargs):
         config = kwargs["config"]
         lines = kwargs["lines"]
@@ -652,10 +671,8 @@ def test_derive_seed_stable() -> None:
 
 def test_deprecation_warning(builder: PromptBuilder) -> None:
     """Вызов build_prompt должен вызывать DeprecationWarning."""
-    # Сбрасываем фильтр "показывать только раз", чтобы предупреждение точно было видно
     with warnings.catch_warnings():
         warnings.simplefilter("always")
-        # Экранируем скобки в match
         with pytest.warns(DeprecationWarning, match=r"build_prompt\(\) is deprecated, use build\(\)"):
             builder.build_prompt(
                 text="Тест",
@@ -737,7 +754,6 @@ def test_conflicting_overlays_raise_error(builder: PromptBuilder) -> None:
 
 def test_non_conflicting_overlays_ok(builder: PromptBuilder) -> None:
     """Проверяет, что неконфликтующие оверлеи работают."""
-    # Используем существующие оверлеи: factcheck и infostyle
     prompt = builder.build(
         text="Тест",
         domain="blog",
@@ -752,4 +768,4 @@ def test_load_output_format_no_markdown_removed() -> None:
     """Проверяет, что в load_output_format не используется no_markdown_note."""
     result = load_output_format("text_only")
     assert "Markdown" in result
-    assert "no_markdown" not in result  # ключ не должен фигурировать
+    assert "no_markdown" not in result

@@ -82,7 +82,8 @@ def knowledge_base() -> Any:
     """Загружает базу знаний один раз для всех тестов."""
     if not KB_PATH.exists():
         pytest.skip(f"Knowledge base directory not found: {KB_PATH}")
-    return load_knowledge_base(KB_PATH)
+    # Загружаем все активные файлы KB, игнорируя load_mode (для тестов)
+    return load_knowledge_base(KB_PATH, load_all=True)
 
 
 @pytest.fixture(scope="session")
