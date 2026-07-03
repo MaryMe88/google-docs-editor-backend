@@ -31,6 +31,7 @@ MANIFEST_FILENAME = "kb_manifest.json"
 # budget_weight — "high" | "medium" | "low"
 # tags          — теги для retrieval (пустой список = не участвует в tag-поиске)
 # intents       — интенты, при которых файл подключается (only for by_intent)
+# block_name    — (опционально) имя блока для объединения нескольких файлов
 
 FILE_RULES: dict[str, dict[str, Any]] = {
 
@@ -42,6 +43,7 @@ FILE_RULES: dict[str, dict[str, Any]] = {
         "budget_weight": "high",
         "tags": ["anti_ai", "humanize", "deai", "authenticity"],
         "intents": [],
+        "block_name": "editorial_techniques",
     },
     "fighting_officialese.json": {
         "stage": "deai_cleanup",
@@ -50,6 +52,7 @@ FILE_RULES: dict[str, dict[str, Any]] = {
         "budget_weight": "high",
         "tags": ["officialese", "bureaucratic", "deai", "humanize"],
         "intents": [],
+        "block_name": "editorial_techniques",
     },
     "anti_ai_patterns.json": {
         "stage": "deai_cleanup",
@@ -58,6 +61,7 @@ FILE_RULES: dict[str, dict[str, Any]] = {
         "budget_weight": "high",
         "tags": ["anti_ai", "ai_patterns", "cliche", "humanize"],
         "intents": [],
+        "block_name": "stylistic_issues",
     },
     "officialese_cliches.json": {
         "stage": "deai_cleanup",
@@ -66,6 +70,7 @@ FILE_RULES: dict[str, dict[str, Any]] = {
         "budget_weight": "high",
         "tags": ["officialese", "cliche", "bureaucratic"],
         "intents": [],
+        "block_name": "stylistic_issues",
     },
     "stop_words.json": {
         "stage": "deai_cleanup",
@@ -74,6 +79,7 @@ FILE_RULES: dict[str, dict[str, Any]] = {
         "budget_weight": "high",
         "tags": ["stop_words", "filler", "deai", "word_level"],
         "intents": [],
+        # stop_words — отдельный блок, не объединяется
     },
 
     # ── editorial_core (priority 2) ───────────────────────────────────────
@@ -84,6 +90,7 @@ FILE_RULES: dict[str, dict[str, Any]] = {
         "budget_weight": "high",
         "tags": ["editing", "principles", "style", "clarity"],
         "intents": [],
+        "block_name": "editorial_techniques",
     },
     "types_of_editing.json": {
         "stage": "editorial_core",
@@ -92,6 +99,7 @@ FILE_RULES: dict[str, dict[str, Any]] = {
         "budget_weight": "medium",
         "tags": ["editing", "types", "workflow"],
         "intents": [],
+        "block_name": "editorial_techniques",
     },
     "editorial_analysis_algorithm.json": {
         "stage": "editorial_core",
@@ -100,6 +108,7 @@ FILE_RULES: dict[str, dict[str, Any]] = {
         "budget_weight": "high",
         "tags": ["algorithm", "editing", "analysis", "workflow"],
         "intents": [],
+        "block_name": "editorial_techniques",
     },
     "focus_on_reader_and_goal.json": {
         "stage": "editorial_core",
@@ -108,6 +117,7 @@ FILE_RULES: dict[str, dict[str, Any]] = {
         "budget_weight": "high",
         "tags": ["reader", "goal", "audience", "clarity"],
         "intents": [],
+        "block_name": "editorial_techniques",
     },
     "milchin_techniques.json": {
         "stage": "editorial_core",
@@ -116,6 +126,7 @@ FILE_RULES: dict[str, dict[str, Any]] = {
         "budget_weight": "medium",
         "tags": ["milchin", "techniques", "style", "clarity"],
         "intents": [],
+        "block_name": "stylistic_issues",
     },
     "composition_principles.json": {
         "stage": "editorial_core",
@@ -124,6 +135,7 @@ FILE_RULES: dict[str, dict[str, Any]] = {
         "budget_weight": "medium",
         "tags": ["composition", "structure", "principles"],
         "intents": [],
+        # отдельный блок, не объединяется
     },
     "local_cohesion.json": {
         "stage": "editorial_core",
@@ -132,6 +144,7 @@ FILE_RULES: dict[str, dict[str, Any]] = {
         "budget_weight": "medium",
         "tags": ["cohesion", "transitions", "flow", "paragraph"],
         "intents": [],
+        # отдельный блок
     },
 
     # ── stylistic_diagnosis (priority 3) ──────────────────────────────────
@@ -142,6 +155,7 @@ FILE_RULES: dict[str, dict[str, Any]] = {
         "budget_weight": "medium",
         "tags": ["lexical", "semantic", "errors", "word_choice"],
         "intents": [],
+        "block_name": "stylistic_issues",
     },
     "syntax_errors.json": {
         "stage": "stylistic_diagnosis",
@@ -150,6 +164,7 @@ FILE_RULES: dict[str, dict[str, Any]] = {
         "budget_weight": "medium",
         "tags": ["syntax", "errors", "sentence", "structure"],
         "intents": [],
+        "block_name": "stylistic_issues",
     },
     "composition_errors.json": {
         "stage": "stylistic_diagnosis",
@@ -158,6 +173,7 @@ FILE_RULES: dict[str, dict[str, Any]] = {
         "budget_weight": "medium",
         "tags": ["composition", "errors", "structure"],
         "intents": [],
+        # отдельный блок
     },
     "style_register_errors.json": {
         "stage": "stylistic_diagnosis",
@@ -166,6 +182,7 @@ FILE_RULES: dict[str, dict[str, Any]] = {
         "budget_weight": "medium",
         "tags": ["register", "tone", "style", "mismatch"],
         "intents": [],
+        "block_name": "stylistic_issues",
     },
 
     # ── word_level (priority 4) ────────────────────────────────────────────
@@ -176,6 +193,7 @@ FILE_RULES: dict[str, dict[str, Any]] = {
         "budget_weight": "medium",
         "tags": ["word_level", "noise", "filler", "clarity"],
         "intents": [],
+        "block_name": "editorial_techniques",
     },
     "syntax_and_sentence_structure.json": {
         "stage": "word_level",
@@ -184,6 +202,7 @@ FILE_RULES: dict[str, dict[str, Any]] = {
         "budget_weight": "medium",
         "tags": ["syntax", "sentence", "structure", "rhythm"],
         "intents": [],
+        "block_name": "editorial_techniques",
     },
     "tautology_pleonasm.json": {
         "stage": "word_level",
@@ -192,6 +211,7 @@ FILE_RULES: dict[str, dict[str, Any]] = {
         "budget_weight": "low",
         "tags": ["tautology", "pleonasm", "redundancy", "word_level"],
         "intents": [],
+        "block_name": "stylistic_issues",
     },
     "nkrj_structure_patterns.json": {
         "stage": "word_level",
@@ -200,6 +220,7 @@ FILE_RULES: dict[str, dict[str, Any]] = {
         "budget_weight": "low",
         "tags": ["nkrj", "corpus", "passive", "sentence_length"],
         "intents": [],
+        # отдельный блок
     },
 
     # ── composition (priority 5) ───────────────────────────────────────────
@@ -210,6 +231,7 @@ FILE_RULES: dict[str, dict[str, Any]] = {
         "budget_weight": "medium",
         "tags": ["paragraph", "composition", "structure", "flow"],
         "intents": [],
+        "block_name": "editorial_techniques",
     },
     "compositional_editing.json": {
         "stage": "composition",
@@ -218,6 +240,7 @@ FILE_RULES: dict[str, dict[str, Any]] = {
         "budget_weight": "medium",
         "tags": ["composition", "editing", "macro_structure"],
         "intents": [],
+        "block_name": "editorial_techniques",
     },
 
     # ── grammar_safety (priority 6) ───────────────────────────────────────
@@ -228,6 +251,7 @@ FILE_RULES: dict[str, dict[str, Any]] = {
         "budget_weight": "low",
         "tags": ["grammar", "morphology", "agreement", "case"],
         "intents": [],
+        "block_name": "editorial_techniques",
     },
     "grammar_errors.json": {
         "stage": "grammar_safety",
@@ -236,6 +260,7 @@ FILE_RULES: dict[str, dict[str, Any]] = {
         "budget_weight": "low",
         "tags": ["grammar", "errors", "correction"],
         "intents": [],
+        # отдельный блок
     },
     "grammar_morphology.json": {
         "stage": "grammar_safety",
@@ -244,6 +269,7 @@ FILE_RULES: dict[str, dict[str, Any]] = {
         "budget_weight": "low",
         "tags": ["grammar", "morphology", "forms", "inflection"],
         "intents": [],
+        "block_name": "stylistic_issues",
     },
 
     # ── logic (priority 6, параллельно с grammar) ─────────────────────────
@@ -254,6 +280,7 @@ FILE_RULES: dict[str, dict[str, Any]] = {
         "budget_weight": "medium",
         "tags": ["logic", "argumentation", "coherence", "reasoning"],
         "intents": [],
+        # отдельный блок
     },
     "logical_structure.json": {
         "stage": "logic",
@@ -262,6 +289,7 @@ FILE_RULES: dict[str, dict[str, Any]] = {
         "budget_weight": "medium",
         "tags": ["logic", "structure", "argumentation", "macro_structure"],
         "intents": [],
+        "block_name": "editorial_techniques",
     },
 
     # ── specialized (priority 7, по тегам) ────────────────────────────────
@@ -272,6 +300,7 @@ FILE_RULES: dict[str, dict[str, Any]] = {
         "budget_weight": "low",
         "tags": ["foreign_words", "translation", "borrowings", "terminology"],
         "intents": [],
+        "block_name": "editorial_techniques",
     },
     "ethics_and_tact.json": {
         "stage": "specialized",
@@ -280,6 +309,7 @@ FILE_RULES: dict[str, dict[str, Any]] = {
         "budget_weight": "low",
         "tags": ["ethics", "tact", "sensitivity", "audience"],
         "intents": [],
+        "block_name": "editorial_techniques",
     },
     "cultural_and_factual_checks.json": {
         "stage": "specialized",
@@ -288,6 +318,7 @@ FILE_RULES: dict[str, dict[str, Any]] = {
         "budget_weight": "low",
         "tags": ["cultural", "factual", "accuracy", "verification"],
         "intents": [],
+        "block_name": "editorial_techniques",
     },
     "phonetics_word_formation.json": {
         "stage": "specialized",
@@ -296,6 +327,7 @@ FILE_RULES: dict[str, dict[str, Any]] = {
         "budget_weight": "low",
         "tags": ["phonetics", "word_formation", "euphony", "sound"],
         "intents": [],
+        "block_name": "stylistic_issues",
     },
 
     # ── rhetoric (priority 8, по интенту) ─────────────────────────────────
@@ -306,6 +338,7 @@ FILE_RULES: dict[str, dict[str, Any]] = {
         "budget_weight": "low",
         "tags": ["rhetoric", "topoi", "argumentation", "persuasion"],
         "intents": ["argumentation", "persuasion", "rhetoric", "academic"],
+        "block_name": "rhetoric_frameworks",
     },
     "rhetoric_figures.json": {
         "stage": "rhetoric",
@@ -314,6 +347,7 @@ FILE_RULES: dict[str, dict[str, Any]] = {
         "budget_weight": "low",
         "tags": ["rhetoric", "figures", "style", "expressiveness"],
         "intents": ["rhetoric", "expressiveness", "literary", "speech"],
+        "block_name": "rhetoric_frameworks",
     },
     "rhetoric_tropes_and_strategies.json": {
         "stage": "rhetoric",
@@ -322,6 +356,7 @@ FILE_RULES: dict[str, dict[str, Any]] = {
         "budget_weight": "low",
         "tags": ["rhetoric", "tropes", "strategies", "persuasion"],
         "intents": ["rhetoric", "persuasion", "argumentation"],
+        "block_name": "rhetoric_frameworks",
     },
     "phraseology_tropes.json": {
         "stage": "rhetoric",
@@ -330,6 +365,7 @@ FILE_RULES: dict[str, dict[str, Any]] = {
         "budget_weight": "low",
         "tags": ["phraseology", "tropes", "idioms", "expressiveness"],
         "intents": ["rhetoric", "expressiveness", "literary"],
+        "block_name": "stylistic_issues",
     },
     "imagery_and_style.json": {
         "stage": "rhetoric",
@@ -338,6 +374,7 @@ FILE_RULES: dict[str, dict[str, Any]] = {
         "budget_weight": "low",
         "tags": ["imagery", "metaphor", "style", "expressiveness"],
         "intents": ["rhetoric", "expressiveness", "literary", "creative"],
+        "block_name": "editorial_techniques",
     },
 
     # ── overlays: storytelling (по интенту) ───────────────────────────────
@@ -348,6 +385,7 @@ FILE_RULES: dict[str, dict[str, Any]] = {
         "budget_weight": "medium",
         "tags": ["storytelling", "narrative", "structure", "macro_structure"],
         "intents": ["storytelling", "narrative", "blog", "creative"],
+        "block_name": "storytelling_frameworks",
     },
     "storytelling_microtechniques.json": {
         "stage": "overlay_storytelling",
@@ -356,6 +394,7 @@ FILE_RULES: dict[str, dict[str, Any]] = {
         "budget_weight": "medium",
         "tags": ["storytelling", "micro_technique", "show_not_tell", "suspense"],
         "intents": ["storytelling", "narrative", "creative"],
+        "block_name": "storytelling_frameworks",
     },
 
     # ── overlays: marketing (по интенту) ──────────────────────────────────
@@ -366,6 +405,7 @@ FILE_RULES: dict[str, dict[str, Any]] = {
         "budget_weight": "medium",
         "tags": ["marketing", "web", "landing", "cta"],
         "intents": ["marketing", "landing_page", "product"],
+        "block_name": "marketing_templates",
     },
     "marketing_email.json": {
         "stage": "overlay_marketing",
@@ -374,6 +414,7 @@ FILE_RULES: dict[str, dict[str, Any]] = {
         "budget_weight": "medium",
         "tags": ["marketing", "email", "newsletter", "lead_magnet"],
         "intents": ["marketing", "email"],
+        "block_name": "marketing_templates",
     },
     "marketing_social.json": {
         "stage": "overlay_marketing",
@@ -382,6 +423,7 @@ FILE_RULES: dict[str, dict[str, Any]] = {
         "budget_weight": "medium",
         "tags": ["marketing", "social", "smm", "post"],
         "intents": ["marketing", "social_media"],
+        "block_name": "marketing_templates",
     },
     "marketing_other.json": {
         "stage": "overlay_marketing",
@@ -390,6 +432,7 @@ FILE_RULES: dict[str, dict[str, Any]] = {
         "budget_weight": "low",
         "tags": ["marketing", "case_study", "presentation"],
         "intents": ["marketing"],
+        "block_name": "marketing_templates",
     },
 
     # ── overlays: genre / final check (по интенту) ────────────────────────
@@ -400,6 +443,7 @@ FILE_RULES: dict[str, dict[str, Any]] = {
         "budget_weight": "low",
         "tags": ["genre", "template", "format", "structure"],
         "intents": ["genre", "academic", "journalistic", "business"],
+        "block_name": "editorial_techniques",
     },
     "final_check_cta_readability.json": {
         "stage": "overlay_final",
@@ -408,6 +452,7 @@ FILE_RULES: dict[str, dict[str, Any]] = {
         "budget_weight": "low",
         "tags": ["final_check", "cta", "readability", "proofreading"],
         "intents": ["final_check", "proofreading", "marketing"],
+        "block_name": "editorial_techniques",
     },
 }
 
@@ -454,6 +499,9 @@ def build_entry(file_path: Path, rel_path: str, kb_dir: Path) -> dict[str, Any]:
             "status": "active",
             "note": "",
         }
+        # Добавляем block_name, если он указан
+        if "block_name" in rule:
+            entry["block_name"] = rule["block_name"]
     else:
         # Файл не описан в правилах — помечаем как unclassified
         entry = {
