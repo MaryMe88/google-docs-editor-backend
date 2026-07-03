@@ -43,13 +43,12 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-# Определяем, запущены ли тесты
 _is_testing = os.getenv("PYTEST_RUNNING", "false").lower() == "true"
 _rate_limit = "1000/minute" if _is_testing else "10/minute"
 
 
 # ---------------------------------------------------------------------------
-# Кэш доступности провайдеров (A-5)
+# Кэш доступности провайдеров
 # ---------------------------------------------------------------------------
 @dataclass
 class _ProviderCacheEntry:
@@ -76,13 +75,9 @@ def _set_cached_availability(provider: str, available: bool) -> None:
 
 
 def invalidate_provider_cache() -> None:
-    """Принудительная инвалидация кэша (для тестов и диагностики)."""
     _provider_cache.clear()
 
 
-# ---------------------------------------------------------------------------
-# Маппинг провайдер → переменная окружения для light-check
-# ---------------------------------------------------------------------------
 _PROVIDER_KEY_ENV: Dict[str, str] = {
     "perplexity": "PERPLEXITY_API_KEY",
     "openai": "OPENAI_API_KEY",
@@ -90,15 +85,58 @@ _PROVIDER_KEY_ENV: Dict[str, str] = {
     "openrouter": "OPENROUTER_API_KEY",
 }
 
-# ---------------------------------------------------------------------------
-# CORS
-# ---------------------------------------------------------------------------
 _CORS_ORIGINS_RAW = os.getenv("CORS_ALLOWED_ORIGINS", "")
 _CORS_ORIGINS: list[str] = (
     [origin.strip() for origin in _CORS_ORIGINS_RAW.split(",") if origin.strip()]
     if _CORS_ORIGINS_RAW
     else ["https://script.google.com", "https://docs.google.com"]
 )
+
+
+# ---------------------------------------------------------------------------
+# Вспомогательные функции для семантического индекса
+# ---------------------------------------------------------------------------
+def _collect_semantic_entries(app: FastAPI) -> list[dict]:
+    """
+    Собирает все записи из базы знаний, сохранённой в app.state.kb.
+    Если kb отсутствует, возвращает пустой список.
+    """
+    kb = getattr(app.state, "kb", None)
+    if kb is None:
+        logger.warning("SemanticIndex: kb не загружен, пропускаем сбор записей")
+        return []
+
+    all_entries = []
+    for attr in ("grammar_errors", "stylistic_issues", "logic_issues"):
+        entries = getattr(kb, attr, [])
+        if isinstance(entries, list):
+            all_entries.extend(entries)
+    return all_entries
+
+
+async def _build_semantic_index_background(app: FastAPI) -> None:
+    """Фоновая задача построения семантического индекса."""
+    if app.state.semantic_index_status != "not_started":
+        logger.info("SemanticIndex: уже запущен или завершён, пропускаем")
+        return
+
+    app.state.semantic_index_status = "building"
+    logger.info("SemanticIndex: фоновое построение индекса начато")
+
+    try:
+        all_entries = _collect_semantic_entries(app)
+        if not all_entries:
+            logger.warning("SemanticIndex: нет записей для индексации, индекс не строится")
+            app.state.semantic_index_status = "ready"
+            return
+
+        await asyncio.to_thread(init_semantic_index, all_entries)
+        app.state.semantic_index_status = "ready"
+        logger.info("SemanticIndex: фоновое построение индекса завершено успешно")
+    except Exception as e:
+        logger.error("SemanticIndex: ошибка при построении индекса: %s", e, exc_info=True)
+        app.state.semantic_index_status = "failed"
+        app.state.semantic_index_error = str(e)
 
 
 # ---------------------------------------------------------------------------
@@ -131,30 +169,32 @@ async def lifespan(app: FastAPI):
     logger.info("PromptBuilder initialized successfully")
     app.state.prompt_builder = prompt_builder
 
-    # ---------------------------------------------------------------------------
-    # Семантический индекс: инициализируем один раз при старте.
-    # Собираем все записи из базы знаний через уже загруженный kb внутри prompt_builder.
-    # Если библиотека sentence-transformers не установлена или модель недоступна,
-    # сервис всё равно запустится — semantic search будет просто отключён.
-    # ---------------------------------------------------------------------------
+    # Сохраняем kb в состояние приложения для использования в фоновой задаче
     try:
-        kb = prompt_builder.kb
-        all_entries: list[dict] = [
-            *getattr(kb, "grammar_errors", []),
-            *getattr(kb, "stylistic_issues", []),
-            *getattr(kb, "logic_issues", []),
-        ]
-        if all_entries:
-            await asyncio.to_thread(init_semantic_index, all_entries)
-            logger.info("SemanticIndex: инициализирован (%d записей)", len(all_entries))
-        else:
-            logger.warning("SemanticIndex: база знаний пуста, индекс не построен")
-    except Exception as exc:
-        # Намеренно не прерываем старт — semantic search опциональный
-        logger.warning("SemanticIndex: не удалось инициализировать (%s). Поиск по смыслу отключён.", exc)
+        app.state.kb = prompt_builder.kb
+        logger.info("SemanticIndex: kb загружен")
+    except AttributeError:
+        logger.warning("PromptBuilder не содержит атрибут kb, семантический индекс не будет построен")
+        app.state.kb = None
+
+    # Инициализация состояния индекса
+    app.state.semantic_index_status = "not_started"
+    app.state.semantic_index_task = None
+    app.state.semantic_index_error = None
+
+    # Запускаем фоновую задачу (не блокирует старт)
+    task = asyncio.create_task(_build_semantic_index_background(app))
+    app.state.semantic_index_task = task
 
     yield
+
     logger.info("Shutting down text editor service...")
+    if app.state.semantic_index_task:
+        app.state.semantic_index_task.cancel()
+        try:
+            await app.state.semantic_index_task
+        except asyncio.CancelledError:
+            pass
 
 
 app = FastAPI(
@@ -183,9 +223,6 @@ async def log_requests(request: Request, call_next):
     start_time = time.perf_counter()
     response = await call_next(request)
     duration_ms = (time.perf_counter() - start_time) * 1000
-    # SEC: читаем реальный IP из X-Forwarded-For (за Render reverse proxy),
-    # берём только первый адрес в цепочке — он ближайший к клиенту.
-    # Fallback на request.client.host если заголовок отсутствует.
     forwarded_for = request.headers.get("X-Forwarded-For")
     client_ip = forwarded_for.split(",")[0].strip() if forwarded_for else (
         request.client.host if request.client else None
@@ -202,7 +239,6 @@ async def log_requests(request: Request, call_next):
     return response
 
 
-# SEC-10: Добавление security headers
 @app.middleware("http")
 async def add_security_headers(request: Request, call_next):
     response = await call_next(request)
@@ -221,7 +257,7 @@ def get_prompt_builder() -> PromptBuilder:
 
 
 # ---------------------------------------------------------------------------
-# Проверка провайдеров (глубокая и лёгкая)
+# Проверка провайдеров
 # ---------------------------------------------------------------------------
 async def _check_provider_deep(provider_name: str) -> bool:
     try:
@@ -242,11 +278,6 @@ async def _check_provider_deep(provider_name: str) -> bool:
 
 
 async def _check_providers_availability(deep: bool = False) -> Tuple[bool, Dict[str, bool]]:
-    """
-    Возвращает (any_available, {provider: available}).
-    При deep=False использует кэш (TTL 60 сек) и light-check (наличие API-ключа).
-    При deep=True выполняет реальные запросы и обновляет кэш.
-    """
     results: Dict[str, bool] = {}
     for provider in ALLOWED_PROVIDERS:
         if not deep:
@@ -254,7 +285,6 @@ async def _check_providers_availability(deep: bool = False) -> Tuple[bool, Dict[
             if cached is not None:
                 results[provider] = cached
                 continue
-            # light-check – только по env
             env_var = _PROVIDER_KEY_ENV.get(provider.lower())
             available = bool(os.getenv(env_var)) if env_var else False
             _set_cached_availability(provider, available)
@@ -273,13 +303,11 @@ async def _check_providers_availability(deep: bool = False) -> Tuple[bool, Dict[
 # ---------------------------------------------------------------------------
 @app.get("/")
 async def root() -> dict:
-    # SEC: version убрана — не раскрываем внутренние детали публично.
     return {"status": "ok"}
 
 
 @app.get("/livez")
 async def liveness_check() -> dict:
-    """Быстрый health check для Render (без аутентификации)."""
     return {"status": "alive"}
 
 
@@ -340,8 +368,6 @@ def _log_edit_request_meta(body: EditRequest, retrieval_meta: Optional[Dict] = N
 @app.post("/api/edit", response_model=EditResponse, dependencies=[Depends(verify_api_key)])
 @limiter.limit(_rate_limit)
 async def edit_text(request: Request, body: EditRequest) -> EditResponse:
-    # Валидация domain/intent/overlays теперь выполняется в Pydantic (A-1)
-    # Ручные проверки УДАЛЕНЫ.
     try:
         audience: Optional[AudienceProfile] = None
         if body.audience is not None:
@@ -448,17 +474,13 @@ async def edit_text(request: Request, body: EditRequest) -> EditResponse:
 
 
 # ---------------------------------------------------------------------------
-# Парсинг ответа LLM с маркерами ТЕКСТ/ОТЧЁТ (A-4)
+# Парсинг ответа LLM с маркерами ТЕКСТ/ОТЧЁТ
 # ---------------------------------------------------------------------------
 _MARKER_TEXT = re.compile(r"={2,}\s*ТЕКСТ\s*={2,}", re.IGNORECASE)
 _MARKER_REPORT = re.compile(r"={2,}\s*ОТЧЁТ\s*={2,}", re.IGNORECASE)
 
 
 def _parse_text_and_report(raw: str) -> Tuple[str, Optional[str]]:
-    """
-    Разбирает ответ LLM на отредактированный текст и отчёт.
-    Устойчив к вариациям маркеров (пробелы, регистр).
-    """
     parts_by_text = _MARKER_TEXT.split(raw, maxsplit=1)
     if len(parts_by_text) < 2:
         logger.warning(
