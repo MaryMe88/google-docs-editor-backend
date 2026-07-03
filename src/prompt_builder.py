@@ -46,6 +46,7 @@ from src.shared_contracts import (
     ALLOWED_OVERLAYS,
 )
 from src.tag_registry import normalize_tag, normalize_tags
+from src.kb_manifest_loader import load_manifest, select_files_for_request
 
 logger = logging.getLogger(__name__)
 
@@ -344,167 +345,50 @@ def load_output_format(
 
 
 # ---------------------------------------------------------------------------
-# Загрузка базы знаний
+# Загрузка базы знаний (НОВАЯ ВЕРСИЯ)
 # ---------------------------------------------------------------------------
-def _normalize_kb_list(items: Any) -> List[Dict[str, Any]]:
-    if not isinstance(items, list):
-        return []
-    result: List[Dict[str, Any]] = []
-    for item in items:
-        if isinstance(item, dict):
-            normalized = dict(item)
-            tags = normalized.get("tags")
-            if isinstance(tags, list):
-                normalized["tags"] = normalize_tags(tags)
-            result.append(normalized)
-    return result
 
-
-def _extract_records(container: Any, inherited_tags: Optional[List[str]] = None) -> List[Dict[str, Any]]:
-    if inherited_tags is None:
-        inherited_tags = []
-    records = []
-    if isinstance(container, list):
-        for item in container:
-            records.extend(_extract_records(item, inherited_tags))
-    elif isinstance(container, dict):
-        if "examples" in container and isinstance(container["examples"], list):
-            cat_tags = container.get("tags", [])
-            if isinstance(cat_tags, list):
-                new_tags = inherited_tags + cat_tags
-            else:
-                new_tags = inherited_tags
-            for ex in container["examples"]:
-                if isinstance(ex, dict):
-                    ex = dict(ex)
-                    if "tags" in ex and isinstance(ex["tags"], list):
-                        ex["tags"] = ex["tags"] + new_tags
-                    else:
-                        ex["tags"] = new_tags.copy()
-                    records.append(ex)
-        elif "techniques" in container and isinstance(container["techniques"], list):
-            cat_tags = container.get("tags", [])
-            if isinstance(cat_tags, list):
-                new_tags = inherited_tags + cat_tags
-            else:
-                new_tags = inherited_tags
-            for tech in container["techniques"]:
-                if isinstance(tech, dict):
-                    tech = dict(tech)
-                    if "tags" in tech and isinstance(tech["tags"], list):
-                        tech["tags"] = tech["tags"] + new_tags
-                    else:
-                        tech["tags"] = new_tags.copy()
-                    records.append(tech)
-        else:
-            records.append(container)
-    return records
-
-
-def _load_kb_from_dir(dirpath: Path, key: Optional[str] = None) -> List[Dict[str, Any]]:
-    effective_key = key if key is not None else "techniques"
-    records: List[Dict[str, Any]] = []
-    for filepath in sorted(dirpath.glob("*.json")):
-        try:
-            with open(filepath, "r", encoding="utf-8") as f:
-                data = json.load(f)
-        except (json.JSONDecodeError, OSError) as e:
-            logger.error(f"Failed to load {filepath}: {e}")
-            continue
-        logger.debug(f"Loaded KB file: {filepath.name}")
-        if isinstance(data, dict):
-            if effective_key in data:
-                records.append(data)
-            else:
-                for value in data.values():
-                    if isinstance(value, list):
-                        records.extend(_extract_records(value))
-        elif isinstance(data, list):
-            records.extend(_extract_records(data))
-        else:
-            logger.warning(f"Unexpected format in {filepath}, skipping")
-    return records
-
-
-def _load_kb_list(file_name: str, base_path: Path, key: Optional[str] = None) -> List[Dict[str, Any]]:
-    path = base_path / file_name
-    if path.is_dir():
-        return _load_kb_from_dir(path, key=key)
+def _load_kb_file(path: Path) -> List[Dict[str, Any]]:
+    """
+    Загружает JSON-файл KB и возвращает список записей.
+    Поддерживает:
+      - список на верхнем уровне
+      - словарь с ключами: items, examples, techniques, frameworks, templates,
+        common_mistakes, issues
+    В случае ошибки или отсутствия данных возвращает пустой список.
+    """
     if not path.exists():
-        logger.warning(f"KB file not found: {path}")
+        logger.warning("KB file not found: %s", path)
         return []
-    data = _load_optional_json(path, {})
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError) as e:
+        logger.error("Failed to load KB file %s: %s", path, e)
+        return []
+
     if isinstance(data, list):
-        items = data
-    elif key is not None:
-        items = data.get(key, [])
-    else:
-        items = []
-    records = _extract_records(items)
-    if file_name == "grammar_errors.json":
-        for rec in records:
-            if not rec.get("tags"):
-                rec["tags"] = ["grammar"]
-    normalized = []
-    for rec in records:
-        if not isinstance(rec, dict):
-            continue
-        rec = dict(rec)
-        if "tags" in rec and isinstance(rec["tags"], list):
-            rec["tags"] = normalize_tags(rec["tags"])
-        normalized.append(rec)
-    return normalized
-
-
-def _load_kb_file_or_dir(name: str, base_path: Path, key: Optional[str] = None) -> List[Dict[str, Any]]:
-    dir_path = base_path / name
-    if dir_path.is_dir():
-        logger.debug(f"Loading KB from directory: {dir_path}")
-        return _load_kb_from_dir(dir_path, key=key)
-    file_path = base_path / f"{name}.json"
-    if file_path.exists():
-        logger.debug(f"Loading KB from file: {file_path}")
-        return _load_kb_list(f"{name}.json", base_path, key)
-    file_path_exact = base_path / name
-    if file_path_exact.exists():
-        logger.debug(f"Loading KB from file: {file_path_exact}")
-        return _load_kb_list(name, base_path, key)
-    logger.warning(f"KB source not found (tried dir and .json): {base_path / name}")
+        return data
+    if isinstance(data, dict):
+        # Ищем ключи, под которыми может лежать список записей
+        for key in ("items", "examples", "techniques", "frameworks",
+                    "templates", "common_mistakes", "issues"):
+            if key in data and isinstance(data[key], list):
+                return data[key]
+        # Если ничего не нашли, но есть поле "techniques" как словарь с другими ключами
+        # (обрабатывается в _extract_records, но мы упрощаем)
+        logger.debug("No known list key in %s, treating as empty", path)
+        return []
     return []
 
 
-def _load_kb_multi(
-    prefixes: List[str],
-    base_path: Path,
-    key: str,
-    fallback_name: Optional[str] = None,
-) -> List[Dict[str, Any]]:
-    records: List[Dict[str, Any]] = []
-    for prefix in prefixes:
-        file_path = base_path / f"{prefix}.json"
-        if file_path.exists():
-            records.extend(_load_kb_list(f"{prefix}.json", base_path, key))
-    if records:
-        return records
-    group = prefixes[0].split("_")[0]
-    dir_path = base_path / group
-    if dir_path.is_dir():
-        logger.debug(f"Loading KB from directory: {dir_path}")
-        return _load_kb_from_dir(dir_path, key=key)
-    if fallback_name:
-        fallback_path = base_path / fallback_name
-        if fallback_path.exists():
-            logger.debug(f"Loading KB from legacy file: {fallback_path}")
-            return _load_kb_list(fallback_name, base_path, key)
-    logger.warning(
-        "KB source not found for prefixes=%s, fallback=%s",
-        prefixes,
-        fallback_name,
-    )
-    return []
-
-
-def load_knowledge_base(base_path: Path = Path("knowledge_base")) -> KnowledgeBase:
+# ---------------------------------------------------------------------------
+# Старая загрузка (legacy) — оставлена для обратной совместимости
+# ---------------------------------------------------------------------------
+def _load_knowledge_base_legacy(base_path: Path = Path("knowledge_base")) -> KnowledgeBase:
+    """
+    УСТАРЕВШАЯ ВЕРСИЯ. Загружает KB жёстко заданными файлами.
+    Используется только для обратной совместимости.
+    """
     sw_path = base_path / "stop_words.json"
     if not sw_path.exists():
         logger.warning("stop_words.json not found at %s — stop-word filtering disabled", sw_path)
@@ -563,6 +447,81 @@ def load_knowledge_base(base_path: Path = Path("knowledge_base")) -> KnowledgeBa
         editorial_techniques=editorial_techniques,
         nkrj_structure_patterns=nkrj,
     )
+
+
+# ---------------------------------------------------------------------------
+# НОВАЯ ЗАГРУЗКА ПО МАНИФЕСТУ
+# ---------------------------------------------------------------------------
+def load_knowledge_base(
+    kb_path: Path,
+    active_tags: Optional[Set[str]] = None,
+    intent: Optional[str] = None,
+    load_all: bool = False,
+) -> KnowledgeBase:
+    """
+    Загружает базу знаний по манифесту, фильтруя файлы по контексту запроса.
+    Возвращает KnowledgeBase с блоками, ключи которых:
+      - если задан entry.block_name → используется он
+      - иначе имя папки для файлов в поддиректориях
+      - иначе имя файла без расширения
+
+    Если load_all=True, загружаются все активные файлы (игнорируя load_mode).
+    Это нужно для тестов и обратной совместимости.
+    """
+    manifest = load_manifest(kb_path / "kb_manifest.json")
+    if load_all:
+        selected = [e for e in manifest if e.status == "active"]
+    else:
+        selected = select_files_for_request(manifest, active_tags or set(), intent)
+
+    block_data: Dict[str, List[Dict[str, Any]]] = {}
+
+    for entry in selected:
+        full_path = kb_path / entry.file
+        if not full_path.exists():
+            logger.warning("KB file not found: %s", full_path)
+            continue
+
+        records = _load_kb_file(full_path)
+        if not records:
+            continue
+
+        # Определяем ключ блока: приоритет: block_name > имя папки > stem файла
+        if entry.block_name:
+            key = entry.block_name
+        elif "/" in entry.file:
+            key = entry.file.split("/")[0]
+        else:
+            key = Path(entry.file).stem
+
+        # Объединяем записи по ключу
+        if key not in block_data:
+            block_data[key] = []
+        block_data[key].extend(records)
+
+    # Для обратной совместимости: если domain_glossary не был загружен через манифест,
+    # но файл существует, загружаем его отдельно.
+    if "domain_glossary" not in block_data:
+        domain_glossary_path = kb_path / "domain_glossary.json"
+        if domain_glossary_path.exists():
+            try:
+                data = json.loads(domain_glossary_path.read_text(encoding="utf-8"))
+                if isinstance(data, dict):
+                    block_data["domain_glossary"] = [data]  # сохраняем как список из одного элемента
+                else:
+                    logger.warning("domain_glossary.json has unexpected format, skipping")
+            except Exception as e:
+                logger.error("Failed to load domain_glossary.json: %s", e)
+
+    kb = KnowledgeBase()
+    for key, records in block_data.items():
+        kb.register(key, records)
+
+    logger.info(
+        "Loaded KB with %d blocks from manifest (selected %d files, tags=%s, intent=%s, load_all=%s)",
+        len(block_data), len(selected), active_tags, intent, load_all
+    )
+    return kb
 
 
 # ---------------------------------------------------------------------------
@@ -874,8 +833,9 @@ def _process_kb_block(
     else:
         if not config.kb_attr:
             return total_few_shot_used
-        entries_source = getattr(kb, config.kb_attr, None)
-        if entries_source is None:
+        # Используем безопасный get вместо getattr
+        entries_source = kb.get(config.kb_attr)
+        if not entries_source:
             return total_few_shot_used
         result = config.retrieval_fn(
             entries=entries_source,
@@ -975,23 +935,21 @@ class PromptBuilder:
         self.kb_path = kb_path
         self._limits = limits or LimitsConfig()
         self.core_config: Optional[CoreConfig] = None
-        # A-3: загружаем KB сразу при создании объекта (если путь указан)
-        self.knowledge_base: Optional[KnowledgeBase] = (
-            load_knowledge_base(kb_path) if kb_path else None
-        )
+        # Больше не загружаем KB в конструкторе — загрузка происходит
+        # при каждом вызове build() в зависимости от контекста.
 
     # ------------------------------------------------------------------
     # Startup / reload
     # ------------------------------------------------------------------
     def startup_check(self) -> None:
         self.core_config = load_core_config(self.config_path)
-        self.knowledge_base = load_knowledge_base(self.kb_path)
+        # KB загружается динамически, не кешируем
 
     def reload_configs(self) -> None:
         _cached_load_domain_config.cache_clear()
         _cached_load_intent_config.cache_clear()
         self.core_config = load_core_config(self.config_path)
-        self.knowledge_base = load_knowledge_base(self.kb_path)
+        # KB загружается динамически, не кешируем
 
     # ------------------------------------------------------------------
     # Доступные intents / overlays
@@ -1131,11 +1089,6 @@ class PromptBuilder:
             "Если ИП превышает целевое значение — предупреди и предложи второй проход."
         )
 
-    # A-3: метод упрощён до простого возврата self.knowledge_base
-    def _ensure_knowledge_base(self) -> Optional[KnowledgeBase]:
-        """Возвращает уже загруженную базу знаний (загружена в __init__)."""
-        return self.knowledge_base
-
     # ------------------------------------------------------------------
     # _build_knowledge_block — версия с реестром
     # ------------------------------------------------------------------
@@ -1152,7 +1105,8 @@ class PromptBuilder:
         total_few_shot_used: int,
         few_shot_seed: Optional[int] = None,
     ) -> Tuple[str, Dict[str, Any], int]:
-        kb = self._ensure_knowledge_base()
+        # Загружаем KB динамически по контексту
+        kb = load_knowledge_base(self.kb_path, primary_tags, intent)
         if kb is None:
             return "", {}, total_few_shot_used
 
@@ -1162,13 +1116,15 @@ class PromptBuilder:
 
         # Стоп-слова
         stop_words_budget = budget.get("stop_words")
-        if stop_words_budget and stop_words_budget.enabled and kb.stop_words:
-            lines.append("Стоп-слова и нежелательные формулировки:")
-            category_limit = stop_words_budget.entry_limit or self._limits.stop_words_category
-            for category, words in list(kb.stop_words.items())[:category_limit]:
-                if isinstance(words, list) and words:
-                    joined = ", ".join(str(w) for w in words[:self._limits.stop_words_items])
-                    lines.append(f"- {category}: {joined}")
+        if stop_words_budget and stop_words_budget.enabled:
+            stop_words = kb.get("stop_words", {})
+            if stop_words:
+                lines.append("Стоп-слова и нежелательные формулировки:")
+                category_limit = stop_words_budget.entry_limit or self._limits.stop_words_category
+                for category, words in list(stop_words.items())[:category_limit]:
+                    if isinstance(words, list) and words:
+                        joined = ", ".join(str(w) for w in words[:self._limits.stop_words_items])
+                        lines.append(f"- {category}: {joined}")
 
         # Основные блоки через реестр
         for block_cfg in KB_BLOCK_REGISTRY:
@@ -1176,7 +1132,7 @@ class PromptBuilder:
             if not (block_budget and block_budget.enabled):
                 continue
             if block_cfg.uses_structural_call and block_cfg.kb_attr:
-                if not getattr(kb, block_cfg.kb_attr, None):
+                if not kb.get(block_cfg.kb_attr):
                     continue
             current_total = _process_kb_block(
                 config=block_cfg,
@@ -1198,13 +1154,17 @@ class PromptBuilder:
 
         # Глоссарий
         glossary_budget = budget.get("glossary")
-        if glossary_budget and glossary_budget.enabled and kb.domain_glossary:
-            _append_glossary(lines, kb.domain_glossary, glossary_budget.entry_limit)
+        if glossary_budget and glossary_budget.enabled:
+            glossary = kb.get("domain_glossary", {})
+            if glossary:
+                _append_glossary(lines, glossary, glossary_budget.entry_limit)
 
         # НКРЯ
         nkrj_budget = budget.get("nkrj")
-        if nkrj_budget and nkrj_budget.enabled and kb.nkrj_structure_patterns:
-            _append_nkrj(lines, kb.nkrj_structure_patterns)
+        if nkrj_budget and nkrj_budget.enabled:
+            nkrj = kb.get("nkrj_structure_patterns", {})
+            if nkrj:
+                _append_nkrj(lines, nkrj)
 
         return "\n".join(lines), meta, current_total
 

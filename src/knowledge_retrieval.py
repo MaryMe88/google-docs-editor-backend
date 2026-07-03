@@ -817,8 +817,9 @@ def select_grammar_rules(
 ) -> Union[List[Dict[str, Any]], Tuple[List[Dict[str, Any]], FallbackStage, int]]:
     normalized_text = normalize_text_for_match(text)
     effective_tags = list(tags) or ["grammar"]
+    grammar_entries = getattr(kb, 'grammar_errors', [])   # исправлено
     raw = _select_ranked_entries(
-        entries=kb.grammar_errors,
+        entries=grammar_entries,
         normalized_text=normalized_text,
         wanted_tags=effective_tags,
         limit=limit,
@@ -876,8 +877,9 @@ def select_style_issues(
 ) -> Union[List[Dict[str, Any]], Tuple[List[Dict[str, Any]], FallbackStage, int]]:
     normalized_text = normalize_text_for_match(text)
     effective_tags = list(tags) or ["style"]
+    stylistic_entries = getattr(kb, 'stylistic_issues', [])   # исправлено
     raw = _select_ranked_entries(
-        entries=kb.stylistic_issues,
+        entries=stylistic_entries,
         normalized_text=normalized_text,
         wanted_tags=effective_tags,
         limit=limit,
@@ -933,7 +935,8 @@ def select_logic_issues(
     char_budget: Optional[int] = None,
     return_meta: bool = False,
 ) -> Union[List[Dict[str, Any]], Tuple[List[Dict[str, Any]], FallbackStage, int]]:
-    if not kb.logic_issues:
+    logic_entries = getattr(kb, 'logic_issues', [])   # исправлено
+    if not logic_entries:
         logger.warning(
             "select_logic_issues: kb.logic_issues пустой. "
             "Блок логики не будет добавлен в промпт. "
@@ -946,7 +949,7 @@ def select_logic_issues(
     normalized_text = normalize_text_for_match(text)
     wanted_tags = list(tags) + ["logic"]
     raw = _select_ranked_entries(
-        entries=kb.logic_issues,
+        entries=logic_entries,
         normalized_text=normalized_text,
         wanted_tags=wanted_tags,
         limit=limit,

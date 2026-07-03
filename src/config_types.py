@@ -142,22 +142,58 @@ class AudienceProfile:
     description: str = ""
 
 
-@dataclass
+# ============================================================================
+# ИЗМЕНЕНИЕ: KnowledgeBase теперь динамический контейнер
+# ============================================================================
+
 class KnowledgeBase:
-    """База знаний редактора."""
-    stop_words: Dict[str, List[str]]
-    grammar_errors: List[RuleEntry]
-    stylistic_issues: List[RuleEntry]
-    logic_issues: List[RuleEntry]
-    storytelling_frameworks: List[StructuralEntry]
-    marketing_templates: List[StructuralEntry]
-    domain_glossary: Dict[str, Any]
-    composition_principles: List[StructuralEntry]
-    local_cohesion: List[StructuralEntry]
-    composition_errors: List[StructuralEntry]
-    rhetoric_frameworks: List[StructuralEntry]
-    editorial_techniques: List[EditorialTechniqueEntry]
-    nkrj_structure_patterns: Dict[str, Any]
+    """
+    Динамическая база знаний.
+
+    Записи хранятся в _blocks по ключу — имени блока (например, "grammar_errors").
+    Обратная совместимость: доступ к старым атрибутам (grammar_errors, stylistic_issues и т.д.)
+    реализован через __getattr__, поэтому существующий код не ломается.
+
+    Методы:
+        get(key, default=None) — получить блок по ключу.
+        register(key, data) — установить блок.
+        keys() — список всех ключей.
+    """
+
+    def __init__(self, **kwargs: Any) -> None:
+        """
+        Создаёт KnowledgeBase из именованных аргументов.
+        Каждый аргумент становится блоком с соответствующим именем.
+        """
+        self._blocks: Dict[str, Any] = {}
+        for key, value in kwargs.items():
+            self._blocks[key] = value
+
+    def get(self, key: str, default: Any = None) -> Any:
+        """Возвращает блок по ключу или default (по умолчанию пустой список)."""
+        return self._blocks.get(key, default or [])
+
+    def register(self, key: str, data: Any) -> None:
+        """Регистрирует (перезаписывает) блок с именем key."""
+        self._blocks[key] = data
+
+    def keys(self) -> Set[str]:
+        """Возвращает множество имён блоков."""
+        return set(self._blocks.keys())
+
+    def __getattr__(self, name: str) -> Any:
+        """
+        Обеспечивает обратную совместимость:
+        kb.grammar_errors → self._blocks["grammar_errors"]
+        Если ключа нет, возбуждается AttributeError.
+        """
+        try:
+            return self._blocks[name]
+        except KeyError:
+            raise AttributeError(f"KnowledgeBase has no block '{name}'")
+
+    def __repr__(self) -> str:
+        return f"KnowledgeBase(blocks={list(self._blocks.keys())})"
 
 
 # ============================================================================
