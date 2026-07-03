@@ -31,6 +31,8 @@ from src.config_types import (
     OverlayConfig,
     get_canonical_tags_for_category,
     get_primary_tags_for_category,
+    FileCache,
+    CachePolicy,
 )
 from src.knowledge_retrieval import (
     FallbackStage,
@@ -867,8 +869,8 @@ class PromptBuilder:
         self.kb_path = kb_path
         self._limits = limits or LimitsConfig()
         self.core_config: Optional[CoreConfig] = None
-        # Больше не загружаем KB в конструкторе — загрузка происходит
-        # при каждом вызове build() в зависимости от контекста.
+        # Кеш для KB — инвалидируется по mtime манифеста
+        self._kb_cache = FileCache(policy=CachePolicy(check_mtime=True))
 
     # ------------------------------------------------------------------
     # Startup / reload
@@ -881,7 +883,7 @@ class PromptBuilder:
         _cached_load_domain_config.cache_clear()
         _cached_load_intent_config.cache_clear()
         self.core_config = load_core_config(self.config_path)
-        # KB загружается динамически, не кешируем
+        self._kb_cache.clear()  # сбрасываем кеш KB при перезагрузке конфигов
 
     # ------------------------------------------------------------------
     # Доступные intents / overlays
@@ -1022,7 +1024,7 @@ class PromptBuilder:
         )
 
     # ------------------------------------------------------------------
-    # _build_knowledge_block — версия с реестром
+    # _build_knowledge_block — версия с реестром и кешем
     # ------------------------------------------------------------------
     def _build_knowledge_block(
         self,
@@ -1037,10 +1039,20 @@ class PromptBuilder:
         total_few_shot_used: int,
         few_shot_seed: Optional[int] = None,
     ) -> Tuple[str, Dict[str, Any], int]:
-        # Загружаем KB динамически по контексту
-        kb = load_knowledge_base(self.kb_path, primary_tags, intent)
-        if kb is None:
-            return "", {}, total_few_shot_used
+        # Загружаем KB через кеш, инвалидируемый по mtime манифеста
+        cache_key = f"kb:{','.join(sorted(primary_tags))}:{intent or ''}"
+        manifest_path = self.kb_path / "kb_manifest.json"
+
+        # Все аргументы передаются позиционно, т.к. get_or_load ожидает
+        # (key, path, loader, *loader_args)
+        kb = self._kb_cache.get_or_load(
+            cache_key,
+            manifest_path,
+            load_knowledge_base,
+            self.kb_path,
+            primary_tags,
+            intent,
+        )
 
         lines: List[str] = []
         meta: Dict[str, Any] = {}
