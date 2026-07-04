@@ -308,6 +308,15 @@ class _OpenAICompatibleClient(BaseLLMClient):
             if "usage" in data and isinstance(data["usage"], dict):
                 tokens_used = data["usage"].get("total_tokens")
 
+            # Провайдер может вернуть content=null (content-фильтрация,
+            # tool-calls, пустой ответ). Такой None не ловится KeyError/
+            # IndexError и позже ломает len(response.content). Фейлим явно,
+            # чтобы call_with_fallback мог перейти к следующему провайдеру.
+            if not isinstance(content, str) or not content.strip():
+                raise LLMError(
+                    "Provider returned empty or non-text content"
+                )
+
             return LLMResponse(
                 content=content,
                 model=self.config.model,
@@ -569,6 +578,19 @@ async def call_with_fallback(
                 response = await client.generate(prompt)
             logger.info("call_with_fallback: success with provider=%s", provider_name)
             return response
+        except ValueError as exc:
+            # create_llm_client бросает ValueError, когда у провайдера нет
+            # API-ключа в окружении (или нет дефолтной модели). Это не
+            # фатально для всей цепочки — просто пропускаем этого провайдера
+            # и пробуем следующего. Не логируем str(exc) целиком —
+            # сообщение может содержать имя env-переменной, но не сам ключ.
+            logger.warning(
+                "call_with_fallback: provider=%s unavailable (missing key or model), skipping",
+                provider_name,
+            )
+            last_error = LLMError(
+                f"Provider {provider_name} is not configured"
+            )
         except LLMError as exc:
             logger.warning("call_with_fallback: provider=%s failed: %s", provider_name, exc)
             last_error = exc
