@@ -37,11 +37,85 @@
 
 
 
+/**
+ * BACKEND_CONFIG хранит только неконфиденциальные значения по умолчанию.
+ *
+ * SEC-#3: сам URL бэкенда и SEC-#1: секретный API-ключ больше НЕ хардкодятся
+ * в коде. Они читаются из Script Properties (PropertiesService), а поле url
+ * ниже используется лишь как fallback, если свойство ещё не задано.
+ * Разовую настройку выполняет функция setupBackendConfig() (см. секцию SETUP).
+ */
 const BACKEND_CONFIG = {
+  // Fallback-URL на случай, если свойство BACKEND_URL ещё не задано в
+  // Script Properties. Настоятельно рекомендуется задать его через setup.
   url: 'https://google-docs-editor-backend.onrender.com/api/edit',
   provider: 'openrouter',
   temperature: 0.3
 };
+
+
+
+
+/**
+ * Ключи Script Properties, где хранятся секреты и настройки окружения.
+ * Значения задаются один раз через setupBackendConfig() и не попадают в Git.
+ */
+const PROP_KEYS = {
+  backendUrl: 'BACKEND_URL',
+  apiKey: 'API_SECRET_KEY'
+};
+
+
+
+
+/**
+ * SEC-#2: максимальная длина выделенного текста (в символах).
+ * Должна совпадать с max_length поля text в backend (contracts.py: 10000),
+ * чтобы пользователь получал понятное предупреждение ДО обращения к серверу,
+ * а не 422-ошибку в ответ.
+ */
+const MAX_TEXT_CHARS = 10000;
+
+
+
+
+/**
+ * Ключ Document Property, где хранится последняя правка для отката.
+ * SEC-#5: перед заменой сохраняем оригинал, чтобы «Отменить последнюю правку»
+ * работало даже если общий undo Google Docs забит другими действиями.
+ */
+const LAST_EDIT_PROP_KEY = 'LLM_EDITOR_LAST_EDIT';
+
+
+
+
+/**
+ * Возвращает URL бэкенда: сначала из Script Properties, затем fallback
+ * на BACKEND_CONFIG.url. Централизует доступ к URL (SEC-#3).
+ * @returns {string}
+ */
+function getBackendUrl_() {
+  const stored = PropertiesService.getScriptProperties().getProperty(
+    PROP_KEYS.backendUrl
+  );
+  return (stored && stored.trim()) ? stored.trim() : BACKEND_CONFIG.url;
+}
+
+
+
+
+/**
+ * Возвращает API-ключ из Script Properties или пустую строку (SEC-#1).
+ * Пустая строка означает soft-mode: бэкенд, у которого не задан
+ * API_SECRET_KEY, примет запрос и без заголовка.
+ * @returns {string}
+ */
+function getApiKey_() {
+  const key = PropertiesService.getScriptProperties().getProperty(
+    PROP_KEYS.apiKey
+  );
+  return (key && key.trim()) ? key.trim() : '';
+}
 
 
 
@@ -72,6 +146,79 @@ const ALLOWED_INTENTS = [
   'engagement',
   'neutral'
 ];
+
+
+
+
+/* ============================================================================
+ * SECTION: SETUP (разовая настройка секретов)
+ * ============================================================================
+ */
+
+
+
+
+/**
+ * Разовая настройка URL бэкенда и API-ключа через диалоги.
+ *
+ * Запускается вручную из редактора Apps Script или из меню
+ * «LLM редактор → ⚙ Настройка подключения». Сохраняет значения в
+ * Script Properties, откуда их читают getBackendUrl_() и getApiKey_().
+ *
+ * Пустой ввод оставляет текущее значение без изменений.
+ */
+function setupBackendConfig() {
+  const ui = DocumentApp.getUi();
+  const props = PropertiesService.getScriptProperties();
+
+  const currentUrl = props.getProperty(PROP_KEYS.backendUrl) || BACKEND_CONFIG.url;
+  const urlResponse = ui.prompt(
+    'Настройка подключения (1/2)',
+    'Введите URL бэкенда (endpoint /api/edit).\n' +
+      'Текущее значение:\n' + currentUrl + '\n\n' +
+      'Оставьте пустым, чтобы не менять.',
+    ui.ButtonSet.OK_CANCEL
+  );
+
+  if (urlResponse.getSelectedButton() !== ui.Button.OK) {
+    ui.alert('Настройка отменена.');
+    return;
+  }
+
+  const newUrl = urlResponse.getResponseText().trim();
+  if (newUrl) {
+    // Минимальная валидация: только https и непустой хост.
+    if (!/^https:\/\/[^\s/]+/i.test(newUrl)) {
+      ui.alert('URL должен начинаться с https:// — настройка прервана.');
+      return;
+    }
+    props.setProperty(PROP_KEYS.backendUrl, newUrl);
+  }
+
+  const keyResponse = ui.prompt(
+    'Настройка подключения (2/2)',
+    'Введите API-ключ (значение API_SECRET_KEY на сервере).\n\n' +
+      'Оставьте пустым, чтобы не менять. Чтобы удалить ключ и работать в\n' +
+      'soft-mode, введите слово: CLEAR',
+    ui.ButtonSet.OK_CANCEL
+  );
+
+  if (keyResponse.getSelectedButton() === ui.Button.OK) {
+    const rawKey = keyResponse.getResponseText().trim();
+    if (rawKey === 'CLEAR') {
+      props.deleteProperty(PROP_KEYS.apiKey);
+    } else if (rawKey) {
+      props.setProperty(PROP_KEYS.apiKey, rawKey);
+    }
+  }
+
+  const savedKey = getApiKey_();
+  ui.alert(
+    'Настройка сохранена.\n\n' +
+      'URL: ' + getBackendUrl_() + '\n' +
+      'API-ключ: ' + (savedKey ? 'задан (скрыт)' : 'не задан (soft-mode)')
+  );
+}
 
 
 
@@ -610,6 +757,15 @@ function onOpen(e) {
 
 
 
+  // Служебные пункты: откат последней правки (SEC-#5) и
+  // разовая настройка подключения (SEC-#1, SEC-#3).
+  rootMenu.addSeparator();
+  rootMenu.addItem('↩ Отменить последнюю правку', 'undoLastEdit');
+  rootMenu.addItem('⚙ Настройка подключения', 'setupBackendConfig');
+
+
+
+
   rootMenu.addToUi();
 }
 
@@ -894,8 +1050,25 @@ function editSelection_withMode_(mode) {
 
 
 
+  // SEC-#2: проверяем длину ДО отправки, чтобы не получить 422 от сервера
+  // и не тратить дорогой LLM-запрос на заведомо слишком длинный фрагмент.
+  if (originalText.length > MAX_TEXT_CHARS) {
+    DocumentApp.getUi().alert(
+      'Выделено слишком много текста: ' + originalText.length +
+      ' символов при лимите ' + MAX_TEXT_CHARS + '.\n\n' +
+      'Выделите фрагмент поменьше и повторите.'
+    );
+    return;
+  }
+
+
+
+
   try {
     const editedText = callBackend_(originalText, mode);
+    // SEC-#5: сохраняем оригинал ПЕРЕД заменой, чтобы его можно
+    // было вернуть через «Отменить последнюю правку».
+    saveLastEdit_(originalText, editedText, mode);
     replaceSelection_(selection, editedText);
   } catch (err) {
     Logger.log('Ошибка при вызове backend: ' + err);
@@ -1079,6 +1252,116 @@ function replaceSelection_(selection, newText) {
 
 
 /* ============================================================================
+ * SECTION: UNDO (SEC-#5 — откат последней правки)
+ * ============================================================================
+ */
+
+
+
+
+/**
+ * Сохраняет снимок последней правки в Document Properties.
+ *
+ * Хранится только один (последний) снимок. Связывается с документом,
+ * а не со скриптом, чтобы откат не затрагивал другие документы.
+ *
+ * @param {string} originalText - текст до правки
+ * @param {string} editedText   - текст после правки (для проверки при откате)
+ * @param {object} mode         - режим (для человекочитаемого названия)
+ */
+function saveLastEdit_(originalText, editedText, mode) {
+  try {
+    const snapshot = {
+      original: originalText,
+      edited: editedText,
+      mode: (mode && mode.menu) ? mode.menu : '',
+      ts: new Date().toISOString()
+    };
+    PropertiesService.getDocumentProperties().setProperty(
+      LAST_EDIT_PROP_KEY,
+      JSON.stringify(snapshot)
+    );
+  } catch (err) {
+    // Не блокируем основной сценарий, если снимок не сохранился
+    // (например, текст превышает лимит Properties ~9 КБ на значение).
+    Logger.log('Не удалось сохранить снимок для отката: ' + err);
+  }
+}
+
+
+
+
+/**
+ * Откат последней правки: возвращает оригинальный текст на место
+ * текущего выделения.
+ *
+ * Привязывается к пункту меню «↩ Отменить последнюю правку».
+ * Требует выделить тот же фрагмент (уже отредактированный), чтобы
+ * заменить его обратно на оригинал.
+ */
+function undoLastEdit() {
+  const ui = DocumentApp.getUi();
+  const raw = PropertiesService.getDocumentProperties().getProperty(
+    LAST_EDIT_PROP_KEY
+  );
+
+  if (!raw) {
+    ui.alert('Нет сохранённой правки для отката.');
+    return;
+  }
+
+  let snapshot;
+  try {
+    snapshot = JSON.parse(raw);
+  } catch (err) {
+    ui.alert('Сохранённая правка повреждена, откат невозможен.');
+    PropertiesService.getDocumentProperties().deleteProperty(LAST_EDIT_PROP_KEY);
+    return;
+  }
+
+  const doc = DocumentApp.getActiveDocument();
+  const selection = doc.getSelection();
+
+  if (!selection) {
+    ui.alert(
+      'Выделите отредактированный фрагмент (режим: «' +
+      (snapshot.mode || '?') + '») и повторите отмену.'
+    );
+    return;
+  }
+
+  const currentText = getSelectedText_(selection);
+
+  // Защита от случайного отката чужого фрагмента: предупреждаем,
+  // если выделенный текст не совпадает с тем, что было вставлено.
+  if (currentText !== snapshot.edited) {
+    const confirm = ui.alert(
+      'Предупреждение',
+      'Выделенный текст не совпадает с последней правкой.\n\n' +
+      'Всё равно заменить выделение на сохранённый оригинал?',
+      ui.ButtonSet.YES_NO
+    );
+    if (confirm !== ui.Button.YES) {
+      return;
+    }
+  }
+
+  try {
+    replaceSelection_(selection, snapshot.original);
+    // Одноразовый откат: после восстановления чистим снимок,
+    // чтобы повторный клик не «откатил» уже восстановленный текст.
+    PropertiesService.getDocumentProperties().deleteProperty(LAST_EDIT_PROP_KEY);
+    ui.alert('Последняя правка отменена.');
+  } catch (err) {
+    Logger.log('Ошибка при откате: ' + err);
+    ui.alert('Не удалось откатить правку: ' + err);
+  }
+}
+
+
+
+
+/* ============================================================================
  * SECTION: PAYLOAD
  * ============================================================================
  */
@@ -1148,12 +1431,24 @@ function callBackend_(text, mode, maxRetries = 2) {
   // SEC-11: убрано логирование полного payload для безопасности
   // Logger.log('PAYLOAD -> ' + JSON.stringify(payload));
 
+  // SEC-#1: добавляем заголовок X-API-Key, если ключ задан в Script Properties.
+  // Если ключ пустой — заголовок не шлём (soft-mode на бэкенде).
+  const headers = {};
+  const apiKey = getApiKey_();
+  if (apiKey) {
+    headers['X-API-Key'] = apiKey;
+  }
+
   const options = {
     method: 'post',
     contentType: 'application/json',
+    headers: headers,
     payload: JSON.stringify(payload),
     muteHttpExceptions: true
   };
+
+  // SEC-#3: URL берём из Script Properties (через getBackendUrl_), а не из константы.
+  const backendUrl = getBackendUrl_();
 
   let attempt = 0;
   let lastError = null;
@@ -1163,7 +1458,7 @@ function callBackend_(text, mode, maxRetries = 2) {
     Logger.log(`Backend call attempt ${attempt} of ${maxRetries}`);
 
     try {
-      const response = UrlFetchApp.fetch(BACKEND_CONFIG.url, options);
+      const response = UrlFetchApp.fetch(backendUrl, options);
       const statusCode = response.getResponseCode();
       const responseBody = response.getContentText();
 
