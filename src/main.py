@@ -47,6 +47,27 @@ _is_testing = os.getenv("PYTEST_RUNNING", "false").lower() == "true"
 _rate_limit = "1000/minute" if _is_testing else "10/minute"
 
 
+def _client_ip_key(request: Request) -> str:
+    """Ключ rate-limit по реальному IP клиента за reverse-proxy.
+
+    На Render (и любом прокси) ``request.client.host`` равен IP прокси и
+    одинаков для всех клиентов — тогда лимит становится глобальным.
+    Берём первый IP из ``X-Forwarded-For`` (ближайший к клиенту),
+    а при его отсутствии — fallback на стандартный get_remote_address.
+
+    Замечание по безопасности: заголовок X-Forwarded-For клиент может
+    подделать, если запрос идёт не через доверенный прокси. На Render
+    входящий трафик всегда проходит через их прокси, который
+    перезаписывает этот заголовок, поэтому для текущего деплоя это приемлемо.
+    """
+    forwarded_for = request.headers.get("X-Forwarded-For")
+    if forwarded_for:
+        first_ip = forwarded_for.split(",")[0].strip()
+        if first_ip:
+            return first_ip
+    return get_remote_address(request)
+
+
 # ---------------------------------------------------------------------------
 # Кэш доступности провайдеров
 # ---------------------------------------------------------------------------
@@ -204,8 +225,8 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
-# Настройка rate limiting
-limiter = Limiter(key_func=get_remote_address)
+# Настройка rate limiting (ключ по реальному IP клиента за прокси)
+limiter = Limiter(key_func=_client_ip_key)
 app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
