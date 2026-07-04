@@ -168,6 +168,17 @@ class BaseLLMClient(ABC):
         """Явно закрывает HTTP-клиент."""
         await self.client.aclose()
 
+    def _sleep_delay_for(self, attempt: int) -> Optional[float]:
+        """Возвращает задержку перед следующей попыткой или None.
+
+        None означает, что попытка ``attempt`` (0-based) — последняя, и
+        спать перед выходом из цикла не нужно (иначе тратим до нескольких
+        секунд впустую перед тем как бросить ошибку).
+        """
+        if attempt + 1 >= self.config.max_retries:
+            return None
+        return _backoff_with_jitter(self.config.retry_delay, attempt)
+
     async def generate(self, prompt: str) -> LLMResponse:
         """Генерирует ответ с retry-логикой и jitter."""
         attempt = 0
@@ -201,35 +212,38 @@ class BaseLLMClient(ABC):
 
             except LLMRateLimitError as error:
                 last_error = error
-                delay = _backoff_with_jitter(self.config.retry_delay, attempt)
-                logger.warning(
-                    "Rate limit hit, retrying in %.2f seconds",
-                    delay,
-                    extra={"attempt": attempt + 1},
-                )
-                await asyncio.sleep(delay)
-
-            except (LLMTimeoutError, httpx.TimeoutException) as error:
-                last_error = error
-                delay = _backoff_with_jitter(self.config.retry_delay, attempt)
-                logger.warning(
-                    "Timeout, retrying in %.2f seconds",
-                    delay,
-                    extra={"attempt": attempt + 1},
-                )
-                await asyncio.sleep(delay)
-
-            except LLMAPIError as error:
-                last_error = error
-                if error.status_code and 500 <= error.status_code < 600:
-                    delay = _backoff_with_jitter(self.config.retry_delay, attempt)
+                delay = self._sleep_delay_for(attempt)
+                if delay is not None:
                     logger.warning(
-                        "Server error %s, retrying in %.2f seconds",
-                        error.status_code,
+                        "Rate limit hit, retrying in %.2f seconds",
                         delay,
                         extra={"attempt": attempt + 1},
                     )
                     await asyncio.sleep(delay)
+
+            except (LLMTimeoutError, httpx.TimeoutException) as error:
+                last_error = error
+                delay = self._sleep_delay_for(attempt)
+                if delay is not None:
+                    logger.warning(
+                        "Timeout, retrying in %.2f seconds",
+                        delay,
+                        extra={"attempt": attempt + 1},
+                    )
+                    await asyncio.sleep(delay)
+
+            except LLMAPIError as error:
+                last_error = error
+                if error.status_code and 500 <= error.status_code < 600:
+                    delay = self._sleep_delay_for(attempt)
+                    if delay is not None:
+                        logger.warning(
+                            "Server error %s, retrying in %.2f seconds",
+                            error.status_code,
+                            delay,
+                            extra={"attempt": attempt + 1},
+                        )
+                        await asyncio.sleep(delay)
                 else:
                     raise
 
