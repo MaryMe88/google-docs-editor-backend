@@ -105,9 +105,19 @@ class KBBlockConfig:
 
 
 # ---------------------------------------------------------------------------
-# ТП-2: квалификатор уверенности для блоков KB
+# ТП-2: квалификатор уверенности для блоков KB (исправлено BUG-5 — добавлен комментарий)
 # ---------------------------------------------------------------------------
 def _get_confidence_note(stage: "FallbackStage") -> str:
+    """
+    Возвращает текстовый квалификатор уверенности для блока знаний.
+
+    Примечание:
+        Стадия TEXT_ONLY достигается только для rule-блоков (grammar, style, logic),
+        потому что они используют текстовый матчинг. Для структурных блоков
+        (composition, storytelling и др.) используется _select_by_tags_or_all
+        с normalized_text="", поэтому TEXT_ONLY для них недостижима.
+        Это не баг, а особенность архитектуры.
+    """
     if stage == FallbackStage.STRONG:
         return ""
     if stage == FallbackStage.TEXT_ONLY:
@@ -347,17 +357,33 @@ def load_output_format(
 
 
 # ---------------------------------------------------------------------------
-# Загрузка базы знаний (только новая, legacy удалён)
+# Загрузка базы знаний (исправлено: BUG-1 + словарные блоки)
 # ---------------------------------------------------------------------------
 
-def _load_kb_file(path: Path) -> List[Dict[str, Any]]:
+def _load_kb_file(
+    path: Path,
+    expected_key: Optional[str] = None,
+    use_known_keys: bool = True,
+) -> Union[List[Dict[str, Any]], Dict[str, Any]]:
     """
-    Загружает JSON-файл KB и возвращает список записей.
-    Поддерживает:
-      - список на верхнем уровне
-      - словарь с ключами: items, examples, techniques, frameworks, templates,
-        common_mistakes, issues
-    В случае ошибки или отсутствия данных возвращает пустой список.
+    Загружает JSON-файл KB и возвращает записи блока.
+
+    Возвращаемый тип зависит от структуры файла:
+      - список записей (List[Dict]) — для «списочных» блоков
+        (grammar_errors, stylistic_issues, composition_principles и т. д.);
+      - словарь (Dict) — для «словарных» блоков
+        (stop_words, nkrj_structure_patterns, domain_glossary).
+
+    Логика распознавания списка (по приоритету):
+      1. data — сразу список на верхнем уровне;
+      2. data[expected_key] — список под ожидаемым ключом (block_name или stem файла);
+      3. data[<известный ключ>] — список под одним из канонических ключей
+         (если use_known_keys=True);
+      4. единственный ключ верхнего уровня со значением-списком
+         (если use_known_keys=True).
+
+    Если use_known_keys=False, то после проверок 1 и 2 сразу возвращается
+    data как есть (словарь) без поиска по известным ключам.
     """
     if not path.exists():
         logger.warning("KB file not found: %s", path)
@@ -370,19 +396,42 @@ def _load_kb_file(path: Path) -> List[Dict[str, Any]]:
 
     if isinstance(data, list):
         return data
-    if isinstance(data, dict):
-        # Ищем ключи, под которыми может лежать список записей
-        for key in ("items", "examples", "techniques", "frameworks",
-                    "templates", "common_mistakes", "issues"):
-            if key in data and isinstance(data[key], list):
-                return data[key]
-        logger.debug("No known list key in %s, treating as empty", path)
+
+    if not isinstance(data, dict):
+        logger.warning("KB file %s has unexpected top-level type %s", path, type(data).__name__)
         return []
-    return []
+
+    # 1. Явно ожидаемый ключ (block_name или stem файла).
+    if expected_key and isinstance(data.get(expected_key), list):
+        return data[expected_key]
+
+    # Если use_known_keys=False, возвращаем весь словарь (словарный блок)
+    if not use_known_keys:
+        logger.debug("KB file %s treated as dict block (use_known_keys=False)", path)
+        return data
+
+    # 2. Канонические ключи, под которыми часто лежит список записей.
+    known_list_keys = (
+        "items", "examples", "techniques", "frameworks",
+        "templates", "common_mistakes", "issues", "rules", "entries",
+    )
+    for key in known_list_keys:
+        value = data.get(key)
+        if isinstance(value, list):
+            return value
+
+    # 3. Единственный ключ верхнего уровня со значением-списком.
+    list_valued_keys = [k for k, v in data.items() if isinstance(v, list)]
+    if len(list_valued_keys) == 1:
+        return data[list_valued_keys[0]]
+
+    # 4. Словарный блок: возвращаем dict целиком.
+    logger.debug("KB file %s treated as dict block (no list key found)", path)
+    return data
 
 
 # ---------------------------------------------------------------------------
-# НОВАЯ ЗАГРУЗКА ПО МАНИФЕСТУ
+# НОВАЯ ЗАГРУЗКА ПО МАНИФЕСТУ (исправлен цикл для поддержки словарных блоков)
 # ---------------------------------------------------------------------------
 def load_knowledge_base(
     kb_path: Path,
@@ -402,21 +451,16 @@ def load_knowledge_base(
     """
     manifest = load_manifest(kb_path / "kb_manifest.json")
     if load_all:
-        # load_manifest уже вернул только active, так что просто берём все записи
         selected = list(manifest)
     else:
         selected = select_files_for_request(manifest, active_tags or set(), intent)
 
-    block_data: Dict[str, List[Dict[str, Any]]] = {}
+    block_data: Dict[str, Any] = {}
 
     for entry in selected:
         full_path = kb_path / entry.file
         if not full_path.exists():
             logger.warning("KB file not found: %s", full_path)
-            continue
-
-        records = _load_kb_file(full_path)
-        if not records:
             continue
 
         # Определяем ключ блока: приоритет: block_name > имя папки > stem файла
@@ -427,10 +471,40 @@ def load_knowledge_base(
         else:
             key = Path(entry.file).stem
 
-        # Объединяем записи по ключу
-        if key not in block_data:
-            block_data[key] = []
-        block_data[key].extend(records)
+        # Словарные файлы загружаются целиком, без поиска по известным ключам.
+        # Это предотвращает ошибочный возврат списка под случайным ключом
+        # (например, stop_words.json -> categories).
+        dict_file_names = {"stop_words.json", "nkrj_structure_patterns.json", "domain_glossary.json"}
+        if entry.file in dict_file_names:
+            records = _load_kb_file(full_path, expected_key=None, use_known_keys=False)
+        else:
+            records = _load_kb_file(full_path, expected_key=entry.block_name or Path(entry.file).stem)
+
+        if not records:
+            continue
+
+        if isinstance(records, dict):
+            # Словарный блок (stop_words, nkrj_structure_patterns, domain_glossary).
+            if key in block_data and isinstance(block_data[key], dict):
+                block_data[key].update(records)
+            elif key in block_data:
+                logger.warning(
+                    "KB block '%s' type conflict: existing=%s, new=dict — skipping %s",
+                    key, type(block_data[key]).__name__, entry.file,
+                )
+            else:
+                block_data[key] = records
+        else:
+            # Списочный блок: объединяем записи по ключу.
+            if key not in block_data:
+                block_data[key] = []
+            if isinstance(block_data[key], list):
+                block_data[key].extend(records)
+            else:
+                logger.warning(
+                    "KB block '%s' type conflict: existing=%s, new=list — skipping %s",
+                    key, type(block_data[key]).__name__, entry.file,
+                )
 
     # Для обратной совместимости: если domain_glossary не был загружен через манифест,
     # но файл существует, загружаем его отдельно.
@@ -440,7 +514,6 @@ def load_knowledge_base(
             try:
                 data = json.loads(domain_glossary_path.read_text(encoding="utf-8"))
                 if isinstance(data, dict):
-                    # domain_glossary должен быть словарём, а не списком
                     block_data["domain_glossary"] = data
                 else:
                     logger.warning("domain_glossary.json has unexpected format, skipping")
@@ -462,7 +535,7 @@ def load_knowledge_base(
 # Вспомогательные функции для сборки тегов и блоков
 # ---------------------------------------------------------------------------
 # ============================================================================
-# ИЗМЕНЕНИЕ 1.6
+# ИЗМЕНЕНИЕ 1.6 + BUG-4 (добавлен тег "logic" в базовый набор)
 # ============================================================================
 def _collect_retrieval_tags(
     domain: str,
@@ -486,7 +559,10 @@ def _collect_retrieval_tags(
     for overlay in overlays:
         primary.update(get_primary_tags_for_category("overlays", overlay))
         expanded.update(get_canonical_tags_for_category("overlays", overlay))
-    primary.update({"grammar", "style", "editing", "clarity"})
+    # Базовый набор тегов, всегда присутствующий для поиска.
+    # Добавлен "logic" (BUG-4) — логические правила должны быть доступны
+    # даже без явного интента или оверлея, так как логика входит в приоритеты core.json.
+    primary.update({"grammar", "style", "editing", "clarity", "logic"})
     return {"primary": primary, "expanded": expanded - primary}
 
 
@@ -869,7 +945,7 @@ class PromptBuilder:
         self.kb_path = kb_path
         self._limits = limits or LimitsConfig()
         self.core_config: Optional[CoreConfig] = None
-        # Кеш для KB — инвалидируется по mtime манифеста
+        # Кеш для KB — инвалидируется по mtime всех файлов KB
         self._kb_cache = FileCache(policy=CachePolicy(check_mtime=True))
 
     # ------------------------------------------------------------------
@@ -1024,7 +1100,7 @@ class PromptBuilder:
         )
 
     # ------------------------------------------------------------------
-    # _build_knowledge_block — версия с реестром и кешем
+    # _build_knowledge_block — версия с реестром и кешем (исправлено BUG-3)
     # ------------------------------------------------------------------
     def _build_knowledge_block(
         self,
@@ -1039,15 +1115,19 @@ class PromptBuilder:
         total_few_shot_used: int,
         few_shot_seed: Optional[int] = None,
     ) -> Tuple[str, Dict[str, Any], int]:
-        # Загружаем KB через кеш, инвалидируемый по mtime манифеста
-        cache_key = f"kb:{','.join(sorted(primary_tags))}:{intent or ''}"
-        manifest_path = self.kb_path / "kb_manifest.json"
+        # KnowledgeBase зависит только от primary_tags и intent (аргументы loader'а).
+        # Фиксируем intent явно в ключе и инвалидируем кеш по mtime ВСЕХ файлов KB,
+        # чтобы правка отдельного файла сбрасывала кеш.
+        cache_key = f"kb:{','.join(sorted(primary_tags))}:{intent or 'none'}"
 
-        # Все аргументы передаются позиционно, т.к. get_or_load ожидает
-        # (key, path, loader, *loader_args)
-        kb = self._kb_cache.get_or_load(
+        manifest_path = self.kb_path / "kb_manifest.json"
+        kb_files = [manifest_path]
+        if self.kb_path.exists():
+            kb_files.extend(sorted(self.kb_path.rglob("*.json")))
+
+        kb = self._kb_cache.get_or_load_multi(
             cache_key,
-            manifest_path,
+            kb_files,
             load_knowledge_base,
             self.kb_path,
             primary_tags,

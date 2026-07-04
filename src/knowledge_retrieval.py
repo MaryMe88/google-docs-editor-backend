@@ -290,15 +290,32 @@ def score_structural_entry(
 _score_entry = score_rule_entry
 
 
+# ============================================================================
+# BUG-6: расширенная дедупликация для структурных записей
+# ============================================================================
 def _make_dedupe_key(entry: Dict[str, Any]) -> Tuple[Any, ...]:
     if "id" in entry:
         return ("id", entry["id"])
+
+    # Для записей без id учитываем и контейнерные поля,
+    # чтобы не схлопывать разные структурные записи.
+    def _container_signature(key: str) -> Tuple[Any, ...]:
+        container = entry.get(key)
+        if not isinstance(container, list):
+            return ()
+        parts: List[str] = []
+        for item in container:
+            if isinstance(item, dict):
+                parts.append(str(item.get("name", "")) + "|" + str(item.get("description", "")))
+        return tuple(parts)
 
     return (
         entry.get("wrong", ""),
         entry.get("rule", ""),
         entry.get("description", ""),
         entry.get("name", ""),
+        _container_signature("steps"),
+        _container_signature("sections"),
     )
 
 
