@@ -25,6 +25,11 @@ from src.auth import verify_api_key
 from src.config_types import AudienceProfile
 from src.contracts import CONTRACT_VERSION, EditRequest, EditResponse, HealthResponse
 from src.llm_client import LLMError, call_with_fallback, create_llm_client
+from src.output_guard import (
+    find_placeholder_leaks,
+    harden_prompt_against_placeholders,
+    has_placeholder_leak,
+)
 from src.prompt_builder import PromptBuilder
 from src.provider_registry import LLMProvider
 from src.semantic_index import init_semantic_index
@@ -365,6 +370,95 @@ def _log_edit_request_meta(body: EditRequest, retrieval_meta: Optional[Dict] = N
     logger.info(json.dumps(log_data, ensure_ascii=False))
 
 
+class PlaceholderLeakError(Exception):
+    """Служебные плейсхолдеры остались в ответе LLM после всех попыток.
+
+    Поднимается, когда в финальном тексте по-прежнему присутствуют токены
+    вроде ``[PERSON_NAME]``/``[ADDRESS]`` даже после повторной генерации.
+    Обрабатывается как fail-closed: пользователю возвращается ошибка,
+    а не текст со служебными маркерами.
+    """
+
+    def __init__(self, leaks: list[str]) -> None:
+        self.leaks = leaks
+        super().__init__(f"Placeholder tokens leaked into output: {leaks}")
+
+
+def _split_edit_output(raw: str, output_mode: str) -> Tuple[str, Optional[str]]:
+    """Разбирает сырой ответ LLM на текст и (опционально) отчёт.
+
+    В режиме ``text_and_report`` парсит блоки, иначе возвращает весь
+    ответ как текст.
+    """
+    if output_mode == "text_and_report":
+        return _parse_text_and_report(raw)
+    return raw, None
+
+
+async def _generate_clean_edit(
+    prompt: str,
+    providers: list[str],
+    body: EditRequest,
+) -> Tuple[Any, str, Optional[str]]:
+    """Генерирует отредактированный текст с защитой от плейсхолдеров.
+
+    Сначала выполняется обычный вызов LLM. Если в финальном тексте (а в
+    режиме отчёта — также в блоке отчёта) обнаружены служебные
+    плейсхолдеры, выполняется одна повторная попытка с усиленным
+    промптом. Если и после неё токены остаются, поднимается
+    ``PlaceholderLeakError`` (поведение fail-closed) — пользователю такой
+    текст не отдаётся.
+
+    Args:
+        prompt: собранный промпт для LLM.
+        providers: список провайдеров в порядке приоритета.
+        body: исходный запрос (нужны output_mode, model, temperature).
+
+    Returns:
+        Кортеж ``(response, edited_text, report)`` для успешного чистого
+        результата.
+
+    Raises:
+        PlaceholderLeakError: если плейсхолдеры не удалось устранить.
+        LLMError: если все провайдеры недоступны.
+    """
+    response = await call_with_fallback(
+        prompt=prompt,
+        providers=providers,
+        model=body.model,
+        temperature=body.temperature,
+        max_retries_per_provider=2,
+    )
+    edited_text, report = _split_edit_output(response.content, body.output_mode)
+
+    # Проверяем именно пользовательский текст и отчёт, а не сырой ответ:
+    # легальные блоки-заголовки режима text_and_report детектор не трогает.
+    if not (has_placeholder_leak(edited_text) or has_placeholder_leak(report or "")):
+        return response, edited_text, report
+
+    logger.warning(
+        "Guard: обнаружены плейсхолдеры в ответе LLM, выполняем повторную попытку"
+    )
+    hardened_prompt = harden_prompt_against_placeholders(prompt)
+    response = await call_with_fallback(
+        prompt=hardened_prompt,
+        providers=providers,
+        model=body.model,
+        # Понижаем температуру, чтобы модель точнее следовала инструкции.
+        temperature=min(body.temperature, 0.2),
+        max_retries_per_provider=2,
+    )
+    edited_text, report = _split_edit_output(response.content, body.output_mode)
+
+    leaks = find_placeholder_leaks(edited_text) + find_placeholder_leaks(report or "")
+    if leaks:
+        # Не логируем содержимое текста (может содержать PII) — только токены.
+        logger.error("Guard: плейсхолдеры остались после повторной попытки: %s", leaks)
+        raise PlaceholderLeakError(sorted(set(leaks)))
+
+    return response, edited_text, report
+
+
 @app.post("/api/edit", response_model=EditResponse, dependencies=[Depends(verify_api_key)])
 @limiter.limit(_rate_limit)
 async def edit_text(request: Request, body: EditRequest) -> EditResponse:
@@ -418,18 +512,12 @@ async def edit_text(request: Request, body: EditRequest) -> EditResponse:
         providers_to_try = [body.provider] + [
             p for p in sorted(ALLOWED_PROVIDERS) if p != body.provider
         ]
-        response = await call_with_fallback(
+
+        response, edited_text, report = await _generate_clean_edit(
             prompt=prompt,
             providers=providers_to_try,
-            model=body.model,
-            temperature=body.temperature,
-            max_retries_per_provider=2,
+            body=body,
         )
-
-        edited_text = response.content
-        report: Optional[str] = None
-        if body.output_mode == "text_and_report":
-            edited_text, report = _parse_text_and_report(response.content)
 
         _log_edit_request_meta(body, retrieval_meta)
         return EditResponse(
@@ -445,6 +533,15 @@ async def edit_text(request: Request, body: EditRequest) -> EditResponse:
             retrieval_meta=retrieval_meta if body.include_retrieval_meta else None,
         )
 
+    except PlaceholderLeakError as error:
+        logger.error("Placeholder guard blocked response: %s", error.leaks)
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=(
+                "The editor could not produce a clean result. "
+                "Please try again."
+            ),
+        ) from error
     except LLMError as error:
         logger.error("LLM error: %s", error, exc_info=True)
         raise HTTPException(
