@@ -112,6 +112,9 @@ pip install -r requirements.txt
 OPENROUTER_API_KEY=...
 OPENROUTER_SITE_URL=https://docs.google.com
 OPENROUTER_APP_NAME=GoogleDocs LLM Editor
+# Секрет для аутентификации запросов из Apps Script (заголовок X-API-Key).
+# Если не задан — эндпоинты работают без проверки (soft-mode).
+API_SECRET_KEY=
 ```
 
 Запуск:
@@ -131,11 +134,27 @@ curl http://localhost:8000/health
 1. Откройте документ Google Docs
 2. `Extensions → Apps Script`
 3. Вставьте код из `New Script.js`
-4. Если нужен собственный backend, обновите URL:
-   ```js
-   const url = 'https://google-docs-editor-backend.onrender.com/api/edit';
-   ```
-5. Сохраните проект и обновите документ — появится меню **«LLM редактор»**
+4. Сохраните проект и обновите документ — появится меню **«LLM редактор»**
+
+### Настройка подключения (URL и API-ключ)
+
+URL бэкенда и секретный API-ключ **больше не хардкодятся** — они хранятся
+в Script Properties и не попадают в Git.
+
+1. В меню выберите **«LLM редактор → ⚙ Настройка подключения»**
+2. Введите URL бэкенда (endpoint `/api/edit`) — или оставьте пустым для fallback
+3. Введите API-ключ (значение `API_SECRET_KEY` на сервере). Чтобы удалить ключ
+   и работать в soft-mode, введите `CLEAR`
+
+Альтернатива: задайте свойства `BACKEND_URL` и `API_SECRET_KEY` вручную в
+`Project Settings → Script Properties` редактора Apps Script.
+
+### Безопасность и ограничения
+
+- **Аутентификация**: запросы подписываются заголовком `X-API-Key`, если ключ задан
+- **Лимит текста**: выделение > 10000 символов отклоняется до отправки на сервер
+- **Откат**: перед заменой сохраняется оригинал; пункт **«↩ Отменить последнюю правку»**
+  возвращает его на место
 
 ## Расширение базы знаний
 
