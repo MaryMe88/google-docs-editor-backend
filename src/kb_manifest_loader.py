@@ -33,6 +33,7 @@ class ManifestEntry:
     status: str              # "active" | "disabled"
     priority: int            # порядок загрузки (меньше — раньше)
     block_name: Optional[str] = None  # имя блока для объединения нескольких файлов
+    block_type: str = "list"          # "list" | "dict" — структура данных блока (BUG-7)
 
 
 def load_manifest(path: Path = DEFAULT_MANIFEST_PATH) -> List[ManifestEntry]:
@@ -68,7 +69,8 @@ def load_manifest(path: Path = DEFAULT_MANIFEST_PATH) -> List[ManifestEntry]:
             budget_weight=item.get("budget_weight", "medium"),
             status=item.get("status", "active"),
             priority=item.get("priority", 99),
-            block_name=item.get("block_name"),  # новое поле
+            block_name=item.get("block_name"),          # новое поле
+            block_type=item.get("block_type", "list"),  # BUG-7
         ))
 
     entries.sort(key=lambda e: e.priority)

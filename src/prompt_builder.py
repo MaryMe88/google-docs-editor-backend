@@ -471,14 +471,16 @@ def load_knowledge_base(
         else:
             key = Path(entry.file).stem
 
-        # Словарные файлы загружаются целиком, без поиска по известным ключам.
-        # Это предотвращает ошибочный возврат списка под случайным ключом
-        # (например, stop_words.json -> categories).
-        dict_file_names = {"stop_words.json", "nkrj_structure_patterns.json", "domain_glossary.json"}
-        if entry.file in dict_file_names:
+        # Формат блока определяется манифестом (block_type), а не именем файла (BUG-7).
+        # "dict" — словарный блок (stop_words, nkrj_structure_patterns, domain_glossary);
+        # "list" (по умолчанию) — список записей.
+        if getattr(entry, "block_type", "list") == "dict":
             records = _load_kb_file(full_path, expected_key=None, use_known_keys=False)
         else:
-            records = _load_kb_file(full_path, expected_key=entry.block_name or Path(entry.file).stem)
+            records = _load_kb_file(
+                full_path,
+                expected_key=entry.block_name or Path(entry.file).stem,
+            )
 
         if not records:
             continue
@@ -535,7 +537,7 @@ def load_knowledge_base(
 # Вспомогательные функции для сборки тегов и блоков
 # ---------------------------------------------------------------------------
 # ============================================================================
-# ИЗМЕНЕНИЕ 1.6 + BUG-4 (добавлен тег "logic" в базовый набор)
+# ИЗМЕНЕНИЕ 1.6 + BUG-4 (добавлен тег "logic" в базовый набор) — ОТМЕНЕНО в BUG-8
 # ============================================================================
 def _collect_retrieval_tags(
     domain: str,
@@ -560,9 +562,10 @@ def _collect_retrieval_tags(
         primary.update(get_primary_tags_for_category("overlays", overlay))
         expanded.update(get_canonical_tags_for_category("overlays", overlay))
     # Базовый набор тегов, всегда присутствующий для поиска.
-    # Добавлен "logic" (BUG-4) — логические правила должны быть доступны
-    # даже без явного интента или оверлея, так как логика входит в приоритеты core.json.
-    primary.update({"grammar", "style", "editing", "clarity", "logic"})
+    # BUG-8: logic убран из базового набора, так как logic_issues.json теперь
+    # загружается по load_mode="always", а контекстные файлы с тегом logic
+    # (logical_structure.json) не должны грузиться всегда.
+    primary.update({"grammar", "style", "editing", "clarity"})
     return {"primary": primary, "expanded": expanded - primary}
 
 
@@ -953,7 +956,8 @@ class PromptBuilder:
     # ------------------------------------------------------------------
     def startup_check(self) -> None:
         self.core_config = load_core_config(self.config_path)
-        # KB загружается динамически, не кешируем
+        # Валидируем манифест KB на старте — BUG-9
+        self._validate_kb_manifest()
 
     def reload_configs(self) -> None:
         _cached_load_domain_config.cache_clear()
@@ -1198,6 +1202,40 @@ class PromptBuilder:
     def _assemble_prompt(self, blocks: List[str]) -> str:
         """Собирает финальный промпт из списка блоков."""
         return "\n\n".join(block for block in blocks if block.strip())
+
+    # ------------------------------------------------------------------
+    # Валидация манифеста KB (BUG-9)
+    # ------------------------------------------------------------------
+    def _validate_kb_manifest(self) -> None:
+        """
+        Проверяет согласованность манифеста KB до начала обслуживания запросов.
+
+        Поднимает ValueError, если один и тот же ключ блока описан файлами
+        с разным block_type (list vs dict) — иначе часть данных молча теряется
+        в load_knowledge_base (BUG-9).
+        """
+        from src.kb_manifest_loader import load_manifest
+
+        manifest = load_manifest(self.kb_path / "kb_manifest.json")
+        block_types: Dict[str, str] = {}
+        for entry in manifest:
+            if entry.block_name:
+                key = entry.block_name
+            elif "/" in entry.file:
+                key = entry.file.split("/")[0]
+            else:
+                key = Path(entry.file).stem
+
+            btype = getattr(entry, "block_type", "list")
+            existing = block_types.get(key)
+            if existing is None:
+                block_types[key] = btype
+            elif existing != btype:
+                raise ValueError(
+                    f"KB manifest inconsistent: block '{key}' has mixed "
+                    f"block_type ('{existing}' vs '{btype}') across files. "
+                    f"Fix kb_manifest.json / generate_kb_manifest.py."
+                )
 
     # ------------------------------------------------------------------
     # D-5: overload для метода build (исправлено: добавлены значения по умолчанию)
