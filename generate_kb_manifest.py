@@ -32,6 +32,7 @@ MANIFEST_FILENAME = "kb_manifest.json"
 # tags          — теги для retrieval (пустой список = не участвует в tag-поиске)
 # intents       — интенты, при которых файл подключается (only for by_intent)
 # block_name    — (опционально) имя блока для объединения нескольких файлов
+# block_type    — "list" (по умолчанию) или "dict" — формат данных блока (BUG-7)
 
 FILE_RULES: dict[str, dict[str, Any]] = {
 
@@ -79,6 +80,7 @@ FILE_RULES: dict[str, dict[str, Any]] = {
         "budget_weight": "high",
         "tags": ["stop_words", "filler", "deai", "word_level"],
         "intents": [],
+        "block_type": "dict",   # BUG-7: словарный блок
         # stop_words — отдельный блок, не объединяется
     },
 
@@ -220,6 +222,7 @@ FILE_RULES: dict[str, dict[str, Any]] = {
         "budget_weight": "low",
         "tags": ["nkrj", "corpus", "passive", "sentence_length"],
         "intents": [],
+        "block_type": "dict",   # BUG-7: словарный блок
         # отдельный блок
     },
 
@@ -276,7 +279,7 @@ FILE_RULES: dict[str, dict[str, Any]] = {
     "logic_issues.json": {
         "stage": "logic",
         "priority": 6,
-        "load_mode": "by_tags",
+        "load_mode": "always",          # BUG-8: всегда доступна для базовой логики
         "budget_weight": "medium",
         "tags": ["logic", "argumentation", "coherence", "reasoning"],
         "intents": [],
@@ -502,6 +505,8 @@ def build_entry(file_path: Path, rel_path: str, kb_dir: Path) -> dict[str, Any]:
         # Добавляем block_name, если он указан
         if "block_name" in rule:
             entry["block_name"] = rule["block_name"]
+        # Добавляем block_type (по умолчанию "list") — BUG-7
+        entry["block_type"] = rule.get("block_type", "list")
     else:
         # Файл не описан в правилах — помечаем как unclassified
         entry = {
@@ -516,6 +521,7 @@ def build_entry(file_path: Path, rel_path: str, kb_dir: Path) -> dict[str, Any]:
             "intents": [],
             "status": "unclassified",
             "note": "Файл не найден в FILE_RULES — проверь и добавь вручную",
+            "block_type": "list",  # по умолчанию список
         }
     return entry
 
