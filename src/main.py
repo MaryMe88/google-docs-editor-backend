@@ -599,21 +599,47 @@ _MARKER_REPORT = re.compile(r"={2,}\s*ОТЧЁТ\s*={2,}", re.IGNORECASE)
 
 
 def _parse_text_and_report(raw: str) -> Tuple[str, Optional[str]]:
-    parts_by_text = _MARKER_TEXT.split(raw, maxsplit=1)
-    if len(parts_by_text) < 2:
+    """Разбирает ответ LLM на отредактированный текст и отчёт.
+
+    Поддерживает оба порядка маркеров:
+    - штатный ``===ТЕКСТ=== ... ===ОТЧЁТ=== ...``;
+    - перевёрнутый ``===ОТЧЁТ=== ... ===ТЕКСТ=== ...`` (модель иногда путает
+      порядок) — в этом случае отчёт больше не теряется молча.
+
+    Если маркер ТЕКСТ отсутствует, весь ответ возвращается как текст.
+    """
+    text_match = _MARKER_TEXT.search(raw)
+    report_match = _MARKER_REPORT.search(raw)
+
+    if text_match is None:
         logger.warning(
             "Маркер ТЕКСТ не найден в ответе LLM. "
             "Возвращаем весь ответ как текст. Длина: %d символов", len(raw)
         )
         return raw.strip(), None
 
-    after_text_marker = parts_by_text[1]
-    parts_by_report = _MARKER_REPORT.split(after_text_marker, maxsplit=1)
+    # Отчёта нет вовсе — всё после маркера ТЕКСТ считаем текстом.
+    if report_match is None:
+        edited_text = raw[text_match.end():].strip()
+        if not edited_text:
+            logger.warning("Блок ТЕКСТ найден, но содержимое пустое.")
+        return edited_text, None
 
-    edited_text = parts_by_report[0].strip()
-    report = parts_by_report[1].strip() if len(parts_by_report) > 1 else None
+    # Оба маркера есть — определяем порядок по позиции в строке.
+    if text_match.start() < report_match.start():
+        # Штатный порядок: ТЕКСТ ... ОТЧЁТ ...
+        edited_text = raw[text_match.end():report_match.start()].strip()
+        report = raw[report_match.end():].strip()
+    else:
+        # Перевёрнутый порядок: ОТЧЁТ ... ТЕКСТ ...
+        logger.warning(
+            "Маркеры ТЕКСТ/ОТЧЁТ идут в перевёрнутом порядке — "
+            "разбираем с учётом этого, отчёт сохраняется."
+        )
+        edited_text = raw[text_match.end():].strip()
+        report = raw[report_match.end():text_match.start()].strip()
 
     if not edited_text:
         logger.warning("Блок ТЕКСТ найден, но содержимое пустое.")
 
-    return edited_text, report
+    return edited_text, (report or None)
