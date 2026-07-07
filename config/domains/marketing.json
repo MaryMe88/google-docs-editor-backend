@@ -1,3 +1,4 @@
+// marketing.json
 {
   "name": "marketing",
   "edit_level": "remake",
@@ -7,5 +8,18 @@
   "system_rules": "Домен: маркетинговые тексты. Цель — ясный, честный и убедительный текст, который помогает достигать маркетинговых целей (лиды, заявки, продажи, удержание). Фокус на выгодах для читателя и решаемых задачах.",
   "tone": "Профессиональный, уверенный, человеческий. Простые слова, логичная структура, без агрессивных продаж и без манипуляций.",
   "allow_storytelling": true,
-  "allow_marketing": true
+  "allow_marketing": true,
+  "kb_limits": {
+    "grammar": 6,
+    "style": 8,
+    "logic": 6,
+    "editorial": 4,
+    "composition": 6,
+    "local_cohesion": 4,
+    "composition_errors": 4,
+    "nkrj": 0,
+    "rhetoric": 8,
+    "storytelling": 8,
+    "marketing": 10
+  }
 }

@@ -1,3 +1,4 @@
+// nora_gal_soft.json
 {
   "name": "nora_gal_soft",
   "edit_level": "processing",
@@ -5,5 +6,18 @@
   "system_rules": "Домен: стилистическая правка в духе Норы Галь. Цель — улучшать ясность, естественность и живость текста без радикальной переработки. Убирать канцелярит, штампы, кальки, тяжеловесные обороты и лишние слова. Предпочитать простую, точную и естественную русскую фразу. Сохранять смысл, тон автора и удачные особенности исходного текста.",
   "tone": "Спокойный, бережный, точный, человеческий.",
   "allow_storytelling": false,
-  "allow_marketing": false
+  "allow_marketing": false,
+  "kb_limits": {
+    "grammar": 6,
+    "style": 8,
+    "logic": 4,
+    "editorial": 6,
+    "composition": 4,
+    "local_cohesion": 2,
+    "composition_errors": 2,
+    "nkrj": 4,
+    "rhetoric": 0,
+    "storytelling": 0,
+    "marketing": 0
+  }
 }

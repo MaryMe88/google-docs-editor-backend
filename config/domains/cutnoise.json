@@ -1,3 +1,4 @@
+// cutnoise.json
 {
   "name": "cutnoise",
   "edit_level": "reduction",
@@ -34,5 +35,18 @@
   "system_rules": "Сначала проверь список protected_connectors. Слова из него не трогать никогда. Затем очищай текст от мусора: убирай пустые усилители ('очень', 'максимально', 'совершенно', 'невероятно'), пустые вводные конструкции без смысловой нагрузки ('как известно', 'следует отметить', 'необходимо подчеркнуть'), штампы и ничем не подтверждённые оценки — заменяй их фактами.",
   "tone": "Нейтральный, точный. Авторский ритм сохраняется.",
   "allow_storytelling": false,
-  "allow_marketing": false
+  "allow_marketing": false,
+  "kb_limits": {
+    "grammar": 6,
+    "style": 10,
+    "logic": 0,
+    "editorial": 0,
+    "composition": 0,
+    "local_cohesion": 0,
+    "composition_errors": 0,
+    "nkrj": 0,
+    "rhetoric": 0,
+    "storytelling": 0,
+    "marketing": 0
+  }
 }

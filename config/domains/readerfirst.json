@@ -1,3 +1,4 @@
+// readerfirst.json
 {
   "name": "readerfirst",
   "edit_level": "processing",
@@ -5,5 +6,18 @@
   "system_rules": "Переписывай текст с позиции читателя: убирай лишнее, усиливай пользу, конкретизируй аудиторию и добавляй понятный следующий шаг.",
   "tone": "Прямой, конкретный, полезный. Без абстракций и самовыражения.",
   "allow_storytelling": false,
-  "allow_marketing": false
+  "allow_marketing": false,
+  "kb_limits": {
+    "grammar": 6,
+    "style": 10,
+    "logic": 6,
+    "editorial": 6,
+    "composition": 6,
+    "local_cohesion": 4,
+    "composition_errors": 4,
+    "nkrj": 0,
+    "rhetoric": 0,
+    "storytelling": 0,
+    "marketing": 0
+  }
 }

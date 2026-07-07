@@ -9,5 +9,18 @@
   "system_rules": "Реорганизуй структуру текста согласно значению restructure_depth. При 'moderate': главная мысль — в начало, один абзац — одна тема, первое предложение абзаца — тезис, причины и основания — после вывода. При 'light': только перестановка предложений внутри абзаца. При 'full': допустимо полное переписывание структуры. При 'none': структуру не трогать вообще — только стилистика.",
   "tone": "Структурированный, ясный. Читатель должен понять суть по первым предложениям абзацев.",
   "allow_storytelling": false,
-  "allow_marketing": false
+  "allow_marketing": false,
+  "kb_limits": {
+    "grammar": 4,
+    "style": 6,
+    "logic": 8,
+    "editorial": 4,
+    "composition": 10,
+    "local_cohesion": 8,
+    "composition_errors": 8,
+    "nkrj": 3,
+    "rhetoric": 0,
+    "storytelling": 0,
+    "marketing": 0
+  }
 }

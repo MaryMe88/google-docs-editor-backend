@@ -1,3 +1,4 @@
+// makeclear.json
 {
   "name": "makeclear",
   "edit_level": "reduction",
@@ -5,5 +6,18 @@
   "system_rules": "Перестраивай предложения: глаголы вместо отглагольных существительных, действительный залог вместо страдательного, субъект в начало, одна мысль — одно предложение.",
   "tone": "Живой, прямой, активный. Формула: человек + делает + так.",
   "allow_storytelling": true,
-  "allow_marketing": true
+  "allow_marketing": true,
+  "kb_limits": {
+    "grammar": 6,
+    "style": 10,
+    "logic": 4,
+    "editorial": 4,
+    "composition": 6,
+    "local_cohesion": 4,
+    "composition_errors": 2,
+    "nkrj": 0,
+    "rhetoric": 2,
+    "storytelling": 4,
+    "marketing": 4
+  }
 }
