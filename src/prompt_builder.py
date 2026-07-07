@@ -64,7 +64,7 @@ _DEFAULT_DOMAIN_CONFIG: DomainConfig = DomainConfig(
     tasks=(),
     constraints=(),
     ip_ceiling=None,
-    kb_limits={},  # добавлено
+    kb_limits={},
 )
 
 def _make_default_overlay_config(name: str) -> OverlayConfig:
@@ -263,7 +263,7 @@ def load_domain_config(
         tasks=tuple(t for t in raw_tasks if isinstance(t, str)),
         constraints=tuple(c for c in raw_constraints if isinstance(c, str)),
         ip_ceiling=domain_ip_ceiling,
-        kb_limits=kb_limits,  # добавлено
+        kb_limits=kb_limits,
     )
 
 
@@ -1120,17 +1120,19 @@ class PromptBuilder:
     def _merge_domain_limits(self, domain_config: DomainConfig) -> LimitsConfig:
         """
         Возвращает LimitsConfig с переопределениями из kb_limits домена.
+        Поддерживает оба варианта ключа для cohesion: "cohesion" (предпочтительно)
+        и "local_cohesion" (для обратной совместимости).
         """
         overrides = domain_config.kb_limits or {}
-        # Маппинг имён: ключи в JSON -> имена полей в LimitsConfig
-        # Важно: local_cohesion -> cohesion, composition_errors -> composition_errors
         base = self._limits
+
         return LimitsConfig(
             grammar=overrides.get("grammar", base.grammar),
             style=overrides.get("style", base.style),
             logic=overrides.get("logic", base.logic),
             composition=overrides.get("composition", base.composition),
-            cohesion=overrides.get("local_cohesion", base.cohesion),
+            # Поддержка обоих ключей для cohesion
+            cohesion=overrides.get("cohesion", overrides.get("local_cohesion", base.cohesion)),
             composition_errors=overrides.get("composition_errors", base.composition_errors),
             storytelling=overrides.get("storytelling", base.storytelling),
             marketing=overrides.get("marketing", base.marketing),
