@@ -34,7 +34,7 @@
     {
       "file": "editorial_techniques/anti_ai_techniques.json",
       "subfolder": "editorial_techniques",
-      "size_kb": 40.4,
+      "size_kb": 52.8,
       "stage": "deai_cleanup",
       "priority": 1,
       "load_mode": "always",
@@ -93,7 +93,7 @@
     {
       "file": "stylistic_issues/anti_ai_patterns.json",
       "subfolder": "stylistic_issues",
-      "size_kb": 20.9,
+      "size_kb": 24.4,
       "stage": "deai_cleanup",
       "priority": 1,
       "load_mode": "always",
@@ -907,7 +907,7 @@
       "size_kb": 17.7,
       "stage": "overlay_storytelling",
       "priority": 9,
-      "load_mode": "by_intent",
+      "load_mode": "by_tags",
       "budget_weight": "medium",
       "tags": [
         "storytelling",
@@ -915,12 +915,7 @@
         "structure",
         "macro_structure"
       ],
-      "intents": [
-        "storytelling",
-        "narrative",
-        "blog",
-        "creative"
-      ],
+      "intents": [],
       "status": "active",
       "note": "",
       "block_name": "storytelling_frameworks",
@@ -932,7 +927,7 @@
       "size_kb": 25.2,
       "stage": "overlay_storytelling",
       "priority": 9,
-      "load_mode": "by_intent",
+      "load_mode": "by_tags",
       "budget_weight": "medium",
       "tags": [
         "storytelling",
@@ -940,11 +935,7 @@
         "show_not_tell",
         "suspense"
       ],
-      "intents": [
-        "storytelling",
-        "narrative",
-        "creative"
-      ],
+      "intents": [],
       "status": "active",
       "note": "",
       "block_name": "storytelling_frameworks",

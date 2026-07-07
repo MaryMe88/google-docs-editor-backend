@@ -8,6 +8,7 @@
   "frameworks": [
     {
       "id": "aida",
+      "tags": ["storytelling", "narrative", "engagement", "structure"],
       "name": "AIDA",
       "description": "Универсальная композиционная схема: провести читателя от первого внимания к ясному завершению и действию. Применимо в маркетинге, нелитературном нон-фикшне, блогах. В художественной прозе и эссе — по желанию.",
       "level": "macro_structure",
@@ -49,6 +50,7 @@
     },
     {
       "id": "pas",
+      "tags": ["storytelling", "narrative", "engagement", "structure"],
       "name": "Problem–Agitate–Solution",
       "description": "Схема для текстов, где важно показать проблему, обострить её и предложить решение. Особенно эффективна в маркетинге и email-рассылках. В чисто информационных текстах использовать осторожно, чтобы не перегружать эмоциями.",
       "level": "macro_structure",
@@ -83,6 +85,7 @@
     },
     {
       "id": "star_story_solution",
+      "tags": ["storytelling", "narrative", "engagement", "structure"],
       "name": "Star–Story–Solution",
       "description": "Фреймворк для историй и кейсов: герой, его путь и изменение, которое с ним произошло. Подходит для кейсов клиентов, эссе, публичных выступлений.",
       "level": "macro_structure",
@@ -118,6 +121,7 @@
     },
     {
       "id": "before_after_bridge",
+      "tags": ["storytelling", "narrative", "engagement", "structure"],
       "name": "Before–After–Bridge",
       "description": "Короткая структура для объяснения изменений: было, стало и что между этим. Хорошо работает в лендингах, презентациях, коротких постах.",
       "level": "macro_structure",
@@ -152,6 +156,7 @@
     },
     {
       "id": "three_act_structure",
+      "tags": ["storytelling", "narrative", "engagement", "structure"],
       "name": "Трёхактная структура",
       "description": "Классический способ строить истории: завязка, развитие конфликта и развязка. Подходит для художественной прозы, эссе, сторителлинга в блогах. В сугубо деловых текстах может быть избыточна.",
       "level": "macro_structure",
@@ -187,6 +192,7 @@
     },
     {
       "id": "zinsser_structure",
+      "tags": ["storytelling", "narrative", "engagement", "structure"],
       "name": "Структура текста (по Уильяму Зинсеру)",
       "description": "Принципы построения текста, которые помогают читателю легко следовать за мыслью автора: от сильного начала до логичных переходов. Применимо в нон-фикшене, журналистике, блогах.",
       "level": "macro_structure",
