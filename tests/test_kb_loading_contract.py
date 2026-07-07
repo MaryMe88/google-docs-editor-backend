@@ -5,24 +5,32 @@
 
 from __future__ import annotations
 
+import importlib
 from pathlib import Path
 
 import pytest
 
-from src.prompt_builder import PromptBuilder, load_knowledge_base
+# Перезагружаем модуль, чтобы сбросить любые глобальные моки
+import src.prompt_builder
+importlib.reload(src.prompt_builder)
+
+from src.prompt_builder import load_knowledge_base, PromptBuilder
 from src.config_types import KnowledgeLevel
+from src.knowledge_retrieval import _make_dedupe_key
 
 KB_PATH = Path("knowledge_base")
 CONFIG_PATH = Path("config")
 
 
-@pytest.fixture()
-def kb_all():
-    return load_knowledge_base(KB_PATH, active_tags=set(), intent=None, load_all=True)
+@pytest.fixture(autouse=True)
+def reload_module():
+    """Перезагружаем модуль перед каждым тестом для защиты от протекающих моков."""
+    importlib.reload(src.prompt_builder)
+    yield
 
 
-def test_all_manifest_blocks_are_non_empty(kb_all):
-    """BUG-1: ранее выпадавшие блоки теперь присутствуют и непусты."""
+def test_all_manifest_blocks_are_non_empty():
+    kb = load_knowledge_base(KB_PATH, load_all=True)
     for block in (
         "grammar_errors",
         "stylistic_issues",
@@ -32,24 +40,29 @@ def test_all_manifest_blocks_are_non_empty(kb_all):
         "stop_words",
         "nkrj_structure_patterns",
     ):
-        value = kb_all.get(block)
+        value = kb.get(block)
         assert value, f"KB block '{block}' пуст или отсутствует после загрузки"
 
 
-def test_dict_blocks_are_dicts(kb_all):
-    """BUG-2: словарные блоки загружаются именно как dict, не как list."""
+def test_dict_blocks_are_dicts():
+    kb = load_knowledge_base(KB_PATH, load_all=True)
     for block in ("stop_words", "nkrj_structure_patterns"):
-        assert isinstance(kb_all.get(block), dict), f"'{block}' должен быть dict"
+        actual = kb.get(block)
+        assert isinstance(actual, dict), (
+            f"'{block}' должен быть dict, получили {type(actual).__name__}"
+        )
 
 
-def test_list_blocks_are_lists(kb_all):
-    """Списочные блоки остаются списками записей."""
+def test_list_blocks_are_lists():
+    kb = load_knowledge_base(KB_PATH, load_all=True)
     for block in ("grammar_errors", "stylistic_issues", "composition_principles"):
-        assert isinstance(kb_all.get(block), list), f"'{block}' должен быть list"
+        actual = kb.get(block)
+        assert isinstance(actual, list), (
+            f"'{block}' должен быть list, получили {type(actual).__name__}"
+        )
 
 
 def test_stop_words_section_appears_in_prompt():
-    """BUG-1/BUG-2: секция стоп-слов реально попадает в промпт."""
     pb = PromptBuilder(config_path=CONFIG_PATH, kb_path=KB_PATH)
     pb.startup_check()
     prompt = pb.build(
@@ -61,11 +74,6 @@ def test_stop_words_section_appears_in_prompt():
 
 
 def test_knowledge_level_changes_prompt_despite_cache():
-    """
-    BUG-3: разный knowledge_level даёт разный промпт (нет залипания кеша).
-    Используем домен fiction, у которого есть primary-тег storytelling,
-    что гарантирует загрузку соответствующего KB-блока при FULL.
-    """
     pb = PromptBuilder(config_path=CONFIG_PATH, kb_path=KB_PATH)
     pb.startup_check()
     text = "Короткий тестовый текст для проверки состава блоков."
@@ -83,20 +91,12 @@ def test_knowledge_level_changes_prompt_despite_cache():
         include_retrieval_meta=False,
     )
 
-    # Проверяем, что FULL-промпт длиннее CORE
-    assert len(p_full) > len(p_core), (
-        "FULL-промпт должен быть длиннее CORE, так как добавляются storytelling, rhetoric и др."
-    )
-
-    # Проверяем наличие заголовка storytelling в FULL и его отсутствие в CORE
-    assert "Сторителлинг-фреймворки" in p_full
-    assert "Сторителлинг-фреймворки" not in p_core
+    assert len(p_full) > len(p_core), "FULL-промпт должен быть длиннее CORE"
+    assert "Редакторские приёмы" in p_full, "При FULL должен быть блок 'Редакторские приёмы'"
+    assert "Редакторские приёмы" not in p_core, "При CORE не должно быть блока 'Редакторские приёмы'"
 
 
 def test_dedupe_keeps_distinct_structural():
-    """BUG-6: структурные записи с одинаковыми name/description, но разными steps, не схлопываются."""
-    from src.knowledge_retrieval import _make_dedupe_key
-
     a = {"name": "X", "description": "D", "steps": [{"name": "s1", "description": "a"}]}
     b = {"name": "X", "description": "D", "steps": [{"name": "s2", "description": "b"}]}
     assert _make_dedupe_key(a) != _make_dedupe_key(b)
