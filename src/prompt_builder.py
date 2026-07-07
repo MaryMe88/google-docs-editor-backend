@@ -64,6 +64,7 @@ _DEFAULT_DOMAIN_CONFIG: DomainConfig = DomainConfig(
     tasks=(),
     constraints=(),
     ip_ceiling=None,
+    kb_limits={},  # добавлено
 )
 
 def _make_default_overlay_config(name: str) -> OverlayConfig:
@@ -220,7 +221,7 @@ def load_core_config(base_path: Path = Path("config")) -> CoreConfig:
 
 
 # ============================================================================
-# ИЗМЕНЕНИЕ 2.2
+# ИЗМЕНЕНИЕ 2.2 + чтение kb_limits
 # ============================================================================
 def load_domain_config(
     domain: str,
@@ -244,6 +245,15 @@ def load_domain_config(
         domain_ip_ceiling = float(raw_ip)
     elif isinstance(raw_ip, dict):
         domain_ip_ceiling = float(raw_ip.get("value", 2.5))
+
+    # Читаем kb_limits из JSON
+    raw_kb_limits = data.get("kb_limits", {})
+    kb_limits: Dict[str, int] = {}
+    if isinstance(raw_kb_limits, dict):
+        for k, v in raw_kb_limits.items():
+            if isinstance(k, str) and isinstance(v, (int, float)):
+                kb_limits[k] = int(v)
+
     return DomainConfig(
         name=data.get("name", normalized_domain),
         system_rules=data.get("system_rules", ""),
@@ -253,6 +263,7 @@ def load_domain_config(
         tasks=tuple(t for t in raw_tasks if isinstance(t, str)),
         constraints=tuple(c for c in raw_constraints if isinstance(c, str)),
         ip_ceiling=domain_ip_ceiling,
+        kb_limits=kb_limits,  # добавлено
     )
 
 
@@ -1104,6 +1115,41 @@ class PromptBuilder:
         )
 
     # ------------------------------------------------------------------
+    # Слияние глобальных и доменных лимитов
+    # ------------------------------------------------------------------
+    def _merge_domain_limits(self, domain_config: DomainConfig) -> LimitsConfig:
+        """
+        Возвращает LimitsConfig с переопределениями из kb_limits домена.
+        """
+        overrides = domain_config.kb_limits or {}
+        # Маппинг имён: ключи в JSON -> имена полей в LimitsConfig
+        # Важно: local_cohesion -> cohesion, composition_errors -> composition_errors
+        base = self._limits
+        return LimitsConfig(
+            grammar=overrides.get("grammar", base.grammar),
+            style=overrides.get("style", base.style),
+            logic=overrides.get("logic", base.logic),
+            composition=overrides.get("composition", base.composition),
+            cohesion=overrides.get("local_cohesion", base.cohesion),
+            composition_errors=overrides.get("composition_errors", base.composition_errors),
+            storytelling=overrides.get("storytelling", base.storytelling),
+            marketing=overrides.get("marketing", base.marketing),
+            rhetoric=overrides.get("rhetoric", base.rhetoric),
+            editorial=overrides.get("editorial", base.editorial),
+            glossary=overrides.get("glossary", base.glossary),
+            stop_words_category=overrides.get("stop_words", base.stop_words_category),
+            nkrj=overrides.get("nkrj", base.nkrj),
+            # candidates и stop_words_items остаются как в базе
+            grammar_candidates=base.grammar_candidates,
+            style_candidates=base.style_candidates,
+            logic_candidates=base.logic_candidates,
+            storytelling_candidates=base.storytelling_candidates,
+            marketing_candidates=base.marketing_candidates,
+            rhetoric_candidates=base.rhetoric_candidates,
+            stop_words_items=base.stop_words_items,
+        )
+
+    # ------------------------------------------------------------------
     # _build_knowledge_block — версия с реестром и кешем (исправлено BUG-3)
     # ------------------------------------------------------------------
     def _build_knowledge_block(
@@ -1387,8 +1433,10 @@ class PromptBuilder:
                 validated_intent,
                 validated_overlays,
             )
+            # ---- КЛЮЧЕВОЕ ИЗМЕНЕНИЕ: применяем доменные лимиты ----
+            effective_limits = self._merge_domain_limits(domain_config)
             budget = KnowledgeBudgetManager(token_budget).allocate(
-                limits=self._limits,
+                limits=effective_limits,
                 level=knowledge_level,
             )
             if not domain_config.allow_storytelling:

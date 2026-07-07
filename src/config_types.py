@@ -116,6 +116,8 @@ class DomainConfig:
     tasks: tuple = field(default_factory=tuple)          # добавлено
     constraints: tuple = field(default_factory=tuple)    # добавлено
     ip_ceiling: Optional[float] = None                   # добавлено
+    # НОВОЕ: переопределения лимитов для KB-блоков
+    kb_limits: Dict[str, int] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -221,6 +223,7 @@ class LimitsConfig:
     glossary: int = 10
     stop_words_category: int = 8
     stop_words_items: int = 5
+    nkrj: int = 4  # НОВОЕ: лимит для блока nkrj (глобальный дефолт)
 
     grammar_candidates: Optional[int] = None
     style_candidates: Optional[int] = None
@@ -473,7 +476,8 @@ class KnowledgeBudgetManager:
                 "editorial": _blk("editorial", limits.editorial),
                 "glossary": _blk("glossary", limits.glossary),
                 "stop_words": _blk("stop_words", limits.stop_words_category),
-                "nkrj": _blk("nkrj", 0),
+                # ИСПРАВЛЕНО: используем limits.nkrj вместо 0
+                "nkrj": _blk("nkrj", limits.nkrj),
             }
         )
 
