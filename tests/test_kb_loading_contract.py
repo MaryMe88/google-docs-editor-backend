@@ -61,13 +61,36 @@ def test_stop_words_section_appears_in_prompt():
 
 
 def test_knowledge_level_changes_prompt_despite_cache():
-    """BUG-3: разный knowledge_level даёт разный промпт (нет залипания кеша)."""
+    """
+    BUG-3: разный knowledge_level даёт разный промпт (нет залипания кеша).
+    Используем домен fiction, у которого есть primary-тег storytelling,
+    что гарантирует загрузку соответствующего KB-блока при FULL.
+    """
     pb = PromptBuilder(config_path=CONFIG_PATH, kb_path=KB_PATH)
     pb.startup_check()
     text = "Короткий тестовый текст для проверки состава блоков."
-    p_full = pb.build(text=text, domain="basic_edit", knowledge_level=KnowledgeLevel.FULL)
-    p_core = pb.build(text=text, domain="basic_edit", knowledge_level=KnowledgeLevel.CORE)
-    assert len(p_full) != len(p_core)
+
+    p_core = pb.build(
+        text=text,
+        domain="fiction",
+        knowledge_level=KnowledgeLevel.CORE,
+        include_retrieval_meta=False,
+    )
+    p_full = pb.build(
+        text=text,
+        domain="fiction",
+        knowledge_level=KnowledgeLevel.FULL,
+        include_retrieval_meta=False,
+    )
+
+    # Проверяем, что FULL-промпт длиннее CORE
+    assert len(p_full) > len(p_core), (
+        "FULL-промпт должен быть длиннее CORE, так как добавляются storytelling, rhetoric и др."
+    )
+
+    # Проверяем наличие заголовка storytelling в FULL и его отсутствие в CORE
+    assert "Сторителлинг-фреймворки" in p_full
+    assert "Сторителлинг-фреймворки" not in p_core
 
 
 def test_dedupe_keeps_distinct_structural():
