@@ -48,9 +48,22 @@ from src.shared_contracts import (
     ALLOWED_OVERLAYS,
 )
 from src.tag_registry import normalize_tag, normalize_tags
-from src.kb_manifest_loader import load_manifest, select_files_for_request
+from src.kb_manifest_loader import load_manifest, select_files_for_request, ManifestEntry  # <-- добавлен импорт
 
 logger = logging.getLogger(__name__)
+
+# ---------------------------------------------------------------------------
+# Константы для валидации kb_limits (BUG‑C + BUG‑D)
+# ---------------------------------------------------------------------------
+ALLOWED_KB_LIMIT_KEYS: frozenset = frozenset({
+    "grammar", "style", "logic", "composition", "cohesion", "local_cohesion",
+    "composition_errors", "storytelling", "marketing", "rhetoric", "editorial",
+    "glossary", "stop_words", "stop_words_items", "nkrj",
+    "grammar_candidates", "style_candidates", "logic_candidates",
+    "storytelling_candidates", "marketing_candidates", "rhetoric_candidates",
+})
+KB_LIMIT_MIN: int = 1
+KB_LIMIT_MAX: int = 100
 
 # ---------------------------------------------------------------------------
 # Дефолтные конфиги — используются если файл на диске не найден (Уровень 2)
@@ -221,7 +234,7 @@ def load_core_config(base_path: Path = Path("config")) -> CoreConfig:
 
 
 # ============================================================================
-# ИЗМЕНЕНИЕ 2.2 + чтение kb_limits
+# ИЗМЕНЕНИЕ 2.2 + чтение kb_limits с валидацией (BUG‑C + BUG‑D)
 # ============================================================================
 def load_domain_config(
     domain: str,
@@ -246,13 +259,39 @@ def load_domain_config(
     elif isinstance(raw_ip, dict):
         domain_ip_ceiling = float(raw_ip.get("value", 2.5))
 
-    # Читаем kb_limits из JSON
+    # Читаем kb_limits из JSON с валидацией (BUG‑C + BUG‑D)
     raw_kb_limits = data.get("kb_limits", {})
     kb_limits: Dict[str, int] = {}
     if isinstance(raw_kb_limits, dict):
+        domain_name = data.get("name", normalized_domain)
         for k, v in raw_kb_limits.items():
-            if isinstance(k, str) and isinstance(v, (int, float)):
-                kb_limits[k] = int(v)
+            if not isinstance(k, str):
+                logger.warning(
+                    "kb_limits[%r] в домене '%s': ключ не строка — пропущен",
+                    k, domain_name
+                )
+                continue
+            if k not in ALLOWED_KB_LIMIT_KEYS:
+                logger.warning(
+                    "kb_limits: неизвестный ключ '%s' в домене '%s' — проигнорирован. "
+                    "Допустимые: %s",
+                    k, domain_name, ", ".join(sorted(ALLOWED_KB_LIMIT_KEYS))
+                )
+                continue
+            if not isinstance(v, (int, float)) or isinstance(v, bool):
+                logger.warning(
+                    "kb_limits['%s'] в домене '%s': значение %r не число — пропущено",
+                    k, domain_name, v
+                )
+                continue
+            value = int(v)
+            clamped = max(KB_LIMIT_MIN, min(KB_LIMIT_MAX, value))
+            if clamped != value:
+                logger.warning(
+                    "kb_limits['%s']=%d в домене '%s' вне диапазона [%d, %d] — приведено к %d",
+                    k, value, domain_name, KB_LIMIT_MIN, KB_LIMIT_MAX, clamped
+                )
+            kb_limits[k] = clamped
 
     return DomainConfig(
         name=data.get("name", normalized_domain),
@@ -462,7 +501,32 @@ def load_knowledge_base(
     """
     manifest = load_manifest(kb_path / "kb_manifest.json")
     if load_all:
-        selected = list(manifest)
+        if manifest:
+            selected = list(manifest)
+        else:
+            # Fallback: все JSON-файлы из kb_path (для тестов без манифеста)
+            selected = []
+            for json_path in kb_path.rglob("*.json"):
+                rel_path = json_path.relative_to(kb_path)
+                stem = json_path.stem
+                # Определяем тип блока по имени файла
+                if stem in ("stop_words", "nkrj_structure_patterns", "domain_glossary"):
+                    block_type = "dict"
+                else:
+                    block_type = "list"
+                entry = ManifestEntry(
+                    file=str(rel_path),
+                    stage="default",
+                    load_mode="always",
+                    tags=[],
+                    intents=[],
+                    budget_weight="medium",
+                    status="active",
+                    priority=99,
+                    block_name=None,
+                    block_type=block_type,
+                )
+                selected.append(entry)
     else:
         selected = select_files_for_request(manifest, active_tags or set(), intent)
 
@@ -1115,7 +1179,7 @@ class PromptBuilder:
         )
 
     # ------------------------------------------------------------------
-    # Слияние глобальных и доменных лимитов
+    # Слияние глобальных и доменных лимитов (BUG‑B: теперь переопределяет все поля)
     # ------------------------------------------------------------------
     def _merge_domain_limits(self, domain_config: DomainConfig) -> LimitsConfig:
         """
@@ -1131,7 +1195,6 @@ class PromptBuilder:
             style=overrides.get("style", base.style),
             logic=overrides.get("logic", base.logic),
             composition=overrides.get("composition", base.composition),
-            # Поддержка обоих ключей для cohesion
             cohesion=overrides.get("cohesion", overrides.get("local_cohesion", base.cohesion)),
             composition_errors=overrides.get("composition_errors", base.composition_errors),
             storytelling=overrides.get("storytelling", base.storytelling),
@@ -1140,19 +1203,18 @@ class PromptBuilder:
             editorial=overrides.get("editorial", base.editorial),
             glossary=overrides.get("glossary", base.glossary),
             stop_words_category=overrides.get("stop_words", base.stop_words_category),
+            stop_words_items=overrides.get("stop_words_items", base.stop_words_items),
             nkrj=overrides.get("nkrj", base.nkrj),
-            # candidates и stop_words_items остаются как в базе
-            grammar_candidates=base.grammar_candidates,
-            style_candidates=base.style_candidates,
-            logic_candidates=base.logic_candidates,
-            storytelling_candidates=base.storytelling_candidates,
-            marketing_candidates=base.marketing_candidates,
-            rhetoric_candidates=base.rhetoric_candidates,
-            stop_words_items=base.stop_words_items,
+            grammar_candidates=overrides.get("grammar_candidates", base.grammar_candidates),
+            style_candidates=overrides.get("style_candidates", base.style_candidates),
+            logic_candidates=overrides.get("logic_candidates", base.logic_candidates),
+            storytelling_candidates=overrides.get("storytelling_candidates", base.storytelling_candidates),
+            marketing_candidates=overrides.get("marketing_candidates", base.marketing_candidates),
+            rhetoric_candidates=overrides.get("rhetoric_candidates", base.rhetoric_candidates),
         )
 
     # ------------------------------------------------------------------
-    # _build_knowledge_block — версия с реестром и кешем (исправлено BUG-3)
+    # _build_knowledge_block — версия с реестром и кешем, принимает limits (BUG‑A)
     # ------------------------------------------------------------------
     def _build_knowledge_block(
         self,
@@ -1166,7 +1228,11 @@ class PromptBuilder:
         include_few_shot: bool,
         total_few_shot_used: int,
         few_shot_seed: Optional[int] = None,
+        limits: Optional[LimitsConfig] = None,          # <-- добавлено
     ) -> Tuple[str, Dict[str, Any], int]:
+        # Эффективные лимиты: доменные переопределения, иначе базовые.
+        effective_limits = limits if limits is not None else self._limits
+
         # KnowledgeBase зависит только от primary_tags и intent (аргументы loader'а).
         # Фиксируем intent явно в ключе и инвалидируем кеш по mtime ВСЕХ файлов KB,
         # чтобы правка отдельного файла сбрасывала кеш.
@@ -1190,19 +1256,19 @@ class PromptBuilder:
         meta: Dict[str, Any] = {}
         current_total = total_few_shot_used
 
-        # Стоп-слова
+        # Стоп-слова — используем effective_limits
         stop_words_budget = budget.get("stop_words")
         if stop_words_budget and stop_words_budget.enabled:
             stop_words = kb.get("stop_words", {})
             if stop_words:
                 lines.append("Стоп-слова и нежелательные формулировки:")
-                category_limit = stop_words_budget.entry_limit or self._limits.stop_words_category
+                category_limit = stop_words_budget.entry_limit or effective_limits.stop_words_category
                 for category, words in list(stop_words.items())[:category_limit]:
                     if isinstance(words, list) and words:
-                        joined = ", ".join(str(w) for w in words[:self._limits.stop_words_items])
+                        joined = ", ".join(str(w) for w in words[:effective_limits.stop_words_items])
                         lines.append(f"- {category}: {joined}")
 
-        # Основные блоки через реестр
+        # Основные блоки через реестр — передаём effective_limits в _process_kb_block
         for block_cfg in KB_BLOCK_REGISTRY:
             block_budget = budget.get(block_cfg.budget_key)
             if not (block_budget and block_budget.enabled):
@@ -1224,7 +1290,7 @@ class PromptBuilder:
                 overlays=overlays,
                 include_few_shot=include_few_shot,
                 total_few_shot_used=current_total,
-                limits=self._limits,
+                limits=effective_limits,          # <-- было self._limits
                 few_shot_seed=few_shot_seed,
             )
 
@@ -1459,6 +1525,7 @@ class PromptBuilder:
                 include_few_shot=include_few_shot,
                 total_few_shot_used=0,
                 few_shot_seed=effective_seed,
+                limits=effective_limits,          # <-- добавлено
             )
             retrieval_meta_total = block_meta
             if knowledge_block:
