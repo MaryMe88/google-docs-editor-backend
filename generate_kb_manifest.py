@@ -380,23 +380,23 @@ FILE_RULES: dict[str, dict[str, Any]] = {
         "block_name": "editorial_techniques",
     },
 
-    # ── overlays: storytelling (по интенту) ───────────────────────────────
+    # ── overlays: storytelling (по ТЕГАМ, а не по интенту) ────────────────
     "storytelling_macrostructures.json": {
         "stage": "overlay_storytelling",
         "priority": 9,
-        "load_mode": "by_intent",
+        "load_mode": "by_tags",          # ИЗМЕНЕНО: было "by_intent"
         "budget_weight": "medium",
         "tags": ["storytelling", "narrative", "structure", "macro_structure"],
-        "intents": ["storytelling", "narrative", "blog", "creative"],
+        "intents": [],                   # ОЧИЩЕНО: больше не зависит от интента
         "block_name": "storytelling_frameworks",
     },
     "storytelling_microtechniques.json": {
         "stage": "overlay_storytelling",
         "priority": 9,
-        "load_mode": "by_intent",
+        "load_mode": "by_tags",          # ИЗМЕНЕНО: было "by_intent"
         "budget_weight": "medium",
         "tags": ["storytelling", "micro_technique", "show_not_tell", "suspense"],
-        "intents": ["storytelling", "narrative", "creative"],
+        "intents": [],                   # ОЧИЩЕНО
         "block_name": "storytelling_frameworks",
     },
 
