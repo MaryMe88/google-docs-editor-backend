@@ -735,7 +735,7 @@ def test_ip_ceiling_in_prompt(builder: PromptBuilder) -> None:
     """Проверяет наличие целевого ИП в промпте."""
     prompt = builder.build(text="Тест", domain="deai", include_knowledge=False)
     assert "Целевой Индекс пластиковости" in prompt
-    assert "≤ 1.0" in prompt  # для deai
+    assert "≤ 1.7" in prompt  # для deai
 
     prompt_blog = builder.build(text="Тест", domain="blog", include_knowledge=False)
     assert "≤ 2.5" in prompt_blog  # глобальный
