@@ -221,7 +221,7 @@ class LimitsConfig:
     rhetoric: int = 4
     editorial: int = 6
     glossary: int = 10
-    stop_words_category: int = 8
+    stop_words_category: int = 15
     stop_words_items: int = 5
     nkrj: int = 4  # НОВОЕ: лимит для блока nkrj (глобальный дефолт)
 
