@@ -76,6 +76,10 @@ def test_stop_words_structure() -> None:
                 )
 
     for category, value in data.items():
+        # Пропускаем служебные мета-блоки (ключи вида _meta, _version и т.п.)
+        if category.startswith("_"):
+            continue
+
         if isinstance(value, list):
             assert_list_payload(value, category)
         elif isinstance(value, dict):
