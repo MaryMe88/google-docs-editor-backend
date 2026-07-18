@@ -10,6 +10,12 @@
       "primary": ["blog"],
       "expanded": ["nonmarketing", "article", "educational", "genre", "format"]
     },
+    "statya": {
+      "primary": ["statya", "article"],
+      "expanded": ["longform", "composition", "structure", "macrostructure",
+                   "paragraph", "flow", "transitions", "coherence",
+                   "thesis", "draft", "editorial", "nonmarketing"]
+    },
     "deai": {
       "primary": ["deai", "antiai"],
       "expanded": [
@@ -118,6 +124,11 @@
       "primary": ["factcheck"],
       "expanded": ["accuracy", "verification", "factual", "cultural",
                    "terminology", "algorithm", "corpus", "nkrj"]
+    },
+    "audiencesegment": {
+      "primary": ["audience", "audiencesegment"],
+      "expanded": ["reader", "segment", "expertise", "formality",
+                   "register", "engagement", "readability"]
     },
     "infostyle": {
       "primary": ["infostyle", "clarity"],
