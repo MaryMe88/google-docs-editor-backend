@@ -15,7 +15,7 @@
  *     domain   : marketing | blog | deai | basic_edit | logic_edit |
  *                nora_gal | nora_gal_soft | cutnoise | makeclear |
  *                restructure | readerfirst | genre | fiction | composition |
- *                balanced_edit
+ *                balanced_edit | statya
  *     intent   : analytical | marketingpush | storytelling | engagement | (отсутствует)
  *                (все четыре имеют файлы config/intents/*.json с плоским
  *                 списком инструкций; noragal/deai как intent всё ещё дают 500 —
@@ -259,8 +259,8 @@ const MENU_GROUP_TITLES = {
  * SECTION: MODES
  *
  * Поля:
- *   domain      — ТОЛЬКО 'marketing' | 'blog' | 'deai'
- *   intent      — ТОЛЬКО 'storytelling' или null
+ *   domain      — домен backend (config/domains/*.json)
+ *   intent      — ТОЛЬКО 'analytical' | 'marketingpush' | 'storytelling' | 'engagement' | 'neutral' | null
  *   overlays    — массив overlay-тегов (несут жанровую/стилевую специфику)
  *                 'base'      — нейтральный, без стилевого уклона
  *                 'infostyle' — информационный деловой стиль
@@ -338,6 +338,26 @@ const MODE_CONFIG = {
     overlays: ['base'],      // base: вовлечённость — живой стиль, деловой уклон мешает
     temperature: 0.65,
     handler: 'editSelection_blog_engagement'
+  },
+
+
+
+
+  statya_article: {
+    menu: 'Статья (черновик)',
+    group: 'blog',
+    order: 30,
+    domain: 'statya',        // реальный файл config/domains/statya.json
+    intent: 'analytical',    // файл config/intents/analytical.json
+    overlays: ['infostyle', 'audiencesegment'], // инфостиль + адаптация под сегмент аудитории
+    temperature: 0.35,
+    audience: {
+      kind: 'custom',
+      expertise: 'novice',
+      formality: 'neutral',
+      description: 'Читатель статьи, который входит в тему и хочет ясное объяснение без маркетингового давления'
+    },
+    handler: 'editSelection_statya_article'
   },
 
 
@@ -598,7 +618,8 @@ const ALLOWED_DOMAINS = [
   'genre',
   'fiction',
   'composition',
-  'balanced_edit'
+  'balanced_edit',
+  'statya'
 ];
 
 
@@ -863,6 +884,13 @@ function editSelection_blog_opinion() {
 
 function editSelection_blog_engagement() {
   runModeById_('blog_engagement');
+}
+
+
+
+
+function editSelection_statya_article() {
+  runModeById_('statya_article');
 }
 
 
