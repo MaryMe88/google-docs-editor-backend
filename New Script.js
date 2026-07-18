@@ -345,11 +345,11 @@ const MODE_CONFIG = {
 
   statya_article: {
     menu: 'Статья (черновик)',
-    group: 'blog',
-    order: 30,
+    group: 'genre',          // было 'blog' — теперь режим показывается в подменю «Жанры»
+    order: 50,               // чтобы идти после coldemail/pressrelease/landing/workdoc
     domain: 'statya',        // реальный файл config/domains/statya.json
     intent: 'analytical',    // файл config/intents/analytical.json
-    overlays: ['infostyle', 'audiencesegment'], // инфостиль + адаптация под сегмент аудитории
+    overlays: ['infostyle', 'audiencesegment'],
     temperature: 0.35,
     audience: {
       kind: 'custom',
