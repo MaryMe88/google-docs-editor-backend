@@ -34,7 +34,7 @@
     {
       "file": "editorial_techniques/anti_ai_techniques.json",
       "subfolder": "editorial_techniques",
-      "size_kb": 52.8,
+      "size_kb": 66.9,
       "stage": "deai_cleanup",
       "priority": 1,
       "load_mode": "always",
@@ -74,7 +74,7 @@
     {
       "file": "stop_words.json",
       "subfolder": "",
-      "size_kb": 17.1,
+      "size_kb": 21.1,
       "stage": "deai_cleanup",
       "priority": 1,
       "load_mode": "always",
@@ -93,7 +93,7 @@
     {
       "file": "stylistic_issues/anti_ai_patterns.json",
       "subfolder": "stylistic_issues",
-      "size_kb": 24.4,
+      "size_kb": 28.5,
       "stage": "deai_cleanup",
       "priority": 1,
       "load_mode": "always",
@@ -904,7 +904,7 @@
     {
       "file": "storytelling_macrostructures.json",
       "subfolder": "",
-      "size_kb": 17.7,
+      "size_kb": 18.2,
       "stage": "overlay_storytelling",
       "priority": 9,
       "load_mode": "by_tags",
@@ -924,7 +924,7 @@
     {
       "file": "storytelling_microtechniques.json",
       "subfolder": "",
-      "size_kb": 25.2,
+      "size_kb": 25.9,
       "stage": "overlay_storytelling",
       "priority": 9,
       "load_mode": "by_tags",
