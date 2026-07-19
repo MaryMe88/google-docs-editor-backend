@@ -99,28 +99,26 @@ def _backoff_with_jitter(base_delay: float, attempt: int) -> float:
 # ---------------------------------------------------------------------------
 # Адаптивный расчёт max_tokens
 # ---------------------------------------------------------------------------
-# Базовый дефолт поднят, потому что ответы в режиме text_and_report
-# могут включать и сам текст, и краткий отчёт; на длинных промптах 4000
-# токенов иногда оказывается маловато.
+# Дефолт клиента можно держать более щедрым, но сама adaptive-функция
+# должна сохранять контракт тестов: короткие промпты получают floor,
+# длинные — масштабируются вверх до потолка.
 _DEFAULT_MAX_TOKENS = 6000
 _MIN_MAX_TOKENS = 1536
 _MAX_MAX_TOKENS = 12000
 
-# Грубая эвристика для смешанного RU/EN текста.
+# Эвристика для смешанного RU/EN текста.
 _CHARS_PER_TOKEN = 4
 
-# Во многих задачах редактуры ответ по длине сопоставим с входом, а иногда
-# даже длиннее из-за более явных формулировок. Даём запас.
+# На длинных редакторских промптах разумно дать запас на ответ.
 _RESPONSE_BUDGET_MULTIPLIER = 1.35
-_RESPONSE_BUDGET_FLOOR = 2048
 
 
 def estimate_max_tokens(prompt: str) -> int:
     """Оценивает разумный max_tokens исходя из длины промпта.
 
-    Возвращает значение, ограниченное диапазоном
-    [``_MIN_MAX_TOKENS``, ``_MAX_MAX_TOKENS``]. Цель — уменьшить риск
-    обрезки длинных ответов и не раздувать лимит на коротких запросах.
+    Для коротких промптов возвращает нижнюю границу. Для длинных —
+    масштабирует бюджет ответа пропорционально оценке входа, но
+    ограничивает результат диапазоном [_MIN_MAX_TOKENS, _MAX_MAX_TOKENS].
 
     Args:
         prompt: финальный текст промпта, отправляемый модели.
@@ -130,12 +128,15 @@ def estimate_max_tokens(prompt: str) -> int:
     """
     prompt_length = max(len(prompt), 0)
     estimated_input_tokens = prompt_length // _CHARS_PER_TOKEN
-
     response_budget = int(estimated_input_tokens * _RESPONSE_BUDGET_MULTIPLIER)
-    response_budget = max(response_budget, _RESPONSE_BUDGET_FLOOR)
-    response_budget = max(response_budget, _DEFAULT_MAX_TOKENS)
 
-    return min(max(response_budget, _MIN_MAX_TOKENS), _MAX_MAX_TOKENS)
+    if response_budget < _MIN_MAX_TOKENS:
+        return _MIN_MAX_TOKENS
+
+    if response_budget > _MAX_MAX_TOKENS:
+        return _MAX_MAX_TOKENS
+
+    return response_budget
 
 
 class BaseLLMClient(ABC):
@@ -147,7 +148,12 @@ class BaseLLMClient(ABC):
 
     @staticmethod
     def extract_error_message(response: httpx.Response) -> str:
-        """Извлекает человекочитаемое сообщение об ошибке из ответа провайдера."""
+        """Извлекает человекочитаемое сообщение об ошибке из ответа провайдера.
+
+        Единая реализация для всех провайдеров: поддерживает формат
+        ``{"error": {"message": ...}}`` и ``{"error": "..."}``,
+        с безопасным fallback на ``HTTP <status_code>``.
+        """
         try:
             error_data = response.json()
             if "error" in error_data:
@@ -172,7 +178,11 @@ class BaseLLMClient(ABC):
         await self.client.aclose()
 
     def _sleep_delay_for(self, attempt: int) -> Optional[float]:
-        """Возвращает задержку перед следующей попыткой или None."""
+        """Возвращает задержку перед следующей попыткой или None.
+
+        None означает, что попытка ``attempt`` (0-based) — последняя, и
+        спать перед выходом из цикла не нужно.
+        """
         if attempt + 1 >= self.config.max_retries:
             return None
         return _backoff_with_jitter(self.config.retry_delay, attempt)
@@ -261,11 +271,18 @@ class BaseLLMClient(ABC):
 
 
 class _OpenAICompatibleClient(BaseLLMClient):
-    """Базовый клиент для провайдеров с OpenAI-совместимым API."""
+    """Базовый клиент для провайдеров с OpenAI-совместимым API.
+
+    Perplexity, OpenAI и OpenRouter используют идентичный формат
+    ``/chat/completions``: одинаковый payload и схема ответа
+    (``choices[0].message.content``). Наследники переопределяют только
+    ``API_URL`` и при необходимости ``_build_headers``.
+    """
 
     API_URL: str = ""
 
     def _build_headers(self) -> Dict[str, str]:
+        """Стандартные заголовки Bearer-авторизации. Наследники могут расширить."""
         return {
             "Authorization": f"Bearer {self.config.api_key}",
             "Content-Type": "application/json",
@@ -393,7 +410,8 @@ class AnthropicClient(BaseLLMClient):
                     status_code=response.status_code,
                 )
 
-            return self.parse_response(response.json())
+            data = response.json()
+            return self.parse_response(data)
 
         except httpx.TimeoutException as error:
             raise LLMTimeoutError("Request timed out") from error
@@ -539,6 +557,15 @@ async def call_with_fallback(
 
     Возвращает первый успешный ответ. При исчерпании всех провайдеров
     поднимает LLMError с причиной последнего сбоя.
+
+    Args:
+        prompt: текст промпта для LLM.
+        providers: список имён провайдеров в порядке приоритета.
+        model: имя модели (None — использовать дефолтную для провайдера).
+        temperature: температура генерации.
+        max_retries_per_provider: количество попыток на каждого провайдера.
+        max_tokens: лимит токенов ответа. None — рассчитывается адаптивно
+            из длины промпта через ``estimate_max_tokens``.
     """
     if max_tokens is None:
         max_tokens = estimate_max_tokens(prompt)
