@@ -1,3 +1,9 @@
+from __future__ import annotations
+
+import sys
+from pathlib import Path
+
+
 """Validate that every tag declared in CANONICAL_TAGS exists in at least one KB record.
 
 Usage (local):
@@ -6,20 +12,19 @@ Usage (local):
 Also runs automatically as a CI step before deploy.
 Exit code 0 = OK, exit code 1 = validation failed.
 """
-from __future__ import annotations
 
-import sys
-from pathlib import Path
-
-# Make sure 'src' package is importable regardless of working directory
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
 try:
+    from src.shared_contracts import (
+        ALLOWED_DOMAINS,
+        ALLOWED_INTENTS,
+        ALLOWED_OVERLAYS,
+    )
     from src.startup_checks import run_startup_checks
-    from src.shared_contracts import ALLOWED_DOMAINS, ALLOWED_INTENTS, ALLOWED_OVERLAYS
 except ImportError as exc:
-    print(f"\u274c Import error — make sure dependencies are installed: {exc}")
+    print(f"❌ Import error — make sure dependencies are installed: {exc}")
     sys.exit(1)
 
 
@@ -27,9 +32,9 @@ def main() -> None:
     config_path = ROOT / "config"
     kb_path = ROOT / "knowledge_base"
 
-    print(f"Checking KB tags...")
-    print(f"  config : {config_path}")
-    print(f"  kb     : {kb_path}")
+    print("Checking KB tags...")
+    print(f" config : {config_path}")
+    print(f" kb     : {kb_path}")
     print()
 
     try:
@@ -41,17 +46,17 @@ def main() -> None:
             kb_path=kb_path,
         )
     except RuntimeError as exc:
-        print(f"\u274c KB validation failed:\n\n{exc}")
+        print(f"❌ KB validation failed:\n\n{exc}")
         print(
             "\nFix: add the missing tag(s) to at least one record's 'tags' field "
             "in knowledge_base/*.json"
         )
         sys.exit(1)
     except FileNotFoundError as exc:
-        print(f"\u274c Missing file or directory: {exc}")
+        print(f"❌ Missing file or directory: {exc}")
         sys.exit(1)
 
-    print("\u2705 KB validation passed — all CANONICAL_TAGS are present in the knowledge base.")
+    print("✅ KB validation passed — all CANONICAL_TAGS are present in the knowledge base.")
 
 
 if __name__ == "__main__":
