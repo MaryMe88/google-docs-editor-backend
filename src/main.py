@@ -9,17 +9,16 @@ import time
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Dict, Optional, Set, Tuple
+from typing import Any, Dict, Optional, Tuple
 
 from fastapi import Depends, FastAPI, HTTPException, Request, Response, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from pydantic import ValidationError
 
-# slowapi
 from slowapi import Limiter, _rate_limit_exceeded_handler
-from slowapi.util import get_remote_address
 from slowapi.errors import RateLimitExceeded
+from slowapi.util import get_remote_address
 
 from src.auth import verify_api_key
 from src.config_types import AudienceProfile
@@ -32,6 +31,7 @@ from src.output_guard import (
 )
 from src.prompt_builder import PromptBuilder
 from src.provider_registry import LLMProvider
+from src.scoring_weights import load_scoring_weights
 from src.semantic_index import init_semantic_index
 from src.shared_contracts import (
     ALLOWED_DOMAINS,
@@ -40,7 +40,6 @@ from src.shared_contracts import (
     ALLOWED_PROVIDERS,
 )
 from src.startup_checks import run_startup_checks
-from src.scoring_weights import load_scoring_weights
 
 logging.basicConfig(
     level=logging.INFO,
@@ -123,10 +122,7 @@ _CORS_ORIGINS: list[str] = (
 # Вспомогательные функции для семантического индекса
 # ---------------------------------------------------------------------------
 def _collect_semantic_entries(app: FastAPI) -> list[dict]:
-    """
-    Собирает все записи из базы знаний, сохранённой в app.state.kb.
-    Если kb отсутствует, возвращает пустой список.
-    """
+    """Собирает все записи из базы знаний, сохранённой в app.state.kb."""
     kb = getattr(app.state, "kb", None)
     if kb is None:
         logger.warning("SemanticIndex: kb не загружен, пропускаем сбор записей")
@@ -159,10 +155,14 @@ async def _build_semantic_index_background(app: FastAPI) -> None:
         await asyncio.to_thread(init_semantic_index, all_entries)
         app.state.semantic_index_status = "ready"
         logger.info("SemanticIndex: фоновое построение индекса завершено успешно")
-    except Exception as e:
-        logger.error("SemanticIndex: ошибка при построении индекса: %s", e, exc_info=True)
+    except Exception as error:
+        logger.error(
+            "SemanticIndex: ошибка при построении индекса: %s",
+            error,
+            exc_info=True,
+        )
         app.state.semantic_index_status = "failed"
-        app.state.semantic_index_error = str(e)
+        app.state.semantic_index_error = str(error)
 
 
 # ---------------------------------------------------------------------------
@@ -172,9 +172,8 @@ async def _build_semantic_index_background(app: FastAPI) -> None:
 async def lifespan(app: FastAPI):
     logger.info("Starting up text editor service...")
 
-    # SEC-05: Проверка обязательных переменных окружения
     _required_env = ["OPENROUTER_API_KEY"]
-    _missing = [k for k in _required_env if not os.getenv(k)]
+    _missing = [key for key in _required_env if not os.getenv(key)]
     if _missing:
         logger.critical("Missing required env variables: %s. Refusing to start.", _missing)
         raise RuntimeError(f"Missing required env variables: {_missing}")
@@ -195,20 +194,19 @@ async def lifespan(app: FastAPI):
     logger.info("PromptBuilder initialized successfully")
     app.state.prompt_builder = prompt_builder
 
-    # Сохраняем kb в состояние приложения для использования в фоновой задаче
     try:
         app.state.kb = prompt_builder.kb
         logger.info("SemanticIndex: kb загружен")
     except AttributeError:
-        logger.warning("PromptBuilder не содержит атрибут kb, семантический индекс не будет построен")
+        logger.warning(
+            "PromptBuilder не содержит атрибут kb, семантический индекс не будет построен"
+        )
         app.state.kb = None
 
-    # Инициализация состояния индекса
     app.state.semantic_index_status = "not_started"
     app.state.semantic_index_task = None
     app.state.semantic_index_error = None
 
-    # Запускаем фоновую задачу (не блокирует старт)
     task = asyncio.create_task(_build_semantic_index_background(app))
     app.state.semantic_index_task = task
 
@@ -230,7 +228,6 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
-# Настройка rate limiting (ключ по реальному IP клиента за прокси)
 limiter = Limiter(key_func=_client_ip_key)
 app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
@@ -250,8 +247,10 @@ async def log_requests(request: Request, call_next):
     response = await call_next(request)
     duration_ms = (time.perf_counter() - start_time) * 1000
     forwarded_for = request.headers.get("X-Forwarded-For")
-    client_ip = forwarded_for.split(",")[0].strip() if forwarded_for else (
-        request.client.host if request.client else None
+    client_ip = (
+        forwarded_for.split(",")[0].strip()
+        if forwarded_for
+        else (request.client.host if request.client else None)
     )
     log_entry = {
         "timestamp": time.time(),
@@ -298,8 +297,8 @@ async def _check_provider_deep(provider_name: str) -> bool:
         ) as client:
             await client.generate("ping")
             return True
-    except Exception as e:
-        logger.debug(f"Deep check failed for {provider_name}: {e}")
+    except Exception as error:
+        logger.debug("Deep check failed for %s: %s", provider_name, error)
         return False
 
 
@@ -311,6 +310,7 @@ async def _check_providers_availability(deep: bool = False) -> Tuple[bool, Dict[
             if cached is not None:
                 results[provider] = cached
                 continue
+
             env_var = _PROVIDER_KEY_ENV.get(provider.lower())
             available = bool(os.getenv(env_var)) if env_var else False
             _set_cached_availability(provider, available)
@@ -360,13 +360,17 @@ async def health_check(deep: bool = False) -> Response:
         available_domains=sorted(ALLOWED_DOMAINS),
         available_intents=list(builder.get_available_intents()),
         available_overlays=list(builder.get_available_overlays()),
-        available_providers=[p for p, ok in provider_status.items() if ok],
+        available_providers=[provider for provider, ok in provider_status.items() if ok],
         provider_status=provider_status,
         deep_check=deep,
         contract_version=CONTRACT_VERSION,
     )
 
-    status_code = status.HTTP_200_OK if any_available else status.HTTP_503_SERVICE_UNAVAILABLE
+    status_code = (
+        status.HTTP_200_OK
+        if any_available
+        else status.HTTP_503_SERVICE_UNAVAILABLE
+    )
     return JSONResponse(
         content=health.model_dump(),
         status_code=status_code,
@@ -391,29 +395,40 @@ def _log_edit_request_meta(body: EditRequest, retrieval_meta: Optional[Dict] = N
     logger.info(json.dumps(log_data, ensure_ascii=False))
 
 
-class PlaceholderLeakError(Exception):
-    """Служебные плейсхолдеры остались в ответе LLM после всех попыток.
+class InvalidLLMOutputError(Exception):
+    """LLM вернула ответ, не соответствующий ожидаемому формату."""
 
-    Поднимается, когда в финальном тексте по-прежнему присутствуют токены
-    вроде ``[PERSON_NAME]``/``[ADDRESS]`` даже после повторной генерации.
-    Обрабатывается как fail-closed: пользователю возвращается ошибка,
-    а не текст со служебными маркерами.
-    """
-
-    def __init__(self, leaks: list[str]) -> None:
-        self.leaks = leaks
-        super().__init__(f"Placeholder tokens leaked into output: {leaks}")
+    def __init__(self, reasons: list[str]) -> None:
+        self.reasons = reasons
+        super().__init__(f"Invalid LLM output: {reasons}")
 
 
 def _split_edit_output(raw: str, output_mode: str) -> Tuple[str, Optional[str]]:
-    """Разбирает сырой ответ LLM на текст и (опционально) отчёт.
-
-    В режиме ``text_and_report`` парсит блоки, иначе возвращает весь
-    ответ как текст.
-    """
+    """Разбирает сырой ответ LLM на текст и (опционально) отчёт."""
     if output_mode == "text_and_report":
         return _parse_text_and_report(raw)
     return raw, None
+
+
+def _validate_edit_output(
+    *,
+    edited_text: str,
+    report: Optional[str],
+    output_mode: str,
+) -> list[str]:
+    """Возвращает список причин, по которым ответ LLM невалиден."""
+    reasons: list[str] = []
+
+    if not edited_text.strip():
+        reasons.append("MISSING_TEXT_BLOCK")
+
+    if has_placeholder_leak(edited_text):
+        reasons.extend(find_placeholder_leaks(edited_text))
+
+    if output_mode == "text_and_report" and has_placeholder_leak(report or ""):
+        reasons.extend(find_placeholder_leaks(report or ""))
+
+    return sorted(set(reasons))
 
 
 async def _generate_clean_edit(
@@ -421,27 +436,12 @@ async def _generate_clean_edit(
     providers: list[str],
     body: EditRequest,
 ) -> Tuple[Any, str, Optional[str]]:
-    """Генерирует отредактированный текст с защитой от плейсхолдеров.
+    """Генерирует отредактированный текст с защитой от плейсхолдеров и сломанного формата.
 
-    Сначала выполняется обычный вызов LLM. Если в финальном тексте (а в
-    режиме отчёта — также в блоке отчёта) обнаружены служебные
-    плейсхолдеры, выполняется одна повторная попытка с усиленным
-    промптом. Если и после неё токены остаются, поднимается
-    ``PlaceholderLeakError`` (поведение fail-closed) — пользователю такой
-    текст не отдаётся.
-
-    Args:
-        prompt: собранный промпт для LLM.
-        providers: список провайдеров в порядке приоритета.
-        body: исходный запрос (нужны output_mode, model, temperature).
-
-    Returns:
-        Кортеж ``(response, edited_text, report)`` для успешного чистого
-        результата.
-
-    Raises:
-        PlaceholderLeakError: если плейсхолдеры не удалось устранить.
-        LLMError: если все провайдеры недоступны.
+    Если LLM не вывела блок ТЕКСТ, вывела пустой блок ТЕКСТ или оставила
+    служебные плейсхолдеры, выполняется одна повторная попытка с
+    усиленным промптом и пониженной температурой. Если и после неё ответ
+    остаётся невалидным, поднимается ``InvalidLLMOutputError``.
     """
     response = await call_with_fallback(
         prompt=prompt,
@@ -452,30 +452,48 @@ async def _generate_clean_edit(
     )
     edited_text, report = _split_edit_output(response.content, body.output_mode)
 
-    # Проверяем именно пользовательский текст и отчёт, а не сырой ответ:
-    # легальные блоки-заголовки режима text_and_report детектор не трогает.
-    if not (has_placeholder_leak(edited_text) or has_placeholder_leak(report or "")):
+    reasons = _validate_edit_output(
+        edited_text=edited_text,
+        report=report,
+        output_mode=body.output_mode,
+    )
+    if not reasons:
         return response, edited_text, report
 
     logger.warning(
-        "Guard: обнаружены плейсхолдеры в ответе LLM, выполняем повторную попытку"
+        "Guard: ответ LLM невалиден, выполняем повторную попытку. Причины: %s",
+        reasons,
     )
+
     hardened_prompt = harden_prompt_against_placeholders(prompt)
+    hardened_prompt += (
+        "\n\nКритично: строго соблюдай формат ответа. "
+        "Если запрошен режим text_and_report, сначала выведи блок "
+        "===ТЕКСТ=== с полным отредактированным текстом, затем блок "
+        "===ОТЧЁТ===. Не выводи один только анализ, список маркеров или "
+        "служебные пояснения вместо текста."
+    )
+
     response = await call_with_fallback(
         prompt=hardened_prompt,
         providers=providers,
         model=body.model,
-        # Понижаем температуру, чтобы модель точнее следовала инструкции.
         temperature=min(body.temperature, 0.2),
         max_retries_per_provider=2,
     )
     edited_text, report = _split_edit_output(response.content, body.output_mode)
 
-    leaks = find_placeholder_leaks(edited_text) + find_placeholder_leaks(report or "")
-    if leaks:
-        # Не логируем содержимое текста (может содержать PII) — только токены.
-        logger.error("Guard: плейсхолдеры остались после повторной попытки: %s", leaks)
-        raise PlaceholderLeakError(sorted(set(leaks)))
+    reasons = _validate_edit_output(
+        edited_text=edited_text,
+        report=report,
+        output_mode=body.output_mode,
+    )
+    if reasons:
+        logger.error(
+            "Guard: ответ LLM остался невалидным после повторной попытки: %s",
+            reasons,
+        )
+        raise InvalidLLMOutputError(reasons)
 
     return response, edited_text, report
 
@@ -530,8 +548,10 @@ async def edit_text(request: Request, body: EditRequest) -> EditResponse:
             include_few_shot=body.include_few_shot,
             include_retrieval_meta=True,
         )
+
         providers_to_try = [body.provider] + [
-            p for p in sorted(ALLOWED_PROVIDERS) if p != body.provider
+            provider for provider in sorted(ALLOWED_PROVIDERS)
+            if provider != body.provider
         ]
 
         response, edited_text, report = await _generate_clean_edit(
@@ -554,12 +574,12 @@ async def edit_text(request: Request, body: EditRequest) -> EditResponse:
             retrieval_meta=retrieval_meta if body.include_retrieval_meta else None,
         )
 
-    except PlaceholderLeakError as error:
-        logger.error("Placeholder guard blocked response: %s", error.leaks)
+    except InvalidLLMOutputError as error:
+        logger.error("Output guard blocked response: %s", error.reasons)
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
             detail=(
-                "The editor could not produce a clean result. "
+                "The editor could not produce a valid formatted result. "
                 "Please try again."
             ),
         ) from error
@@ -603,10 +623,11 @@ def _parse_text_and_report(raw: str) -> Tuple[str, Optional[str]]:
 
     Поддерживает оба порядка маркеров:
     - штатный ``===ТЕКСТ=== ... ===ОТЧЁТ=== ...``;
-    - перевёрнутый ``===ОТЧЁТ=== ... ===ТЕКСТ=== ...`` (модель иногда путает
-      порядок) — в этом случае отчёт больше не теряется молча.
+    - перевёрнутый ``===ОТЧЁТ=== ... ===ТЕКСТ=== ...``.
 
-    Если маркер ТЕКСТ отсутствует, весь ответ возвращается как текст.
+    Если маркер ТЕКСТ отсутствует, считаем ответ невалидным и возвращаем
+    пустой edited_text, чтобы вызывающая логика могла сделать retry или
+    fail-closed.
     """
     text_match = _MARKER_TEXT.search(raw)
     report_match = _MARKER_REPORT.search(raw)
@@ -614,24 +635,24 @@ def _parse_text_and_report(raw: str) -> Tuple[str, Optional[str]]:
     if text_match is None:
         logger.warning(
             "Маркер ТЕКСТ не найден в ответе LLM. "
-            "Возвращаем весь ответ как текст. Длина: %d символов", len(raw)
+            "Считаем edited_text пустым. Длина сырого ответа: %d символов",
+            len(raw),
         )
-        return raw.strip(), None
+        return "", None
 
-    # Отчёта нет вовсе — всё после маркера ТЕКСТ считаем текстом.
     if report_match is None:
         edited_text = raw[text_match.end():].strip()
         if not edited_text:
-            logger.warning("Блок ТЕКСТ найден, но содержимое пустое.")
+            logger.warning(
+                "Блок ТЕКСТ найден, но содержимое пустое "
+                "(нет текста после маркера ТЕКСТ)."
+            )
         return edited_text, None
 
-    # Оба маркера есть — определяем порядок по позиции в строке.
     if text_match.start() < report_match.start():
-        # Штатный порядок: ТЕКСТ ... ОТЧЁТ ...
         edited_text = raw[text_match.end():report_match.start()].strip()
         report = raw[report_match.end():].strip()
     else:
-        # Перевёрнутый порядок: ОТЧЁТ ... ТЕКСТ ...
         logger.warning(
             "Маркеры ТЕКСТ/ОТЧЁТ идут в перевёрнутом порядке — "
             "разбираем с учётом этого, отчёт сохраняется."
