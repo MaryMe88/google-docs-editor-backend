@@ -410,8 +410,29 @@ def _split_edit_output(raw: str, output_mode: str) -> Tuple[str, Optional[str]]:
     return raw, None
 
 
+def _looks_like_report_instead_of_text(text: str) -> bool:
+    """Эвристика: ответ похож на анализ/отчёт, а не на отредактированный текст."""
+    normalized = text.strip().lower()
+    if not normalized:
+        return True
+
+    report_signals = [
+        'count the "не x, а y" occurrences',
+        "count the",
+        "so we have",
+        "this is a marker",
+        "also, the use of",
+        "маркеры:",
+        "исходный ип:",
+        "итоговый ип:",
+        "нужен второй проход",
+    ]
+    return any(signal in normalized for signal in report_signals)
+
+
 def _validate_edit_output(
     *,
+    raw_content: str,
     edited_text: str,
     report: Optional[str],
     output_mode: str,
@@ -419,14 +440,20 @@ def _validate_edit_output(
     """Возвращает список причин, по которым ответ LLM невалиден."""
     reasons: list[str] = []
 
-    if not edited_text.strip():
-        reasons.append("MISSING_TEXT_BLOCK")
-
     if has_placeholder_leak(edited_text):
         reasons.extend(find_placeholder_leaks(edited_text))
 
-    if output_mode == "text_and_report" and has_placeholder_leak(report or ""):
-        reasons.extend(find_placeholder_leaks(report or ""))
+    if output_mode == "text_and_report":
+        has_text_marker = _MARKER_TEXT.search(raw_content) is not None
+
+        if has_text_marker and not edited_text.strip():
+            reasons.append("EMPTY_TEXT_BLOCK")
+
+        if not has_text_marker and _looks_like_report_instead_of_text(edited_text):
+            reasons.append("REPORT_INSTEAD_OF_TEXT")
+
+        if has_placeholder_leak(report or ""):
+            reasons.extend(find_placeholder_leaks(report or ""))
 
     return sorted(set(reasons))
 
@@ -436,13 +463,7 @@ async def _generate_clean_edit(
     providers: list[str],
     body: EditRequest,
 ) -> Tuple[Any, str, Optional[str]]:
-    """Генерирует отредактированный текст с защитой от плейсхолдеров и сломанного формата.
-
-    Если LLM не вывела блок ТЕКСТ, вывела пустой блок ТЕКСТ или оставила
-    служебные плейсхолдеры, выполняется одна повторная попытка с
-    усиленным промптом и пониженной температурой. Если и после неё ответ
-    остаётся невалидным, поднимается ``InvalidLLMOutputError``.
-    """
+    """Генерирует отредактированный текст с защитой от плейсхолдеров и сломанного формата."""
     response = await call_with_fallback(
         prompt=prompt,
         providers=providers,
@@ -453,6 +474,7 @@ async def _generate_clean_edit(
     edited_text, report = _split_edit_output(response.content, body.output_mode)
 
     reasons = _validate_edit_output(
+        raw_content=response.content,
         edited_text=edited_text,
         report=report,
         output_mode=body.output_mode,
@@ -484,6 +506,7 @@ async def _generate_clean_edit(
     edited_text, report = _split_edit_output(response.content, body.output_mode)
 
     reasons = _validate_edit_output(
+        raw_content=response.content,
         edited_text=edited_text,
         report=report,
         output_mode=body.output_mode,
@@ -625,9 +648,8 @@ def _parse_text_and_report(raw: str) -> Tuple[str, Optional[str]]:
     - штатный ``===ТЕКСТ=== ... ===ОТЧЁТ=== ...``;
     - перевёрнутый ``===ОТЧЁТ=== ... ===ТЕКСТ=== ...``.
 
-    Если маркер ТЕКСТ отсутствует, считаем ответ невалидным и возвращаем
-    пустой edited_text, чтобы вызывающая логика могла сделать retry или
-    fail-closed.
+    Если маркер ТЕКСТ отсутствует, сохраняем обратную совместимость:
+    весь ответ возвращается как текст.
     """
     text_match = _MARKER_TEXT.search(raw)
     report_match = _MARKER_REPORT.search(raw)
@@ -635,18 +657,15 @@ def _parse_text_and_report(raw: str) -> Tuple[str, Optional[str]]:
     if text_match is None:
         logger.warning(
             "Маркер ТЕКСТ не найден в ответе LLM. "
-            "Считаем edited_text пустым. Длина сырого ответа: %d символов",
+            "Возвращаем весь ответ как текст. Длина: %d символов",
             len(raw),
         )
-        return "", None
+        return raw.strip(), None
 
     if report_match is None:
         edited_text = raw[text_match.end():].strip()
         if not edited_text:
-            logger.warning(
-                "Блок ТЕКСТ найден, но содержимое пустое "
-                "(нет текста после маркера ТЕКСТ)."
-            )
+            logger.warning("Блок ТЕКСТ найден, но содержимое пустое.")
         return edited_text, None
 
     if text_match.start() < report_match.start():
