@@ -1,223 +1,606 @@
 {
   "domains": {
     "marketing": {
-      "primary": ["marketing"],
-      "expanded": ["sales", "promo", "conversion", "email", "newsletter",
-                   "leadmagnet", "social", "smm", "post", "web", "landing",
-                   "casestudy", "presentation", "cta"]
+      "primary": [
+        "marketing"
+      ],
+      "expanded": [
+        "sales",
+        "promo",
+        "conversion",
+        "email",
+        "newsletter",
+        "lead_magnet",
+        "social",
+        "smm",
+        "post",
+        "web",
+        "landing",
+        "case_study",
+        "presentation",
+        "cta"
+      ]
     },
     "blog": {
-      "primary": ["blog"],
-      "expanded": ["nonmarketing", "article", "educational", "genre", "format"]
+      "primary": [
+        "blog"
+      ],
+      "expanded": [
+        "nonmarketing",
+        "article",
+        "educational",
+        "genre",
+        "format"
+      ]
     },
     "statya": {
-      "primary": ["statya", "article"],
-      "expanded": ["longform", "composition", "structure", "macrostructure",
-                   "paragraph", "flow", "transitions", "coherence",
-                   "thesis", "draft", "editorial", "nonmarketing"]
+      "primary": [
+        "statya",
+        "article"
+      ],
+      "expanded": [
+        "composition",
+        "structure",
+        "macro_structure",
+        "paragraph",
+        "flow",
+        "transitions",
+        "coherence",
+        "nonmarketing"
+      ]
     },
     "deai": {
-      "primary": ["deai", "antiai"],
+      "primary": [
+        "deai",
+        "anti_ai"
+      ],
       "expanded": [
-        "humanize", "natural", "authentic", "authenticity", "humanization",
-        "rhythm", "burstiness",
-        "syntax", "clauses", "leftbranching", "readability",
-        "epistemics", "nominalization", "passivevoice", "bureaucratic",
-        "tone", "credibility",
-        "semantics", "redundancy",
-        "metaphors", "cliches",
-        "discoursemarkers", "conciseness",
-        "officialese", "filler", "stopwords", "aipatterns",
-        "antithesis", "particles", "idioms", "naturalness", "variety",
-        "formal_antithesis", "comparison", "authority", "boosters",
-        "headers", "argumentation", "cohesion", "rhetoric",
-        "evaluation", "factual", "demonstration", "situations"
+        "humanize",
+        "natural",
+        "authentic",
+        "authenticity",
+        "humanization",
+        "rhythm",
+        "burstiness",
+        "syntax",
+        "clauses",
+        "left_branching",
+        "readability",
+        "epistemics",
+        "nominalization",
+        "passive_voice",
+        "bureaucratic",
+        "tone",
+        "credibility",
+        "semantics",
+        "redundancy",
+        "metaphors",
+        "cliches",
+        "discourse_markers",
+        "conciseness",
+        "officialese",
+        "filler",
+        "stop_words",
+        "ai_patterns",
+        "antithesis",
+        "particles",
+        "idioms",
+        "naturalness",
+        "variety",
+        "formal_antithesis",
+        "comparison",
+        "authority",
+        "boosters",
+        "headers",
+        "argumentation",
+        "cohesion",
+        "rhetoric",
+        "evaluation",
+        "factual",
+        "demonstration",
+        "situations"
       ]
     },
     "basic_edit": {
-      "primary": ["editing"],
+      "primary": [
+        "editing"
+      ],
       "expanded": [
-        "grammar", "style", "clarity", "principles",
-        "errors", "correction", "workflow", "types",
-        "morphology", "agreement", "case", "forms", "inflection",
-        "sentence", "sentencelength", "passive",
-        "lexical", "semantic", "cliche"
+        "grammar",
+        "style",
+        "clarity",
+        "principles",
+        "errors",
+        "correction",
+        "workflow",
+        "types",
+        "morphology",
+        "agreement",
+        "case",
+        "forms",
+        "inflection",
+        "sentence",
+        "sentence_length",
+        "passive",
+        "lexical",
+        "semantic",
+        "cliche"
       ]
     },
     "balanced_edit": {
-      "primary": ["editing", "style"],
-      "expanded": ["clarity", "coherence", "principles", "register", "mismatch",
-                   "lexical", "semantic"]
+      "primary": [
+        "editing",
+        "style"
+      ],
+      "expanded": [
+        "clarity",
+        "coherence",
+        "principles",
+        "register",
+        "mismatch",
+        "lexical",
+        "semantic"
+      ]
     },
     "nora_gal": {
-      "primary": ["noragal", "editing"],
-      "expanded": ["brevity", "clarity", "techniques", "milchin",
-                   "conciseness", "noise", "wordlevel", "filler"]
+      "primary": [
+        "nora_gal",
+        "editing"
+      ],
+      "expanded": [
+        "brevity",
+        "clarity",
+        "techniques",
+        "milchin",
+        "conciseness",
+        "noise",
+        "word_level",
+        "filler"
+      ]
     },
     "nora_gal_soft": {
-      "primary": ["noragal"],
-      "expanded": ["clarity", "techniques"]
+      "primary": [
+        "nora_gal"
+      ],
+      "expanded": [
+        "clarity",
+        "techniques"
+      ]
     },
     "fiction": {
-      "primary": ["storytelling"],
-      "expanded": ["narrative", "engagement", "microtechnique",
-                   "shownottell", "suspense", "imagery", "expressiveness",
-                   "metaphor", "phraseology", "idioms"]
+      "primary": [
+        "storytelling"
+      ],
+      "expanded": [
+        "narrative",
+        "engagement",
+        "micro_technique",
+        "show_not_tell",
+        "suspense",
+        "imagery",
+        "expressiveness",
+        "metaphor",
+        "phraseology",
+        "idioms"
+      ]
     },
     "composition": {
-      "primary": ["composition"],
-      "expanded": ["structure", "coherence", "macrostructure",
-                   "paragraph", "flow", "transitions", "errors"]
+      "primary": [
+        "composition"
+      ],
+      "expanded": [
+        "structure",
+        "coherence",
+        "macro_structure",
+        "paragraph",
+        "flow",
+        "transitions",
+        "errors"
+      ]
     },
     "logic_edit": {
-      "primary": ["logic"],
-      "expanded": ["argumentation", "coherence", "reasoning",
-                   "macrostructure", "analysis", "algorithm"]
+      "primary": [
+        "logic"
+      ],
+      "expanded": [
+        "argumentation",
+        "coherence",
+        "reasoning",
+        "macro_structure",
+        "analysis",
+        "algorithm"
+      ]
     },
     "makeclear": {
-      "primary": ["clarity", "infostyle"],
-      "expanded": ["precision", "readability", "conciseness",
-                   "wordchoice", "noise", "filler"]
+      "primary": [
+        "clarity",
+        "infostyle"
+      ],
+      "expanded": [
+        "precision",
+        "readability",
+        "conciseness",
+        "word_choice",
+        "noise",
+        "filler"
+      ]
     },
     "restructure": {
-      "primary": ["composition", "structure"],
-      "expanded": ["coherence", "macrostructure", "paragraph", "flow"]
+      "primary": [
+        "composition",
+        "structure"
+      ],
+      "expanded": [
+        "coherence",
+        "macro_structure",
+        "paragraph",
+        "flow"
+      ]
     },
     "readerfirst": {
-      "primary": ["clarity"],
-      "expanded": ["engagement", "reader", "goal", "audience", "readability"]
+      "primary": [
+        "clarity"
+      ],
+      "expanded": [
+        "engagement",
+        "reader",
+        "goal",
+        "audience",
+        "readability"
+      ]
     },
     "cutnoise": {
-      "primary": ["brevity", "clarity"],
-      "expanded": ["noise", "filler", "redundancy", "conciseness",
-                   "tautology", "pleonasm", "wordlevel"]
+      "primary": [
+        "brevity",
+        "clarity"
+      ],
+      "expanded": [
+        "noise",
+        "filler",
+        "redundancy",
+        "conciseness",
+        "tautology",
+        "pleonasm",
+        "word_level"
+      ]
     },
     "genre": {
-      "primary": ["storytelling", "style"],
-      "expanded": ["narrative", "genre", "format", "template"]
+      "primary": [
+        "storytelling",
+        "style"
+      ],
+      "expanded": [
+        "narrative",
+        "genre",
+        "format",
+        "template"
+      ]
     }
   },
   "intents": {
     "storytelling": {
-      "primary": ["storytelling", "structure"],
-      "expanded": ["narrative", "engagement", "microtechnique",
-                   "shownottell", "suspense", "imagery", "expressiveness"]
+      "primary": [
+        "storytelling",
+        "structure"
+      ],
+      "expanded": [
+        "narrative",
+        "engagement",
+        "micro_technique",
+        "show_not_tell",
+        "suspense",
+        "imagery",
+        "expressiveness"
+      ]
     },
     "analytical": {
-      "primary": ["analytical", "logic"],
-      "expanded": ["reasoning", "argumentation", "analysis",
-                   "macrostructure", "factual", "cultural", "accuracy", "verification"]
+      "primary": [
+        "analytical",
+        "logic"
+      ],
+      "expanded": [
+        "reasoning",
+        "argumentation",
+        "analysis",
+        "macro_structure",
+        "factual",
+        "cultural",
+        "accuracy",
+        "verification"
+      ]
     },
     "engagement": {
-      "primary": ["engagement"],
-      "expanded": ["rhetoric", "narrative", "figures", "tropes",
-                   "topoi", "strategies", "expressiveness", "persuasion"]
+      "primary": [
+        "engagement"
+      ],
+      "expanded": [
+        "rhetoric",
+        "narrative",
+        "figures",
+        "tropes",
+        "topoi",
+        "strategies",
+        "expressiveness",
+        "persuasion"
+      ]
     },
     "marketingpush": {
-      "primary": ["marketing", "marketingpush"],
-      "expanded": ["persuasion", "cta", "promo", "email",
-                   "social", "smm", "landing", "leadmagnet",
-                   "product_in_text", "honest_marketing"]
+      "primary": [
+        "marketing",
+        "marketingpush"
+      ],
+      "expanded": [
+        "persuasion",
+        "cta",
+        "promo",
+        "email",
+        "social",
+        "smm",
+        "landing",
+        "lead_magnet"
+      ]
     }
   },
   "overlays": {
     "logic": {
-      "primary": ["logic"],
-      "expanded": ["coherence", "argumentation", "reasoning", "analysis", "macrostructure"]
+      "primary": [
+        "logic"
+      ],
+      "expanded": [
+        "coherence",
+        "argumentation",
+        "reasoning",
+        "analysis",
+        "macro_structure"
+      ]
     },
     "factcheck": {
-      "primary": ["factcheck"],
-      "expanded": ["accuracy", "verification", "factual", "cultural",
-                   "terminology", "algorithm", "corpus", "nkrj"]
+      "primary": [
+        "factcheck"
+      ],
+      "expanded": [
+        "accuracy",
+        "verification",
+        "factual",
+        "cultural",
+        "terminology",
+        "algorithm",
+        "corpus",
+        "nkrj"
+      ]
     },
     "audiencesegment": {
-      "primary": ["audience", "audiencesegment"],
-      "expanded": ["reader", "segment", "expertise", "formality",
-                   "register", "engagement", "readability"]
+      "primary": [
+        "audience"
+      ],
+      "expanded": [
+        "reader",
+        "register",
+        "engagement",
+        "readability"
+      ]
     },
     "infostyle": {
-      "primary": ["infostyle", "clarity"],
-      "expanded": ["precision", "readability", "conciseness", "wordchoice"]
+      "primary": [
+        "infostyle",
+        "clarity"
+      ],
+      "expanded": [
+        "precision",
+        "readability",
+        "conciseness",
+        "word_choice"
+      ]
     },
     "composition": {
-      "primary": ["composition"],
-      "expanded": ["structure", "macrostructure", "paragraph", "flow", "transitions"]
+      "primary": [
+        "composition"
+      ],
+      "expanded": [
+        "structure",
+        "macro_structure",
+        "paragraph",
+        "flow",
+        "transitions"
+      ]
     },
     "cohesion": {
-      "primary": ["cohesion"],
-      "expanded": ["transitions", "flow", "paragraph", "discoursemarkers", "conciseness"]
+      "primary": [
+        "cohesion"
+      ],
+      "expanded": [
+        "transitions",
+        "flow",
+        "paragraph",
+        "discourse_markers",
+        "conciseness"
+      ]
     },
     "rhetoric": {
-      "primary": ["rhetoric"],
-      "expanded": ["figures", "tropes", "topoi", "strategies",
-                   "expressiveness", "persuasion", "phraseology", "idioms",
-                   "imagery", "metaphor"]
+      "primary": [
+        "rhetoric"
+      ],
+      "expanded": [
+        "figures",
+        "tropes",
+        "topoi",
+        "strategies",
+        "expressiveness",
+        "persuasion",
+        "phraseology",
+        "idioms",
+        "imagery",
+        "metaphor"
+      ]
     },
     "marketingpush": {
-      "primary": ["marketing", "marketingpush"],
-      "expanded": ["persuasion", "cta", "email", "social", "landing",
-                   "product_in_text", "honest_marketing"]
+      "primary": [
+        "marketing",
+        "marketingpush"
+      ],
+      "expanded": [
+        "persuasion",
+        "cta",
+        "email",
+        "social",
+        "landing"
+      ]
     },
     "finalcheck_full": {
-      "primary": ["finalcheck"],
-      "expanded": ["accuracy", "coherence", "proofreading", "readability", "cta"]
+      "primary": [
+        "finalcheck"
+      ],
+      "expanded": [
+        "accuracy",
+        "coherence",
+        "proofreading",
+        "readability",
+        "cta"
+      ]
     },
     "finalcheck_light": {
-      "primary": ["finalcheck"],
-      "expanded": ["clarity", "proofreading", "readability"]
+      "primary": [
+        "finalcheck"
+      ],
+      "expanded": [
+        "clarity",
+        "proofreading",
+        "readability"
+      ]
     },
     "base": {
-      "primary": ["editing"],
-      "expanded": ["grammar", "style", "principles", "workflow"]
+      "primary": [
+        "editing"
+      ],
+      "expanded": [
+        "grammar",
+        "style",
+        "principles",
+        "workflow"
+      ]
     },
     "coldemail": {
-      "primary": ["marketing", "persuasion"],
-      "expanded": ["cta", "email", "leadmagnet"]
+      "primary": [
+        "marketing",
+        "persuasion"
+      ],
+      "expanded": [
+        "cta",
+        "email",
+        "lead_magnet"
+      ]
     },
     "landing": {
-      "primary": ["landing"],
-      "expanded": ["cta", "persuasion", "marketing"]
+      "primary": [
+        "landing"
+      ],
+      "expanded": [
+        "cta",
+        "persuasion",
+        "marketing"
+      ]
     },
     "no_overwrite": {
-      "primary": ["no_overwrite"],
+      "primary": [
+        "no_overwrite"
+      ],
       "expanded": []
     },
     "pressrelease": {
-      "primary": ["pressrelease"],
-      "expanded": ["genre", "format", "template"]
+      "primary": [
+        "press_release"
+      ],
+      "expanded": [
+        "genre",
+        "format",
+        "template"
+      ]
     },
     "readerfocus": {
-      "primary": ["readerfocus"],
-      "expanded": ["reader", "goal", "audience", "clarity", "readability"]
+      "primary": [
+        "readerfocus"
+      ],
+      "expanded": [
+        "reader",
+        "goal",
+        "audience",
+        "clarity",
+        "readability"
+      ]
     },
     "recommendations": {
-      "primary": ["recommendations"],
+      "primary": [
+        "recommendations"
+      ],
       "expanded": []
     },
     "structurefirst": {
-      "primary": ["structurefirst"],
-      "expanded": ["structure", "composition", "macrostructure"]
+      "primary": [
+        "structurefirst"
+      ],
+      "expanded": [
+        "structure",
+        "composition",
+        "macro_structure"
+      ]
     },
     "workdoc": {
-      "primary": ["workdoc"],
-      "expanded": ["workflow", "types", "editing"]
+      "primary": [
+        "workdoc"
+      ],
+      "expanded": [
+        "workflow",
+        "types",
+        "editing"
+      ]
     },
     "grammar": {
-      "primary": ["grammar"],
-      "expanded": ["morphology", "agreement", "case", "forms", "inflection",
-                   "sentence", "sentencelength", "passive", "correction", "errors"]
+      "primary": [
+        "grammar"
+      ],
+      "expanded": [
+        "morphology",
+        "agreement",
+        "case",
+        "forms",
+        "inflection",
+        "sentence",
+        "sentence_length",
+        "passive",
+        "correction",
+        "errors"
+      ]
     },
     "translation": {
-      "primary": ["translation"],
-      "expanded": ["foreignwords", "borrowings", "terminology"]
+      "primary": [
+        "translation"
+      ],
+      "expanded": [
+        "foreign_words",
+        "borrowings",
+        "terminology"
+      ]
     },
     "phonetics": {
-      "primary": ["phonetics"],
-      "expanded": ["euphony", "sound", "wordformation", "rhythm"]
+      "primary": [
+        "phonetics"
+      ],
+      "expanded": [
+        "euphony",
+        "sound",
+        "word_formation",
+        "rhythm"
+      ]
     },
     "ethics": {
-      "primary": ["ethics"],
-      "expanded": ["tact", "sensitivity", "audience"]
+      "primary": [
+        "ethics"
+      ],
+      "expanded": [
+        "tact",
+        "sensitivity",
+        "audience"
+      ]
     }
   }
 }
