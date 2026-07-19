@@ -166,5 +166,141 @@
     "category": "Анти-ИИ паттерны",
     "description": "Стилистические признаки, по которым текст выдает машинное происхождение. Применять к нейтральным и деловым текстам.",
     "tags": ["style", "anti_ai", "antithesis", "argumentation", "deai", "humanize", "natural", "authentic", "formal_antithesis"]
+  },
+  {
+    "wrong": "В тексте больше двух антитез вида «не X, а Y» или одна из них стоит в начале абзаца, или встречается «это про…».",
+    "correct": "Ограничьте антитезы двумя на весь текст, не ставьте их в начало абзаца и полностью исключите «это про…». Заменяйте их прямыми утверждениями с конкретикой.",
+    "rule": "Антитеза — допустимый приём, но не больше двух, не в начале абзаца, «это про…» — запрещён.",
+    "category": "Анти-ИИ паттерны",
+    "description": "Паттерны из neirotekst.md: противопоставления и параллелизмы.",
+    "tags": ["style", "anti_ai", "antithesis", "rhetoric", "deai", "humanize", "natural", "authentic"]
+  },
+  {
+    "wrong": "Фразы-анонсы: «Самое интересное — дальше», «И вот что важно», «Но главное даже не это».",
+    "correct": "Уберите обещания интересного, сразу переходите к факту или примеру.",
+    "rule": "Не анонсируйте, а говорите по делу.",
+    "category": "Анти-ИИ паттерны",
+    "description": "Паттерны из neirotekst.md: псевдоглубина.",
+    "tags": ["style", "anti_ai", "rhetoric", "conciseness", "deai", "humanize", "natural", "authentic"]
+  },
+  {
+    "wrong": "В финале внезапно появляется метафора, которой не было в тексте («работает как маленькая капсула времени», «это своего рода мост…»).",
+    "correct": "Либо уберите метафору, либо введите её в начале и развивайте на протяжении текста. Финал должен держаться на факте или выводе.",
+    "rule": "Метафора должна работать весь текст или не появляться в финале как декорация.",
+    "category": "Анти-ИИ паттерны",
+    "description": "Паттерны из neirotekst.md: псевдоглубина.",
+    "tags": ["style", "anti_ai", "metaphors", "composition", "deai", "humanize", "natural", "authentic"]
+  },
+  {
+    "wrong": "В тексте совсем нет частиц «же», «ведь», «вот», «-то» и нет ни одной идиомы или устойчивого выражения.",
+    "correct": "Добавьте 1–2 уместные частицы и, если к месту, идиому, чтобы текст зазвучал естественнее.",
+    "rule": "Живой русский язык дышит частицами и идиомами; их отсутствие — признак обеднения.",
+    "category": "Анти-ИИ паттерны",
+    "description": "Паттерны из neirotekst.md: кальки и обеднение языка.",
+    "tags": ["style", "anti_ai", "particles", "idioms", "naturalness", "deai", "humanize", "natural", "authentic"]
+  },
+  {
+    "wrong": "Два или более абзацев подряд начинаются с одной и той же конструкции (например, оба начинаются со слова «Это» или «Кроме того»).",
+    "correct": "Переформулируйте начало одного из абзацев, чтобы зачины были разными.",
+    "rule": "Разнообразие начал абзацев — признак живого текста.",
+    "category": "Анти-ИИ паттерны",
+    "description": "Паттерны из neirotekst.md: проверка первых слов абзацев.",
+    "tags": ["style", "anti_ai", "composition", "variety", "deai", "humanize", "natural", "authentic"]
+  },
+  {
+    "wrong": "Предлагаем качественный контент для вашего сайта.",
+    "correct": "Мы пишем статьи об управлении предприятием; авторы — действующие преподаватели школы бизнеса.",
+    "rule": "Замени оценку фактом (тема, авторы).",
+    "category": "Оценки → факты",
+    "description": "Пример из otsenki.md: качественный контент → конкретные факты.",
+    "tags": ["style", "anti_ai", "evaluation", "factual", "clarity", "credibility", "deai", "humanize", "natural", "authentic"],
+    "source": {
+      "title": "Людмила Сарычева, Никита Архипов, gladlax.ru и niar42.com",
+      "notes": "github.com/N1arko/redaktura-skills"
+    }
+  },
+  {
+    "wrong": "Наши ножи — самые острые.",
+    "correct": "Наши ножи режут сырое мясо, рыбу и курицу; через три года ежедневной готовки они начинают затупляться.",
+    "rule": "Демонстрация вместо оценки.",
+    "category": "Оценки → факты",
+    "description": "Пример из otsenki.md: самая острая оценка заменена свойствами.",
+    "tags": ["style", "anti_ai", "evaluation", "demonstration", "clarity", "credibility", "deai", "humanize", "natural", "authentic"],
+    "source": {
+      "title": "Людмила Сарычева, Никита Архипов, gladlax.ru и niar42.com",
+      "notes": "github.com/N1arko/redaktura-skills"
+    }
+  },
+  {
+    "wrong": "Ощутите незабываемую атмосферу тепла и уюта.",
+    "correct": "Приходите на завтрак, собирайтесь с друзьями, бронируйте зал на день рождения.",
+    "rule": "Ситуация вместо похвалы.",
+    "category": "Оценки → факты",
+    "description": "Пример из otsenki.md: атмосфера заменена ситуациями использования.",
+    "tags": ["style", "anti_ai", "evaluation", "situations", "clarity", "credibility", "deai", "humanize", "natural", "authentic"],
+    "source": {
+      "title": "Людмила Сарычева, Никита Архипов, gladlax.ru и niar42.com",
+      "notes": "github.com/N1arko/redaktura-skills"
+    }
+  },
+  {
+    "wrong": "Свалки — серьёзная проблема: занимают 4 млн гектаров.",
+    "correct": "Свалки в России занимают 4 млн гектаров, и каждый год их площадь растёт на 400 000 гектаров.",
+    "rule": "Оценка «серьёзная проблема» заменена фактами (площадь, рост).",
+    "category": "Оценки → факты",
+    "description": "Пример из smysl-i-faktura.md: оценка → факт.",
+    "tags": ["style", "anti_ai", "evaluation", "factual", "clarity", "credibility", "deai", "humanize", "natural", "authentic"],
+    "source": {
+      "title": "Людмила Сарычева, Никита Архипов, gladlax.ru и niar42.com",
+      "notes": "github.com/N1arko/redaktura-skills"
+    }
+  },
+  {
+    "wrong": "Покупать на распродажах выгодно.",
+    "correct": "На распродаже можно купить пальто за полцены.",
+    "rule": "Оценка «выгодно» заменена конкретным примером выгоды.",
+    "category": "Оценки → факты",
+    "description": "Пример из smysl-i-faktura.md: оценка → факт.",
+    "tags": ["style", "anti_ai", "evaluation", "factual", "clarity", "credibility", "deai", "humanize", "natural", "authentic"],
+    "source": {
+      "title": "Людмила Сарычева, Никита Архипов, gladlax.ru и niar42.com",
+      "notes": "github.com/N1arko/redaktura-skills"
+    }
+  },
+  {
+    "wrong": "Быстрый заработок.",
+    "correct": "Платим 900 рублей в час, выплаты каждый день.",
+    "rule": "Оценка «быстрый» заменена фактами (сумма, периодичность).",
+    "category": "Оценки → факты",
+    "description": "Пример из otsenki.md: оценка → факт.",
+    "tags": ["style", "anti_ai", "evaluation", "factual", "clarity", "credibility", "deai", "humanize", "natural", "authentic"],
+    "source": {
+      "title": "Людмила Сарычева, Никита Архипов, gladlax.ru и niar42.com",
+      "notes": "github.com/N1arko/redaktura-skills"
+    }
+  },
+  {
+    "wrong": "Эффективная система повышения продаж.",
+    "correct": "Система повышает конверсию продающих страниц на 20%.",
+    "rule": "Оценка «эффективная» заменена фактом (конверсия, %).",
+    "category": "Оценки → факты",
+    "description": "Пример из otsenki.md: оценка → факт.",
+    "tags": ["style", "anti_ai", "evaluation", "factual", "clarity", "credibility", "deai", "humanize", "natural", "authentic"],
+    "source": {
+      "title": "Людмила Сарычева, Никита Архипов, gladlax.ru и niar42.com",
+      "notes": "github.com/N1arko/redaktura-skills"
+    }
+  },
+  {
+    "wrong": "Драматический рост продаж.",
+    "correct": "За месяц мы получили годовую выручку.",
+    "rule": "Оценка «драматический» заменена фактом (месяц = годовая выручка).",
+    "category": "Оценки → факты",
+    "description": "Пример из smysl-i-faktura.md: слова-катастрофы → факты.",
+    "tags": ["style", "anti_ai", "evaluation", "factual", "clarity", "credibility", "deai", "humanize", "natural", "authentic"],
+    "source": {
+      "title": "Людмила Сарычева, Никита Архипов, gladlax.ru и niar42.com",
+      "notes": "github.com/N1arko/redaktura-skills"
+    }
   }
 ]
