@@ -27,7 +27,6 @@ from typing import Any, Dict, List, Optional
 import httpx
 from dotenv import load_dotenv
 
-# Шаг A-2: LLMProvider вынесен в отдельный реестр, чтобы избежать зависимости shared_contracts от httpx
 from src.provider_registry import LLMProvider
 
 load_dotenv()
@@ -43,7 +42,7 @@ class LLMConfig:
     model: str
     api_key: str
     temperature: float = 0.3
-    max_tokens: int = 4000
+    max_tokens: int = 6000
     timeout: float = 60.0
     max_retries: int = 3
     retry_delay: float = 1.0
@@ -94,29 +93,34 @@ def _backoff_with_jitter(base_delay: float, attempt: int) -> float:
     Криптографическая стойкость здесь не требуется.
     """
     cap = base_delay * (2 ** attempt)
-    return random.uniform(0, cap)  # noqa: S311 — non-security use
+    return random.uniform(0, cap)  # noqa: S311
 
 
 # ---------------------------------------------------------------------------
 # Адаптивный расчёт max_tokens
 # ---------------------------------------------------------------------------
-# Нижняя/верхняя границы для адаптивного режима. Защищают от обрезки длинных
-# текстов (input ≤ 10000 символов + большой промпт из базы знаний) и от
-# чрезмерного потребления токенов на коротких запросах.
-_DEFAULT_MAX_TOKENS = 4000
-_MIN_MAX_TOKENS = 1024
-_MAX_MAX_TOKENS = 8192
-# Эвристика: ~4 символа на токен для смешанного RU/EN текста; ответ обычно
-# не длиннее промпта, поэтому закладываем 1.0× от оценки входных токенов.
+# Базовый дефолт поднят, потому что ответы в режиме text_and_report
+# могут включать и сам текст, и краткий отчёт; на длинных промптах 4000
+# токенов иногда оказывается маловато.
+_DEFAULT_MAX_TOKENS = 6000
+_MIN_MAX_TOKENS = 1536
+_MAX_MAX_TOKENS = 12000
+
+# Грубая эвристика для смешанного RU/EN текста.
 _CHARS_PER_TOKEN = 4
+
+# Во многих задачах редактуры ответ по длине сопоставим с входом, а иногда
+# даже длиннее из-за более явных формулировок. Даём запас.
+_RESPONSE_BUDGET_MULTIPLIER = 1.35
+_RESPONSE_BUDGET_FLOOR = 2048
 
 
 def estimate_max_tokens(prompt: str) -> int:
     """Оценивает разумный max_tokens исходя из длины промпта.
 
     Возвращает значение, ограниченное диапазоном
-    [``_MIN_MAX_TOKENS``, ``_MAX_MAX_TOKENS``]. Цель — не дать модели
-    обрезать ответ на длинных текстах и не переплачивать на коротких.
+    [``_MIN_MAX_TOKENS``, ``_MAX_MAX_TOKENS``]. Цель — уменьшить риск
+    обрезки длинных ответов и не раздувать лимит на коротких запросах.
 
     Args:
         prompt: финальный текст промпта, отправляемый модели.
@@ -124,10 +128,14 @@ def estimate_max_tokens(prompt: str) -> int:
     Returns:
         Рекомендуемое значение max_tokens.
     """
-    estimated_input_tokens = max(len(prompt), 0) // _CHARS_PER_TOKEN
-    # Резервируем как минимум столько же токенов на ответ, сколько во входе.
-    budget = max(estimated_input_tokens, _MIN_MAX_TOKENS)
-    return min(max(budget, _MIN_MAX_TOKENS), _MAX_MAX_TOKENS)
+    prompt_length = max(len(prompt), 0)
+    estimated_input_tokens = prompt_length // _CHARS_PER_TOKEN
+
+    response_budget = int(estimated_input_tokens * _RESPONSE_BUDGET_MULTIPLIER)
+    response_budget = max(response_budget, _RESPONSE_BUDGET_FLOOR)
+    response_budget = max(response_budget, _DEFAULT_MAX_TOKENS)
+
+    return min(max(response_budget, _MIN_MAX_TOKENS), _MAX_MAX_TOKENS)
 
 
 class BaseLLMClient(ABC):
@@ -139,12 +147,7 @@ class BaseLLMClient(ABC):
 
     @staticmethod
     def extract_error_message(response: httpx.Response) -> str:
-        """Извлекает человекочитаемое сообщение об ошибке из ответа провайдера.
-
-        Единая реализация для всех провайдеров: поддерживает формат
-        ``{"error": {"message": ...}}`` и ``{"error": "..."}``,
-        с безопасным fallback на ``HTTP <status_code>``.
-        """
+        """Извлекает человекочитаемое сообщение об ошибке из ответа провайдера."""
         try:
             error_data = response.json()
             if "error" in error_data:
@@ -155,7 +158,7 @@ class BaseLLMClient(ABC):
                     return err
                 return "API error"
             return f"HTTP {response.status_code}"
-        except Exception:  # noqa: BLE001 — ответ может быть не-JSON
+        except Exception:  # noqa: BLE001
             return f"HTTP {response.status_code}"
 
     async def __aenter__(self) -> "BaseLLMClient":
@@ -169,12 +172,7 @@ class BaseLLMClient(ABC):
         await self.client.aclose()
 
     def _sleep_delay_for(self, attempt: int) -> Optional[float]:
-        """Возвращает задержку перед следующей попыткой или None.
-
-        None означает, что попытка ``attempt`` (0-based) — последняя, и
-        спать перед выходом из цикла не нужно (иначе тратим до нескольких
-        секунд впустую перед тем как бросить ошибку).
-        """
+        """Возвращает задержку перед следующей попыткой или None."""
         if attempt + 1 >= self.config.max_retries:
             return None
         return _backoff_with_jitter(self.config.retry_delay, attempt)
@@ -194,6 +192,7 @@ class BaseLLMClient(ABC):
                         "provider": self.config.provider.value,
                         "model": self.config.model,
                         "prompt_length": len(prompt),
+                        "max_tokens": self.config.max_tokens,
                     },
                 )
 
@@ -205,9 +204,9 @@ class BaseLLMClient(ABC):
                         "model": self.config.model,
                         "response_length": len(response.content),
                         "tokens_used": response.tokens_used,
+                        "finish_reason": response.finish_reason,
                     },
                 )
-
                 return response
 
             except LLMRateLimitError as error:
@@ -249,8 +248,6 @@ class BaseLLMClient(ABC):
 
             attempt += 1
 
-        # SEC: логируем только тип ошибки, не str(last_error) —
-        # httpx.HTTPError может содержать URL с query-параметрами или фрагменты заголовков.
         logger.error(
             "All %s attempts failed",
             self.config.max_retries,
@@ -264,18 +261,11 @@ class BaseLLMClient(ABC):
 
 
 class _OpenAICompatibleClient(BaseLLMClient):
-    """Базовый клиент для провайдеров с OpenAI-совместимым API.
-
-    Perplexity, OpenAI и OpenRouter используют идентичный формат
-    ``/chat/completions``: одинаковый payload и схема ответа
-    (``choices[0].message.content``). Наследники переопределяют только
-    ``API_URL`` и при необходимости ``_build_headers``.
-    """
+    """Базовый клиент для провайдеров с OpenAI-совместимым API."""
 
     API_URL: str = ""
 
     def _build_headers(self) -> Dict[str, str]:
-        """Стандартные заголовки Bearer-авторизации. Наследники могут расширить."""
         return {
             "Authorization": f"Bearer {self.config.api_key}",
             "Content-Type": "application/json",
@@ -318,18 +308,13 @@ class _OpenAICompatibleClient(BaseLLMClient):
         try:
             content = data["choices"][0]["message"]["content"]
             finish_reason = data["choices"][0].get("finish_reason")
+
             tokens_used = None
             if "usage" in data and isinstance(data["usage"], dict):
                 tokens_used = data["usage"].get("total_tokens")
 
-            # Провайдер может вернуть content=null (content-фильтрация,
-            # tool-calls, пустой ответ). Такой None не ловится KeyError/
-            # IndexError и позже ломает len(response.content). Фейлим явно,
-            # чтобы call_with_fallback мог перейти к следующему провайдеру.
             if not isinstance(content, str) or not content.strip():
-                raise LLMError(
-                    "Provider returned empty or non-text content"
-                )
+                raise LLMError("Provider returned empty or non-text content")
 
             return LLMResponse(
                 content=content,
@@ -362,7 +347,6 @@ class OpenRouterClient(_OpenAICompatibleClient):
 
     def _build_headers(self) -> Dict[str, str]:
         headers = super()._build_headers()
-        # SEC-08: пустой fallback для HTTP-Referer
         headers["HTTP-Referer"] = os.getenv("OPENROUTER_SITE_URL", "")
         headers["X-Title"] = os.getenv("OPENROUTER_APP_NAME", "text-editor-api")
         return headers
@@ -409,8 +393,7 @@ class AnthropicClient(BaseLLMClient):
                     status_code=response.status_code,
                 )
 
-            data = response.json()
-            return self.parse_response(data)
+            return self.parse_response(response.json())
 
         except httpx.TimeoutException as error:
             raise LLMTimeoutError("Request timed out") from error
@@ -420,7 +403,7 @@ class AnthropicClient(BaseLLMClient):
     def parse_response(self, data: Dict[str, Any]) -> LLMResponse:
         try:
             content_blocks = data.get("content", [])
-            text_chunks = []
+            text_chunks: List[str] = []
 
             if isinstance(content_blocks, list):
                 for block in content_blocks:
@@ -459,7 +442,7 @@ def create_llm_client(
     api_key: Optional[str] = None,
     apikey: Optional[str] = None,
     temperature: float = 0.3,
-    max_tokens: int = 4000,
+    max_tokens: int = _DEFAULT_MAX_TOKENS,
     timeout: float = 60.0,
     max_retries: int = 3,
 ) -> BaseLLMClient:
@@ -467,11 +450,10 @@ def create_llm_client(
     Фабрика LLM-клиента.
 
     Важно:
-    - поддерживает оба имени параметра: api_key и apikey (для обратной совместимости);
+    - поддерживает оба имени параметра: api_key и apikey;
     - при отсутствии API key бросает ValueError;
     - возвращает объект, пригодный для `async with`.
     """
-    # Обратная совместимость с старым именем аргумента
     if api_key is None and apikey is not None:
         api_key = apikey
 
@@ -557,31 +539,29 @@ async def call_with_fallback(
 
     Возвращает первый успешный ответ. При исчерпании всех провайдеров
     поднимает LLMError с причиной последнего сбоя.
-
-    Args:
-        prompt: текст промпта для LLM.
-        providers: список имён провайдеров в порядке приоритета.
-        model: имя модели (None — использовать дефолтную для провайдера).
-        temperature: температура генерации.
-        max_retries_per_provider: количество попыток на каждого провайдера.
-        max_tokens: лимит токенов ответа. None — рассчитывается адаптивно
-            из длины промпта через ``estimate_max_tokens``.
     """
     if max_tokens is None:
         max_tokens = estimate_max_tokens(prompt)
-    # Проверка на пустой список провайдеров (Шаг 1)
+
     if not providers:
         raise LLMError("No providers specified. Cannot execute LLM call.")
 
     last_error: Optional[Exception] = None
+
     for provider_name in providers:
         try:
             provider_enum = LLMProvider(provider_name)
         except ValueError:
             logger.warning("Unknown provider %r, skipping.", provider_name)
             continue
+
         try:
-            logger.info("call_with_fallback: trying provider=%s", provider_name)
+            logger.info(
+                "call_with_fallback: trying provider=%s model=%s max_tokens=%s",
+                provider_name,
+                model,
+                max_tokens,
+            )
             async with create_llm_client(
                 provider=provider_enum,
                 model=model,
@@ -590,24 +570,28 @@ async def call_with_fallback(
                 max_tokens=max_tokens,
             ) as client:
                 response = await client.generate(prompt)
-            logger.info("call_with_fallback: success with provider=%s", provider_name)
+            logger.info(
+                "call_with_fallback: success with provider=%s finish_reason=%s",
+                provider_name,
+                response.finish_reason,
+            )
             return response
-        except ValueError as exc:
-            # create_llm_client бросает ValueError, когда у провайдера нет
-            # API-ключа в окружении (или нет дефолтной модели). Это не
-            # фатально для всей цепочки — просто пропускаем этого провайдера
-            # и пробуем следующего. Не логируем str(exc) целиком —
-            # сообщение может содержать имя env-переменной, но не сам ключ.
+
+        except ValueError:
             logger.warning(
                 "call_with_fallback: provider=%s unavailable (missing key or model), skipping",
                 provider_name,
             )
-            last_error = LLMError(
-                f"Provider {provider_name} is not configured"
+            last_error = LLMError(f"Provider {provider_name} is not configured")
+
+        except LLMError as error:
+            logger.warning(
+                "call_with_fallback: provider=%s failed: %s",
+                provider_name,
+                type(error).__name__,
             )
-        except LLMError as exc:
-            logger.warning("call_with_fallback: provider=%s failed: %s", provider_name, exc)
-            last_error = exc
+            last_error = error
+
     raise last_error or LLMError("All providers failed")
 
 
@@ -634,6 +618,7 @@ if __name__ == "__main__":
                 print(f"\nModel: {response.model}")
                 print(f"Provider: {response.provider}")
                 print(f"Tokens used: {response.tokens_used}")
+                print(f"Finish reason: {response.finish_reason}")
         except Exception as error:  # noqa: BLE001
             print(f"LLM error: {error}")
 
