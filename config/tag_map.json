@@ -27,7 +27,11 @@
         "semantics", "redundancy",
         "metaphors", "cliches",
         "discoursemarkers", "conciseness",
-        "officialese", "filler", "stopwords", "aipatterns"
+        "officialese", "filler", "stopwords", "aipatterns",
+        "antithesis", "particles", "idioms", "naturalness", "variety",
+        "formal_antithesis", "comparison", "authority", "boosters",
+        "headers", "argumentation", "cohesion", "rhetoric",
+        "evaluation", "factual", "demonstration", "situations"
       ]
     },
     "basic_edit": {
@@ -112,7 +116,8 @@
     "marketingpush": {
       "primary": ["marketing", "marketingpush"],
       "expanded": ["persuasion", "cta", "promo", "email",
-                   "social", "smm", "landing", "leadmagnet"]
+                   "social", "smm", "landing", "leadmagnet",
+                   "product_in_text", "honest_marketing"]
     }
   },
   "overlays": {
@@ -150,7 +155,8 @@
     },
     "marketingpush": {
       "primary": ["marketing", "marketingpush"],
-      "expanded": ["persuasion", "cta", "email", "social", "landing"]
+      "expanded": ["persuasion", "cta", "email", "social", "landing",
+                   "product_in_text", "honest_marketing"]
     },
     "finalcheck_full": {
       "primary": ["finalcheck"],

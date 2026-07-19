@@ -1,0 +1,8 @@
+{
+  "wrong_exact_match": 1000,
+  "name_exact_match": 500,
+  "partial_text_match": 200,
+  "tag_primary": 10,
+  "tag_primary_bonus": 1,
+  "tag_expanded": 2
+}
