@@ -34,7 +34,7 @@
     {
       "file": "editorial_techniques/anti_ai_techniques.json",
       "subfolder": "editorial_techniques",
-      "size_kb": 66.9,
+      "size_kb": 72.8,
       "stage": "deai_cleanup",
       "priority": 1,
       "load_mode": "always",
@@ -93,7 +93,7 @@
     {
       "file": "stylistic_issues/anti_ai_patterns.json",
       "subfolder": "stylistic_issues",
-      "size_kb": 28.5,
+      "size_kb": 34.8,
       "stage": "deai_cleanup",
       "priority": 1,
       "load_mode": "always",
@@ -113,7 +113,7 @@
     {
       "file": "stylistic_issues/officialese_cliches.json",
       "subfolder": "stylistic_issues",
-      "size_kb": 8.7,
+      "size_kb": 19.2,
       "stage": "deai_cleanup",
       "priority": 1,
       "load_mode": "always",
@@ -132,7 +132,7 @@
     {
       "file": "composition_principles.json",
       "subfolder": "",
-      "size_kb": 17.7,
+      "size_kb": 27.2,
       "stage": "editorial_core",
       "priority": 2,
       "load_mode": "always",
@@ -346,7 +346,7 @@
     {
       "file": "editorial_techniques/cleaning_words_and_noise.json",
       "subfolder": "editorial_techniques",
-      "size_kb": 15.1,
+      "size_kb": 21.5,
       "stage": "word_level",
       "priority": 4,
       "load_mode": "always",
@@ -366,7 +366,7 @@
     {
       "file": "editorial_techniques/syntax_and_sentence_structure.json",
       "subfolder": "editorial_techniques",
-      "size_kb": 22.6,
+      "size_kb": 40.8,
       "stage": "word_level",
       "priority": 4,
       "load_mode": "always",
@@ -522,7 +522,7 @@
     {
       "file": "logic_issues.json",
       "subfolder": "",
-      "size_kb": 30.0,
+      "size_kb": 41.7,
       "stage": "logic",
       "priority": 6,
       "load_mode": "always",
@@ -561,7 +561,7 @@
     {
       "file": "editorial_techniques/cultural_and_factual_checks.json",
       "subfolder": "editorial_techniques",
-      "size_kb": 3.6,
+      "size_kb": 17.3,
       "stage": "specialized",
       "priority": 7,
       "load_mode": "by_tags",
@@ -581,7 +581,7 @@
     {
       "file": "editorial_techniques/ethics_and_tact.json",
       "subfolder": "editorial_techniques",
-      "size_kb": 6.8,
+      "size_kb": 13.7,
       "stage": "specialized",
       "priority": 7,
       "load_mode": "by_tags",
@@ -813,7 +813,7 @@
     {
       "file": "marketing_email.json",
       "subfolder": "",
-      "size_kb": 7.2,
+      "size_kb": 10.0,
       "stage": "overlay_marketing",
       "priority": 9,
       "load_mode": "by_intent",
@@ -836,7 +836,7 @@
     {
       "file": "marketing_other.json",
       "subfolder": "",
-      "size_kb": 10.7,
+      "size_kb": 13.4,
       "stage": "overlay_marketing",
       "priority": 9,
       "load_mode": "by_intent",
@@ -880,7 +880,7 @@
     {
       "file": "marketing_web.json",
       "subfolder": "",
-      "size_kb": 10.4,
+      "size_kb": 15.5,
       "stage": "overlay_marketing",
       "priority": 9,
       "load_mode": "by_intent",
