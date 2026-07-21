@@ -4,10 +4,17 @@ from __future__ import annotations
 import json
 import logging
 from pathlib import Path
-from typing import Any, Dict, List, Set
+from typing import Any, Dict, List, Set, Optional
 
-from src.config_types import CANONICAL_TAGS
+from src.config_types import (
+    CANONICAL_TAGS,
+    FeatureResolutionResult,
+    AssemblyTrace,
+    AssemblyBlockDiagnostics,
+)
+from src.reason_codes import ReasonCode, ACTIVATION_REASONS, SUPPRESSION_REASONS
 from src.tag_registry import normalize_tag
+from src.registry import check_alias_consistency
 
 logger = logging.getLogger(__name__)
 
@@ -500,7 +507,213 @@ def _check_tag_map_coverage(
 
 
 # ============================================================================
-# Основная функция запуска проверок
+# NEW: Проверки explainability (третья итерация) — обновлены для четвёртой итерации
+# ============================================================================
+
+def _check_feature_resolution_invariants(config_path: Path) -> None:
+    """
+    Проверяет инварианты feature resolution на representative сценариях.
+    Использует реальный PromptBuilder и resolve_prompt_features.
+    Теперь использует кэширующие методы PromptBuilder.
+    """
+    try:
+        from src.prompt_builder import PromptBuilder, resolve_prompt_features
+        from src.reason_codes import ACTIVATION_REASONS, SUPPRESSION_REASONS
+    except ImportError as e:
+        logger.warning("Cannot import prompt_builder for invariants check: %s", e)
+        return
+
+    pb = PromptBuilder(config_path=config_path)
+    pb.startup_check()
+
+    # Сценарии: (domain, intent, overlays, ожидаемые флаги)
+    scenarios = [
+        ("marketing", "marketingpush", [], {"storytelling_enabled": False, "marketing_enabled": True, "antiai_enabled": False}),
+        ("blog", "storytelling", [], {"storytelling_enabled": True, "marketing_enabled": False, "antiai_enabled": False}),
+        ("deai", None, [], {"antiai_enabled": True}),
+        ("basic_edit", None, ["editorial"], {"editorial_enabled": True}),
+        ("blog", None, [], {}),
+    ]
+
+    for domain, intent, overlays, expected in scenarios:
+        try:
+            # Получаем конфиги через кэширующие методы PromptBuilder
+            domain_config = pb.get_domain_config(domain)
+            intent_config = pb.get_intent_config(intent)
+            overlay_configs = pb.get_overlay_configs(overlays) if overlays else []
+            result_dict = resolve_prompt_features(
+                domain=domain,
+                intent=intent,
+                overlays=overlays,
+                domain_config=domain_config,
+                intent_config=intent_config,
+                overlay_configs=overlay_configs,
+            )
+            # Проверяем наличие диагностических полей
+            assert "activated_features" in result_dict, f"Missing activated_features for {domain}/{intent}"
+            assert "activation_reasons" in result_dict, f"Missing activation_reasons for {domain}/{intent}"
+            assert "suppression_reasons" in result_dict, f"Missing suppression_reasons for {domain}/{intent}"
+            assert "recognized_aliases" in result_dict, f"Missing recognized_aliases for {domain}/{intent}"
+            assert "ignored_unknown_values" in result_dict, f"Missing ignored_unknown_values for {domain}/{intent}"
+
+            # Проверяем ожидаемые флаги
+            for flag, expected_value in expected.items():
+                actual = result_dict.get(flag)
+                if actual != expected_value:
+                    logger.warning(
+                        "Feature resolution invariant violation for scenario %s/%s/%s: "
+                        "%s = %s, expected %s",
+                        domain, intent, overlays, flag, actual, expected_value
+                    )
+
+            # Проверяем, что если флаг True, есть activation reason
+            for flag in ["storytelling_enabled", "marketing_enabled", "antiai_enabled",
+                         "rhetoric_enabled", "nkrj_enabled", "editorial_enabled"]:
+                if result_dict.get(flag):
+                    feature_name = flag.replace("_enabled", "")
+                    reasons = result_dict.get("activation_reasons", {}).get(feature_name, [])
+                    if not reasons:
+                        logger.warning(
+                            "Feature %s enabled but no activation reasons for scenario %s/%s/%s",
+                            feature_name, domain, intent, overlays
+                        )
+                    for r in reasons:
+                        if r not in ACTIVATION_REASONS:
+                            logger.warning(
+                                "Unknown activation reason '%s' for feature %s in scenario %s/%s/%s",
+                                r, feature_name, domain, intent, overlays
+                            )
+
+        except Exception as e:
+            logger.warning("Feature resolution invariant check failed for scenario %s/%s/%s: %s",
+                           domain, intent, overlays, e)
+
+
+def _check_assembly_diagnostics_invariants(config_path: Path) -> None:
+    """
+    Проверяет инварианты сборки блоков: eligible/included согласованы с фичами.
+    Использует кэширующие методы PromptBuilder.
+    """
+    try:
+        from src.prompt_builder import PromptBuilder, _collect_retrieval_tags, KnowledgeBudgetManager
+        from src.config_types import KnowledgeLevel, LimitsConfig
+    except ImportError as e:
+        logger.warning("Cannot import prompt_builder for assembly invariants check: %s", e)
+        return
+
+    pb = PromptBuilder(config_path=config_path)
+    pb.startup_check()
+
+    try:
+        text = "Тестовый текст для проверки сборки блоков."
+        domain = "blog"
+        intent = None
+        overlays = []
+        domain_config = pb.get_domain_config(domain)
+        intent_config = pb.get_intent_config(intent)
+        overlay_configs = pb.get_overlay_configs(overlays) if overlays else []
+
+        features = resolve_prompt_features(
+            domain=domain,
+            intent=intent,
+            overlays=overlays,
+            domain_config=domain_config,
+            intent_config=intent_config,
+            overlay_configs=overlay_configs,
+        )
+        storytelling_enabled = features["storytelling_enabled"]
+        marketing_enabled = features["marketing_enabled"]
+        antiai_enabled = features["antiai_enabled"]
+        rhetoric_enabled = features["rhetoric_enabled"]
+        nkrj_enabled = features["nkrj_enabled"]
+        editorial_enabled = features["editorial_enabled"]
+
+        tag_sets = _collect_retrieval_tags(domain, intent, features["effective_overlays"])
+        effective_limits = pb._merge_domain_limits(domain_config)
+        budget = KnowledgeBudgetManager(token_budget=None).allocate(
+            limits=effective_limits,
+            level=KnowledgeLevel.FULL,
+        )
+        if not storytelling_enabled:
+            budget.disable("storytelling")
+        if not marketing_enabled:
+            budget.disable("marketing")
+        if not rhetoric_enabled:
+            budget.disable("rhetoric")
+        if not editorial_enabled:
+            budget.disable("editorial")
+        if not nkrj_enabled:
+            budget.disable("nkrj")
+
+        _, _, _, trace = pb._build_knowledge_block(
+            text=text,
+            primary_tags=tag_sets["primary"],
+            expanded_tags=tag_sets["expanded"],
+            budget=budget,
+            domain=domain,
+            intent=intent,
+            overlays=features["effective_overlays"],
+            include_few_shot=True,
+            total_few_shot_used=0,
+            few_shot_seed=None,
+            limits=effective_limits,
+            storytelling_enabled=storytelling_enabled,
+            marketing_enabled=marketing_enabled,
+            antiai_enabled=antiai_enabled,
+            rhetoric_enabled=rhetoric_enabled,
+            nkrj_enabled=nkrj_enabled,
+            editorial_enabled=editorial_enabled,
+            return_trace=True,
+        )
+
+        for diag in trace.blocks:
+            if diag.included and not diag.eligible:
+                logger.warning(
+                    "Assembly invariant violation: block '%s' included but not eligible. "
+                    "Reasons: %s",
+                    diag.name, diag.reason_codes
+                )
+            if diag.eligible and not diag.included and ReasonCode.BLOCK_INELIGIBLE_FEATURE_DISABLED not in diag.reason_codes:
+                if not diag.reason_codes:
+                    logger.warning(
+                        "Assembly invariant: block '%s' eligible but not included without reason. "
+                        "Reasons: %s",
+                        diag.name, diag.reason_codes
+                    )
+
+    except Exception as e:
+        logger.warning("Assembly diagnostics invariant check failed: %s", e)
+
+
+# ============================================================================
+# NEW: Проверка согласованности registry и shared_contracts (четвёртая итерация)
+# ============================================================================
+def _check_registry_consistency() -> None:
+    """
+    Проверяет, что registry и shared_contracts согласованы.
+    Это часть четвёртой итерации для обеспечения единого источника истины.
+    """
+    try:
+        from src.registry import get_known_intents, get_known_overlays
+        from src.shared_contracts import ALLOWED_INTENTS, ALLOWED_OVERLAYS
+        registry_intents = get_known_intents()
+        registry_overlays = get_known_overlays()
+        if registry_intents != ALLOWED_INTENTS:
+            logger.warning(
+                "Registry intents (%s) do not match shared_contracts ALLOWED_INTENTS (%s)",
+                registry_intents, ALLOWED_INTENTS
+            )
+        if registry_overlays != ALLOWED_OVERLAYS:
+            logger.warning(
+                "Registry overlays (%s) do not match shared_contracts ALLOWED_OVERLAYS (%s)",
+                registry_overlays, ALLOWED_OVERLAYS
+            )
+    except ImportError as e:
+        logger.warning("Cannot import registry for consistency check: %s", e)
+
+
+# ============================================================================
+# Основная функция запуска проверок (обновлена для четвёртой итерации)
 # ============================================================================
 def run_startup_checks(
     allowed_domains: Set[str],
@@ -524,8 +737,14 @@ def run_startup_checks(
       retrieval деградирует до NEUTRAL stage
     - scoring_weights.json может отсутствовать — используются дефолтные веса
     - покрытие tag_map.json может быть неполным
+
+    NEW (четвёртая итерация):
+    - проверка согласованности registry и shared_contracts
+    - все инвариантные проверки используют кэширующие методы PromptBuilder
     """
-    logger.info("Running startup checks...")
+    logger.info("Running startup checks (fourth iteration)...")
+
+    # Существующие мягкие проверки
     _check_tag_map_coverage(config_path, allowed_domains, allowed_intents, allowed_overlays)
     _check_domain_files_soft(config_path, allowed_domains)
     _check_intent_files_soft(config_path, allowed_intents)
@@ -534,4 +753,18 @@ def run_startup_checks(
     _check_tags_vs_kb(kb_path)
     check_config_tags_vs_kb(config_path, kb_path)
     _check_scoring_weights_file(config_path)
+
+    # NEW: проверки registry и explainability (четвёртая итерация)
+    try:
+        _check_registry_consistency()
+        # check_alias_consistency импортирована из registry
+        warnings = check_alias_consistency()
+        for w in warnings:
+            logger.warning(w)
+        _check_feature_resolution_invariants(config_path)
+        _check_assembly_diagnostics_invariants(config_path)
+    except Exception as e:
+        # Эти проверки не должны останавливать сервис, только логировать
+        logger.warning("Explainability/registry invariants check failed: %s", e)
+
     logger.info("Startup checks passed successfully.")

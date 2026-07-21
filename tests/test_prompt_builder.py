@@ -1,3 +1,4 @@
+# tests/test_prompt_builder.py
 from __future__ import annotations
 
 import warnings
@@ -21,6 +22,8 @@ from src.prompt_builder import (
     KBBlockConfig,
     _append_rule_entries,
     load_output_format,
+    load_domain_config,
+    load_intent_config,
 )
 from src.knowledge_retrieval import FallbackStage, _collect_with_budget
 
@@ -536,7 +539,7 @@ def test_process_kb_block_skips_disabled(builder: PromptBuilder) -> None:
 
 
 # ----------------------------------------------------------------------------
-# 3. Порядок блоков в _build_knowledge_block
+# 3. Порядок блоков в _build_knowledge_block (ИСПРАВЛЕН)
 # ----------------------------------------------------------------------------
 
 def test_build_knowledge_block_order(builder: PromptBuilder) -> None:
@@ -570,6 +573,7 @@ def test_build_knowledge_block_order(builder: PromptBuilder) -> None:
                 for block in KB_BLOCK_REGISTRY
             }
             budget = KnowledgeBudget(budget_dict)
+            # Явно включаем все блоки, чтобы проверить порядок
             text, _, _ = builder._build_knowledge_block(
                 text="Тест",
                 primary_tags=set(),
@@ -580,6 +584,12 @@ def test_build_knowledge_block_order(builder: PromptBuilder) -> None:
                 overlays=[],
                 include_few_shot=False,
                 total_few_shot_used=0,
+                storytelling_enabled=True,
+                marketing_enabled=True,
+                antiai_enabled=True,
+                rhetoric_enabled=True,
+                nkrj_enabled=True,
+                editorial_enabled=True,
             )
 
     expected_titles = [block.title for block in KB_BLOCK_REGISTRY]
@@ -589,7 +599,7 @@ def test_build_knowledge_block_order(builder: PromptBuilder) -> None:
 
 
 # ----------------------------------------------------------------------------
-# 4. allow_storytelling=False
+# 4. allow_storytelling=False (ИСПРАВЛЕН)
 # ----------------------------------------------------------------------------
 
 def test_allow_storytelling_false(builder: PromptBuilder) -> None:
@@ -611,7 +621,8 @@ def test_allow_storytelling_false(builder: PromptBuilder) -> None:
         lines.append(config.title)
         return kwargs.get('total_few_shot_used', 0)
 
-    with patch("src.prompt_builder._cached_load_domain_config", return_value=domain_config):
+    # Мокаем load_domain_config, чтобы он возвращал наш domain_config
+    with patch("src.prompt_builder.load_domain_config", return_value=domain_config):
         with patch('src.prompt_builder._process_kb_block', side_effect=mock_process):
             builder.build(
                 text="Тестовый текст.",
@@ -682,20 +693,25 @@ def test_deprecation_warning(builder: PromptBuilder) -> None:
 
 
 # ----------------------------------------------------------------------------
-# 8. reload_configs очищает кеш
+# 8. reload_configs очищает кеш (ИСПРАВЛЕН)
 # ----------------------------------------------------------------------------
 
 def test_reload_clears_cache(builder: PromptBuilder) -> None:
-    """reload_configs должен очищать кеш _cached_load_domain_config и _cached_load_intent_config."""
-    with patch("src.prompt_builder._cached_load_domain_config") as mock_domain_cache, \
-         patch("src.prompt_builder._cached_load_intent_config") as mock_intent_cache:
-        mock_domain_cache.cache_clear = MagicMock()
-        mock_intent_cache.cache_clear = MagicMock()
+    """reload_configs должен очищать кэш доменов и интентов."""
+    # Прогреваем кэш
+    builder.get_domain_config("blog")
+    builder.get_intent_config("storytelling")
 
+    # Мокаем load_domain_config и load_intent_config
+    with patch("src.prompt_builder.load_domain_config", wraps=load_domain_config) as mock_load_domain, \
+         patch("src.prompt_builder.load_intent_config", wraps=load_intent_config) as mock_load_intent:
+        # Сброс кэша
         builder.reload_configs()
-
-        mock_domain_cache.cache_clear.assert_called_once()
-        mock_intent_cache.cache_clear.assert_called_once()
+        # Повторные вызовы должны вызвать load_* снова
+        builder.get_domain_config("blog")
+        builder.get_intent_config("storytelling")
+        assert mock_load_domain.call_count == 1
+        assert mock_load_intent.call_count == 1
 
 
 # ----------------------------------------------------------------------------

@@ -1,10 +1,12 @@
+# src/prompt_builder.py
+
 """
 prompt_builder.py
 
 Модуль для сборки финальных промптов из конфигов и базы знаний.
-
+Четвёртая итерация: кэширование, централизованный доступ к конфигам,
+канонический registry.
 """
-
 from __future__ import annotations
 
 import functools
@@ -13,7 +15,7 @@ import json
 import logging
 import random
 import warnings
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Sequence, Set, Tuple, Union, overload, Literal
 
@@ -33,6 +35,16 @@ from src.config_types import (
     get_primary_tags_for_category,
     FileCache,
     CachePolicy,
+    FeatureResolutionResult,
+    AssemblyBlockDiagnostics,
+    AssemblyTrace,
+)
+from src.reason_codes import ReasonCode
+from src.registry import (
+    CANONICAL_FEATURE_ALIASES,
+    KNOWN_FEATURE_ALIASES,
+    get_features_from_tags,
+    check_alias_consistency,
 )
 from src.knowledge_retrieval import (
     FallbackStage,
@@ -48,12 +60,12 @@ from src.shared_contracts import (
     ALLOWED_OVERLAYS,
 )
 from src.tag_registry import normalize_tag, normalize_tags
-from src.kb_manifest_loader import load_manifest, select_files_for_request, ManifestEntry  # <-- добавлен импорт
+from src.kb_manifest_loader import load_manifest, select_files_for_request, ManifestEntry
 
 logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
-# Константы для валидации kb_limits (BUG‑C + BUG‑D)
+# Константы для валидации kb_limits
 # ---------------------------------------------------------------------------
 ALLOWED_KB_LIMIT_KEYS: frozenset = frozenset({
     "grammar", "style", "logic", "composition", "cohesion", "local_cohesion",
@@ -66,7 +78,37 @@ KB_LIMIT_MIN: int = 1
 KB_LIMIT_MAX: int = 100
 
 # ---------------------------------------------------------------------------
-# Дефолтные конфиги — используются если файл на диске не найден (Уровень 2)
+# КАНОНИЧЕСКИЙ СЛОЙ: алиасы для фич (уже в registry, оставляем для совместимости)
+# ---------------------------------------------------------------------------
+# Теперь импортируем из registry, но сохраняем ссылки для обратной совместимости
+_TAG_TO_FEATURE = {alias: feature for feature, aliases in CANONICAL_FEATURE_ALIASES.items() for alias in aliases}
+
+# ---------------------------------------------------------------------------
+# Вспомогательные функции нормализации
+# ---------------------------------------------------------------------------
+def normalize_intent(intent: Optional[str]) -> Optional[str]:
+    if intent is None or intent == "neutral":
+        return None
+    normalized = intent.lower().strip()
+    if normalized not in ALLOWED_INTENTS:
+        logger.warning(f"Unknown intent '{normalized}', treating as neutral.")
+        return None
+    return normalized
+
+def normalize_overlays(overlays: Sequence[str]) -> List[str]:
+    result = []
+    for ov in overlays:
+        norm = ov.lower().strip()
+        if norm in ALLOWED_OVERLAYS:
+            result.append(norm)
+        else:
+            logger.warning(f"Unknown overlay '{norm}', ignoring.")
+    return result
+
+# (get_features_from_tags импортируется из registry)
+
+# ---------------------------------------------------------------------------
+# Дефолтные конфиги
 # ---------------------------------------------------------------------------
 _DEFAULT_DOMAIN_CONFIG: DomainConfig = DomainConfig(
     name="general",
@@ -78,6 +120,11 @@ _DEFAULT_DOMAIN_CONFIG: DomainConfig = DomainConfig(
     constraints=(),
     ip_ceiling=None,
     kb_limits={},
+    priority=100,
+    suppresses=(),
+    conflicts_with=(),
+    incompatible_intents=(),
+    incompatible_overlays=(),
 )
 
 def _make_default_overlay_config(name: str) -> OverlayConfig:
@@ -85,53 +132,34 @@ def _make_default_overlay_config(name: str) -> OverlayConfig:
         name=name,
         instructions=(),
         conflicts_with=(),
+        priority=70,
+        suppresses=(),
     )
 
-# Интенты, для которых отсутствие знаний из KB — реальная проблема.
-# Для intent=None или intent="neutral" WARNING не нужен.
-_KNOWLEDGE_DEPENDENT_INTENTS: frozenset = frozenset({
-    "analytical", "storytelling", "engagement", "marketingpush",
-})
-
 # ---------------------------------------------------------------------------
-# Few-shot safety limits (PR‑2)
+# JSON-загрузчики и хелперы (остаются публичными)
 # ---------------------------------------------------------------------------
-FEW_SHOT_MAX_EXAMPLES_PER_BLOCK = 3
-FEW_SHOT_MAX_TOTAL_EXAMPLES = 5
-FEW_SHOT_POOL_SIZE = 10
-FEW_SHOT_RULES_FIRST = True
+def normalize_string_list(value: Any) -> List[str]:
+    if not isinstance(value, list):
+        return []
+    result = []
+    for item in value:
+        if isinstance(item, str):
+            stripped = item.strip()
+            if stripped:
+                result.append(stripped.lower())
+    return result
 
+def _unpack_retrieval_result(
+    result: Any,
+) -> Tuple[List[Dict[str, Any]], "FallbackStage", int]:
+    if isinstance(result, tuple) and len(result) == 3:
+        return result
+    if isinstance(result, tuple) and len(result) == 2:
+        return result[0], result[1], 0
+    return result, FallbackStage.STRONG, 0
 
-# ---------------------------------------------------------------------------
-# Конфигурация блока базы знаний
-# ---------------------------------------------------------------------------
-@dataclass(frozen=True)
-class KBBlockConfig:
-    """Конфигурация одного блока базы знаний."""
-    name: str
-    budget_key: str
-    retrieval_fn: Callable
-    append_fn: Callable
-    title: str
-    kb_attr: Optional[str] = None
-    uses_structural_call: bool = False
-    candidate_attr: Optional[str] = None
-
-
-# ---------------------------------------------------------------------------
-# ТП-2: квалификатор уверенности для блоков KB (исправлено BUG-5 — добавлен комментарий)
-# ---------------------------------------------------------------------------
-def _get_confidence_note(stage: "FallbackStage") -> str:
-    """
-    Возвращает текстовый квалификатор уверенности для блока знаний.
-
-    Примечание:
-        Стадия TEXT_ONLY достигается только для rule-блоков (grammar, style, logic),
-        потому что они используют текстовый матчинг. Для структурных блоков
-        (composition, storytelling и др.) используется _select_by_tags_or_all
-        с normalized_text="", поэтому TEXT_ONLY для них недостижима.
-        Это не баг, а особенность архитектуры.
-    """
+def _get_confidence_note(stage: FallbackStage) -> str:
     if stage == FallbackStage.STRONG:
         return ""
     if stage == FallbackStage.TEXT_ONLY:
@@ -149,72 +177,18 @@ def _get_confidence_note(stage: "FallbackStage") -> str:
         return ""
     return ""
 
-
-# ---------------------------------------------------------------------------
-# Хелпер: распаковка результата retrieval
-# ---------------------------------------------------------------------------
-def _unpack_retrieval_result(
-    result: Any,
-) -> Tuple[List[Dict[str, Any]], "FallbackStage", int]:
-    if isinstance(result, tuple) and len(result) == 3:
-        return result
-    if isinstance(result, tuple) and len(result) == 2:
-        return result[0], result[1], 0
-    return result, FallbackStage.STRONG, 0
-
-
-# ---------------------------------------------------------------------------
-# JSON-загрузчики
-# ---------------------------------------------------------------------------
 def load_json_file(path: Path) -> Dict[str, Any]:
     if not path.exists():
         raise FileNotFoundError(f"Config file not found: {path}")
     return json.loads(path.read_text(encoding="utf-8"))
-
 
 def _load_optional_json(path: Path, default: Any) -> Any:
     if path.exists():
         return load_json_file(path)
     return default
 
-
 # ---------------------------------------------------------------------------
-# Few-shot helper functions
-# ---------------------------------------------------------------------------
-def _has_few_shot_pair(entry: Dict[str, Any]) -> bool:
-    wrong = entry.get("wrong") or entry.get("example_wrong")
-    correct = entry.get("correct") or entry.get("example_correct")
-    return bool(wrong and correct)
-
-
-def _format_few_shot_example(entry: Dict[str, Any]) -> str:
-    wrong = entry.get("wrong") or entry.get("example_wrong")
-    correct = entry.get("correct") or entry.get("example_correct")
-    return f"Было: {wrong}\nСтало: {correct}"
-
-
-def _select_few_shot_examples(
-    entries_with_pairs: List[Dict[str, Any]],
-    max_examples: int,
-    pool_size: int = FEW_SHOT_POOL_SIZE,
-    seed: Optional[int] = None,
-) -> List[Dict[str, Any]]:
-    if not entries_with_pairs or max_examples <= 0:
-        return []
-    pool = entries_with_pairs[:pool_size]
-    if len(pool) <= max_examples:
-        return pool
-    rng = random.Random(seed)
-    return rng.sample(pool, max_examples)
-
-
-def _derive_seed(text: str) -> int:
-    digest = hashlib.md5(text[:256].encode()).hexdigest()
-    return int(digest[:8], 16)
-
-
-# ---------------------------------------------------------------------------
-# Загрузка конфигов
+# Загрузчики конфигов (публичные, используются также извне)
 # ---------------------------------------------------------------------------
 def load_core_config(base_path: Path = Path("config")) -> CoreConfig:
     data = load_json_file(base_path / "core.json")
@@ -232,20 +206,13 @@ def load_core_config(base_path: Path = Path("config")) -> CoreConfig:
         ip_ceiling=ip_ceiling_value,
     )
 
-
-# ============================================================================
-# ИЗМЕНЕНИЕ 2.2 + чтение kb_limits с валидацией (BUG‑C + BUG‑D)
-# ============================================================================
-def load_domain_config(
-    domain: str,
-    base_path: Path = Path("config"),
-) -> DomainConfig:
+def load_domain_config(domain: str, base_path: Path = Path("config")) -> DomainConfig:
     normalized_domain = domain.strip().lower()
     domain_path = base_path / "domains" / f"{normalized_domain}.json"
     if not domain_path.exists():
         logger.warning(
             "load_domain_config: file not found for domain=%r at %s — "
-            "using default domain config (neutral tone, no storytelling/marketing).",
+            "using default domain config.",
             normalized_domain, domain_path,
         )
         return _DEFAULT_DOMAIN_CONFIG
@@ -259,17 +226,13 @@ def load_domain_config(
     elif isinstance(raw_ip, dict):
         domain_ip_ceiling = float(raw_ip.get("value", 2.5))
 
-    # Читаем kb_limits из JSON с валидацией (BUG‑C + BUG‑D)
     raw_kb_limits = data.get("kb_limits", {})
     kb_limits: Dict[str, int] = {}
     if isinstance(raw_kb_limits, dict):
         domain_name = data.get("name", normalized_domain)
         for k, v in raw_kb_limits.items():
             if not isinstance(k, str):
-                logger.warning(
-                    "kb_limits[%r] в домене '%s': ключ не строка — пропущен",
-                    k, domain_name
-                )
+                logger.warning("kb_limits[%r] в домене '%s': ключ не строка — пропущен", k, domain_name)
                 continue
             if k not in ALLOWED_KB_LIMIT_KEYS:
                 logger.warning(
@@ -279,19 +242,22 @@ def load_domain_config(
                 )
                 continue
             if not isinstance(v, (int, float)) or isinstance(v, bool):
-                logger.warning(
-                    "kb_limits['%s'] в домене '%s': значение %r не число — пропущено",
-                    k, domain_name, v
-                )
+                logger.warning("kb_limits['%s'] в домене '%s': значение %r не число — пропущено", k, domain_name, v)
                 continue
             value = int(v)
             clamped = max(KB_LIMIT_MIN, min(KB_LIMIT_MAX, value))
             if clamped != value:
-                logger.warning(
-                    "kb_limits['%s']=%d в домене '%s' вне диапазона [%d, %d] — приведено к %d",
-                    k, value, domain_name, KB_LIMIT_MIN, KB_LIMIT_MAX, clamped
-                )
+                logger.warning("kb_limits['%s']=%d в домене '%s' вне диапазона [%d, %d] — приведено к %d",
+                               k, value, domain_name, KB_LIMIT_MIN, KB_LIMIT_MAX, clamped)
             kb_limits[k] = clamped
+
+    priority = data.get("priority", 100)
+    if not isinstance(priority, int):
+        priority = 100
+    suppresses = tuple(normalize_string_list(data.get("suppresses", [])))
+    conflicts_with = tuple(normalize_string_list(data.get("conflicts_with", [])))
+    incompatible_intents = tuple(normalize_string_list(data.get("incompatible_intents", [])))
+    incompatible_overlays = tuple(normalize_string_list(data.get("incompatible_overlays", [])))
 
     return DomainConfig(
         name=data.get("name", normalized_domain),
@@ -303,98 +269,65 @@ def load_domain_config(
         constraints=tuple(c for c in raw_constraints if isinstance(c, str)),
         ip_ceiling=domain_ip_ceiling,
         kb_limits=kb_limits,
+        priority=priority,
+        suppresses=suppresses,
+        conflicts_with=conflicts_with,
+        incompatible_intents=incompatible_intents,
+        incompatible_overlays=incompatible_overlays,
     )
 
-
-# ============================================================================
-# ИЗМЕНЕНИЕ 2.3
-# ============================================================================
-def load_intent_config(
-    intent: Optional[str],
-    base_path: Path = Path("config"),
-) -> Optional[IntentConfig]:
+def load_intent_config(intent: Optional[str], base_path: Path = Path("config")) -> Optional[IntentConfig]:
     if intent is None or intent == "neutral":
         return None
-    normalized_intent = normalize_tag(intent)
-    intent_path = base_path / "intents" / f"{normalized_intent}.json"
+    normalized = normalize_tag(intent)
+    intent_path = base_path / "intents" / f"{normalized}.json"
     if not intent_path.exists():
-        logger.warning(
-            "load_intent_config: file not found for intent=%r at %s — "
-            "intent-specific instructions will be skipped (treated as neutral).",
-            normalized_intent, intent_path,
-        )
+        logger.warning("load_intent_config: file not found for intent=%r — skipping.", normalized)
         return None
     data = load_json_file(intent_path)
+    priority = data.get("priority", 50)
+    if not isinstance(priority, int):
+        priority = 50
+    suppresses = tuple(normalize_string_list(data.get("suppresses", [])))
+    conflicts_with = tuple(normalize_string_list(data.get("conflicts_with", [])))
     return IntentConfig(
-        name=data.get("name", normalized_intent),
-        instructions=data.get("instructions", []),
+        name=data.get("name", normalized),
+        instructions=tuple(data.get("instructions", [])),
+        priority=priority,
+        suppresses=suppresses,
+        conflicts_with=conflicts_with,
     )
 
-
-# ============================================================================
-# ИЗМЕНЕНИЕ 2.4
-# ============================================================================
-def load_overlay_config(
-    overlay: str,
-    base_path: Path = Path("config"),
-) -> OverlayConfig:
-    # overlay уже приведён к нижнему регистру в _validate_overlays, не нормализуем
+def load_overlay_config(overlay: str, base_path: Path = Path("config")) -> OverlayConfig:
     overlay_path = base_path / "overlays" / f"{overlay}.json"
     if not overlay_path.exists():
-        logger.warning(
-            "load_overlay_config: file not found for overlay=%r at %s — "
-            "using empty overlay config (no overlay instructions applied).",
-            overlay, overlay_path,
-        )
+        logger.warning("load_overlay_config: file not found for overlay=%r — using default.", overlay)
         return _make_default_overlay_config(overlay)
     data = load_json_file(overlay_path)
+    priority = data.get("priority", 70)
+    if not isinstance(priority, int):
+        priority = 70
+    suppresses = tuple(normalize_string_list(data.get("suppresses", [])))
+    conflicts_with = tuple(normalize_string_list(data.get("conflicts_with", [])))
     return OverlayConfig(
         name=data.get("name", overlay),
         instructions=tuple(data.get("instructions", [])),
-        conflicts_with=tuple(data.get("conflicts_with", [])),
+        conflicts_with=conflicts_with,
+        priority=priority,
+        suppresses=suppresses,
     )
 
+def load_overlay_configs(overlays: Sequence[str], base_path: Path = Path("config")) -> List[OverlayConfig]:
+    return [load_overlay_config(ov, base_path) for ov in overlays]
 
-def load_overlay_configs(
-    overlays: Sequence[str],
-    base_path: Path = Path("config"),
-) -> List[OverlayConfig]:
-    return [load_overlay_config(overlay, base_path) for overlay in overlays]
-
-
-# ---------------------------------------------------------------------------
-# Кеширующие обёртки для конфигов
-# ---------------------------------------------------------------------------
-@functools.lru_cache(maxsize=32)
-def _cached_load_domain_config(domain: str, config_path: str) -> DomainConfig:
-    return load_domain_config(domain, Path(config_path))
-
-
-@functools.lru_cache(maxsize=64)
-def _cached_load_intent_config(
-    intent: Optional[str], config_path: str
-) -> Optional[IntentConfig]:
-    return load_intent_config(intent, Path(config_path))
-
-
-# D-4: добавлено предупреждение о неизвестных ключах в global_formatting_rules
-def load_output_format(
-    mode: str,
-    base_path: Path = Path("config"),
-) -> str:
+def load_output_format(mode: str, base_path: Path = Path("config")) -> str:
     data = load_json_file(base_path / "output_format.json")
     mode_instruction = data.get(mode, data.get("text_only", "Верни только отредактированный текст."))
     global_rules = data.get("global_formatting_rules", {})
-    
-    # Проверяем неизвестные ключи
     known_keys = {"allowed_formatting"}
     unknown_keys = set(global_rules.keys()) - known_keys
     if unknown_keys:
-        logger.warning(
-            "load_output_format: ключи %s в 'global_formatting_rules' не используются. Файл: %s",
-            unknown_keys, base_path / "output_format.json"
-        )
-    
+        logger.warning("load_output_format: ключи %s в 'global_formatting_rules' не используются.", unknown_keys)
     if not global_rules:
         return mode_instruction
     global_parts: List[str] = []
@@ -405,36 +338,14 @@ def load_output_format(
         return mode_instruction
     return "\n".join(global_parts) + "\n\n" + mode_instruction
 
-
 # ---------------------------------------------------------------------------
-# Загрузка базы знаний (исправлено: BUG-1 + словарные блоки)
+# Загрузка KB (публичная)
 # ---------------------------------------------------------------------------
-
 def _load_kb_file(
     path: Path,
     expected_key: Optional[str] = None,
     use_known_keys: bool = True,
 ) -> Union[List[Dict[str, Any]], Dict[str, Any]]:
-    """
-    Загружает JSON-файл KB и возвращает записи блока.
-
-    Возвращаемый тип зависит от структуры файла:
-      - список записей (List[Dict]) — для «списочных» блоков
-        (grammar_errors, stylistic_issues, composition_principles и т. д.);
-      - словарь (Dict) — для «словарных» блоков
-        (stop_words, nkrj_structure_patterns, domain_glossary).
-
-    Логика распознавания списка (по приоритету):
-      1. data — сразу список на верхнем уровне;
-      2. data[expected_key] — список под ожидаемым ключом (block_name или stem файла);
-      3. data[<известный ключ>] — список под одним из канонических ключей
-         (если use_known_keys=True);
-      4. единственный ключ верхнего уровня со значением-списком
-         (если use_known_keys=True).
-
-    Если use_known_keys=False, то после проверок 1 и 2 сразу возвращается
-    data как есть (словарь) без поиска по известным ключам.
-    """
     if not path.exists():
         logger.warning("KB file not found: %s", path)
         return []
@@ -443,77 +354,43 @@ def _load_kb_file(
     except (json.JSONDecodeError, OSError) as e:
         logger.error("Failed to load KB file %s: %s", path, e)
         return []
-
     if isinstance(data, list):
         return data
-
     if not isinstance(data, dict):
         logger.warning("KB file %s has unexpected top-level type %s", path, type(data).__name__)
         return []
-
-    # 1. Явно ожидаемый ключ (block_name или stem файла).
     if expected_key and isinstance(data.get(expected_key), list):
         return data[expected_key]
-
-    # Если use_known_keys=False, возвращаем весь словарь (словарный блок)
     if not use_known_keys:
         logger.debug("KB file %s treated as dict block (use_known_keys=False)", path)
         return data
-
-    # 2. Канонические ключи, под которыми часто лежит список записей.
-    known_list_keys = (
-        "items", "examples", "techniques", "frameworks",
-        "templates", "common_mistakes", "issues", "rules", "entries",
-    )
+    known_list_keys = ("items", "examples", "techniques", "frameworks", "templates", "common_mistakes", "issues", "rules", "entries")
     for key in known_list_keys:
         value = data.get(key)
         if isinstance(value, list):
             return value
-
-    # 3. Единственный ключ верхнего уровня со значением-списком.
     list_valued_keys = [k for k, v in data.items() if isinstance(v, list)]
     if len(list_valued_keys) == 1:
         return data[list_valued_keys[0]]
-
-    # 4. Словарный блок: возвращаем dict целиком.
     logger.debug("KB file %s treated as dict block (no list key found)", path)
     return data
 
-
-# ---------------------------------------------------------------------------
-# НОВАЯ ЗАГРУЗКА ПО МАНИФЕСТУ (исправлен цикл для поддержки словарных блоков)
-# ---------------------------------------------------------------------------
 def load_knowledge_base(
     kb_path: Path,
     active_tags: Optional[Set[str]] = None,
     intent: Optional[str] = None,
     load_all: bool = False,
 ) -> KnowledgeBase:
-    """
-    Загружает базу знаний по манифесту, фильтруя файлы по контексту запроса.
-    Возвращает KnowledgeBase с блоками, ключи которых:
-      - если задан entry.block_name → используется он
-      - иначе имя папки для файлов в поддиректориях
-      - иначе имя файла без расширения
-
-    Если load_all=True, загружаются все активные файлы (игнорируя load_mode).
-    Это нужно для тестов и обратной совместимости.
-    """
     manifest = load_manifest(kb_path / "kb_manifest.json")
     if load_all:
         if manifest:
             selected = list(manifest)
         else:
-            # Fallback: все JSON-файлы из kb_path (для тестов без манифеста)
             selected = []
             for json_path in kb_path.rglob("*.json"):
                 rel_path = json_path.relative_to(kb_path)
                 stem = json_path.stem
-                # Определяем тип блока по имени файла
-                if stem in ("stop_words", "nkrj_structure_patterns", "domain_glossary"):
-                    block_type = "dict"
-                else:
-                    block_type = "list"
+                block_type = "dict" if stem in ("stop_words", "nkrj_structure_patterns", "domain_glossary") else "list"
                 entry = ManifestEntry(
                     file=str(rel_path),
                     stage="default",
@@ -531,60 +408,40 @@ def load_knowledge_base(
         selected = select_files_for_request(manifest, active_tags or set(), intent)
 
     block_data: Dict[str, Any] = {}
-
     for entry in selected:
         full_path = kb_path / entry.file
         if not full_path.exists():
             logger.warning("KB file not found: %s", full_path)
             continue
-
-        # Определяем ключ блока: приоритет: block_name > имя папки > stem файла
         if entry.block_name:
             key = entry.block_name
         elif "/" in entry.file:
             key = entry.file.split("/")[0]
         else:
             key = Path(entry.file).stem
-
-        # Формат блока определяется манифестом (block_type), а не именем файла (BUG-7).
-        # "dict" — словарный блок (stop_words, nkrj_structure_patterns, domain_glossary);
-        # "list" (по умолчанию) — список записей.
         if getattr(entry, "block_type", "list") == "dict":
             records = _load_kb_file(full_path, expected_key=None, use_known_keys=False)
         else:
-            records = _load_kb_file(
-                full_path,
-                expected_key=entry.block_name or Path(entry.file).stem,
-            )
-
+            records = _load_kb_file(full_path, expected_key=entry.block_name or Path(entry.file).stem)
         if not records:
             continue
-
         if isinstance(records, dict):
-            # Словарный блок (stop_words, nkrj_structure_patterns, domain_glossary).
             if key in block_data and isinstance(block_data[key], dict):
                 block_data[key].update(records)
             elif key in block_data:
-                logger.warning(
-                    "KB block '%s' type conflict: existing=%s, new=dict — skipping %s",
-                    key, type(block_data[key]).__name__, entry.file,
-                )
+                logger.warning("KB block '%s' type conflict: existing=%s, new=dict — skipping %s",
+                               key, type(block_data[key]).__name__, entry.file)
             else:
                 block_data[key] = records
         else:
-            # Списочный блок: объединяем записи по ключу.
             if key not in block_data:
                 block_data[key] = []
             if isinstance(block_data[key], list):
                 block_data[key].extend(records)
             else:
-                logger.warning(
-                    "KB block '%s' type conflict: existing=%s, new=list — skipping %s",
-                    key, type(block_data[key]).__name__, entry.file,
-                )
+                logger.warning("KB block '%s' type conflict: existing=%s, new=list — skipping %s",
+                               key, type(block_data[key]).__name__, entry.file)
 
-    # Для обратной совместимости: если domain_glossary не был загружен через манифест,
-    # но файл существует, загружаем его отдельно.
     if "domain_glossary" not in block_data:
         domain_glossary_path = kb_path / "domain_glossary.json"
         if domain_glossary_path.exists():
@@ -592,28 +449,32 @@ def load_knowledge_base(
                 data = json.loads(domain_glossary_path.read_text(encoding="utf-8"))
                 if isinstance(data, dict):
                     block_data["domain_glossary"] = data
-                else:
-                    logger.warning("domain_glossary.json has unexpected format, skipping")
             except Exception as e:
                 logger.error("Failed to load domain_glossary.json: %s", e)
 
     kb = KnowledgeBase()
     for key, records in block_data.items():
         kb.register(key, records)
-
-    logger.info(
-        "Loaded KB with %d blocks from manifest (selected %d files, tags=%s, intent=%s, load_all=%s)",
-        len(block_data), len(selected), active_tags, intent, load_all
-    )
+    logger.info("Loaded KB with %d blocks from manifest (selected %d files)", len(block_data), len(selected))
     return kb
 
+# ---------------------------------------------------------------------------
+# NEW: Определение KBBlockConfig
+# ---------------------------------------------------------------------------
+@dataclass(frozen=True)
+class KBBlockConfig:
+    name: str
+    budget_key: str
+    retrieval_fn: Callable
+    append_fn: Callable
+    title: str
+    kb_attr: Optional[str] = None
+    uses_structural_call: bool = False
+    candidate_attr: Optional[str] = None
 
 # ---------------------------------------------------------------------------
-# Вспомогательные функции для сборки тегов и блоков
+# Вспомогательные функции сборки
 # ---------------------------------------------------------------------------
-# ============================================================================
-# ИЗМЕНЕНИЕ 1.6 + BUG-4 (добавлен тег "logic" в базовый набор) — ОТМЕНЕНО в BUG-8
-# ============================================================================
 def _collect_retrieval_tags(
     domain: str,
     intent: Optional[str],
@@ -623,11 +484,7 @@ def _collect_retrieval_tags(
     expanded: Set[str] = set()
     domain_primary = get_primary_tags_for_category("domains", domain)
     if not domain_primary:
-        logger.warning(
-            "_collect_retrieval_tags: no tags found for domain=%r in tag_map.json — "
-            "KB retrieval will use generic fallback tags only (grammar, style, editing, clarity).",
-            domain,
-        )
+        logger.warning("_collect_retrieval_tags: no tags found for domain=%r", domain)
     primary.update(domain_primary)
     expanded.update(get_canonical_tags_for_category("domains", domain))
     if intent and intent != "neutral":
@@ -636,19 +493,10 @@ def _collect_retrieval_tags(
     for overlay in overlays:
         primary.update(get_primary_tags_for_category("overlays", overlay))
         expanded.update(get_canonical_tags_for_category("overlays", overlay))
-    # Базовый набор тегов, всегда присутствующий для поиска.
-    # BUG-8: logic убран из базового набора, так как logic_issues.json теперь
-    # загружается по load_mode="always", а контекстные файлы с тегом logic
-    # (logical_structure.json) не должны грузиться всегда.
     primary.update({"grammar", "style", "editing", "clarity"})
     return {"primary": primary, "expanded": expanded - primary}
 
-
-def _append_rule_entries(
-    lines: List[str],
-    title: str,
-    entries: List[Dict[str, Any]],
-) -> None:
+def _append_rule_entries(lines: List[str], title: str, entries: List[Dict[str, Any]]) -> None:
     if not entries:
         return
     lines.append(title)
@@ -656,7 +504,7 @@ def _append_rule_entries(
         wrong = entry.get("wrong")
         correct = entry.get("correct")
         rule = entry.get("rule") or entry.get("description") or entry.get("name")
-        fragments: List[str] = []
+        fragments = []
         if wrong:
             fragments.append(f"плохо: {wrong}")
         if correct:
@@ -666,12 +514,7 @@ def _append_rule_entries(
         if fragments:
             lines.append("- " + "; ".join(fragments))
 
-
-def _append_structural_entries(
-    lines: List[str],
-    title: str,
-    entries: List[Dict[str, Any]],
-) -> None:
+def _append_structural_entries(lines: List[str], title: str, entries: List[Dict[str, Any]]) -> None:
     if not entries:
         return
     lines.append(title)
@@ -681,7 +524,7 @@ def _append_structural_entries(
         when_to_use = entry.get("when_to_use", "")
         if isinstance(when_to_use, list):
             when_to_use = "; ".join(str(item) for item in when_to_use[:3])
-        fragments: List[str] = []
+        fragments = []
         if name:
             fragments.append(str(name))
         if description:
@@ -691,12 +534,7 @@ def _append_structural_entries(
         if fragments:
             lines.append("- " + " | ".join(fragments))
 
-
-def _append_editorial_entries(
-    lines: List[str],
-    title: str,
-    entries: List[Dict[str, Any]],
-) -> None:
+def _append_editorial_entries(lines: List[str], title: str, entries: List[Dict[str, Any]]) -> None:
     if not entries:
         return
     lines.append(title)
@@ -708,7 +546,7 @@ def _append_editorial_entries(
             how_to_apply_str = "; ".join(str(item) for item in how_to_apply[:3])
         else:
             how_to_apply_str = ""
-        fragments: List[str] = []
+        fragments = []
         if name:
             fragments.append(str(name))
         if description:
@@ -718,12 +556,7 @@ def _append_editorial_entries(
         if fragments:
             lines.append("- " + " | ".join(fragments))
 
-
-def _append_glossary(
-    lines: List[str],
-    glossary: Dict[str, Any],
-    limit: int,
-) -> None:
+def _append_glossary(lines: List[str], glossary: Dict[str, Any], limit: int) -> None:
     if not glossary:
         return
     lines.append("Глоссарий домена:")
@@ -740,7 +573,6 @@ def _append_glossary(
                 lines.append(f"- {term}: {description.strip()}")
                 count += 1
 
-
 def _append_nkrj(lines: List[str], nkrj: Dict[str, Any]) -> None:
     if not nkrj:
         return
@@ -753,7 +585,6 @@ def _append_nkrj(lines: List[str], nkrj: Dict[str, Any]) -> None:
             if isinstance(description, str) and description.strip():
                 lines.append(f"- {key}: {description.strip()}")
 
-
 def _warn_if_empty_retrieval(
     block: str,
     stage: "FallbackStage",
@@ -763,131 +594,54 @@ def _warn_if_empty_retrieval(
     text_len: int,
     primary_tags: Set[str],
 ) -> None:
-    if intent not in _KNOWLEDGE_DEPENDENT_INTENTS:
+    if intent not in ("analytical", "storytelling", "engagement", "marketingpush"):
         return
     logger.warning(
-        "KB retrieval empty: block=%s, stage=%s, domain=%s, intent=%s, "
-        "overlays=%s, text_length=%d, primary_tags=%s",
-        block,
-        stage.value,
-        domain,
-        intent,
-        overlays,
-        text_len,
-        sorted(primary_tags),
+        "KB retrieval empty: block=%s, stage=%s, domain=%s, intent=%s, overlays=%s, text_length=%d, primary_tags=%s",
+        block, stage.value, domain, intent, overlays, text_len, sorted(primary_tags),
     )
-
 
 # ---------------------------------------------------------------------------
 # Реестр блоков базы знаний
 # ---------------------------------------------------------------------------
 KB_BLOCK_REGISTRY: List[KBBlockConfig] = [
-    KBBlockConfig(
-        name="grammar",
-        budget_key="grammar",
-        retrieval_fn=select_grammar_rules,
-        append_fn=_append_rule_entries,
-        title="Грамматические ориентиры:",
-        kb_attr=None,
-        uses_structural_call=False,
-        candidate_attr="grammar_candidates",
-    ),
-    KBBlockConfig(
-        name="style",
-        budget_key="style",
-        retrieval_fn=select_style_issues,
-        append_fn=_append_rule_entries,
-        title="Стилистические ориентиры:",
-        kb_attr=None,
-        uses_structural_call=False,
-        candidate_attr="style_candidates",
-    ),
-    KBBlockConfig(
-        name="logic",
-        budget_key="logic",
-        retrieval_fn=select_logic_issues,
-        append_fn=_append_rule_entries,
-        title="Логические ориентиры:",
-        kb_attr=None,
-        uses_structural_call=False,
-        candidate_attr="logic_candidates",
-    ),
-    KBBlockConfig(
-        name="composition",
-        budget_key="composition",
-        retrieval_fn=select_structural_by_tags_or_all,
-        append_fn=_append_structural_entries,
-        title="Принципы композиции:",
-        kb_attr="composition_principles",
-        uses_structural_call=True,
-        candidate_attr=None,
-    ),
-    KBBlockConfig(
-        name="composition_errors",
-        budget_key="composition_errors",
-        retrieval_fn=select_structural_by_tags_or_all,
-        append_fn=_append_structural_entries,
-        title="Ошибки композиции:",
-        kb_attr="composition_errors",
-        uses_structural_call=True,
-        candidate_attr=None,
-    ),
-    KBBlockConfig(
-        name="cohesion",
-        budget_key="cohesion",
-        retrieval_fn=select_structural_by_tags_or_all,
-        append_fn=_append_structural_entries,
-        title="Локальная связность:",
-        kb_attr="local_cohesion",
-        uses_structural_call=True,
-        candidate_attr=None,
-    ),
-    KBBlockConfig(
-        name="storytelling",
-        budget_key="storytelling",
-        retrieval_fn=select_structural_by_tags_or_all,
-        append_fn=_append_structural_entries,
-        title="Сторителлинг-фреймворки:",
-        kb_attr="storytelling_frameworks",
-        uses_structural_call=True,
-        candidate_attr=None,
-    ),
-    KBBlockConfig(
-        name="marketing",
-        budget_key="marketing",
-        retrieval_fn=select_structural_by_tags_or_all,
-        append_fn=_append_structural_entries,
-        title="Маркетинговые шаблоны:",
-        kb_attr="marketing_templates",
-        uses_structural_call=True,
-        candidate_attr=None,
-    ),
-    KBBlockConfig(
-        name="rhetoric",
-        budget_key="rhetoric",
-        retrieval_fn=select_structural_by_tags_or_all,
-        append_fn=_append_structural_entries,
-        title="Риторические приёмы:",
-        kb_attr="rhetoric_frameworks",
-        uses_structural_call=True,
-        candidate_attr=None,
-    ),
-    KBBlockConfig(
-        name="editorial",
-        budget_key="editorial",
-        retrieval_fn=select_structural_by_tags_or_all,
-        append_fn=_append_editorial_entries,
-        title="Редакторские приёмы:",
-        kb_attr="editorial_techniques",
-        uses_structural_call=True,
-        candidate_attr=None,
-    ),
+    KBBlockConfig(name="grammar", budget_key="grammar", retrieval_fn=select_grammar_rules,
+                  append_fn=_append_rule_entries, title="Грамматические ориентиры:",
+                  kb_attr=None, uses_structural_call=False, candidate_attr="grammar_candidates"),
+    KBBlockConfig(name="style", budget_key="style", retrieval_fn=select_style_issues,
+                  append_fn=_append_rule_entries, title="Стилистические ориентиры:",
+                  kb_attr=None, uses_structural_call=False, candidate_attr="style_candidates"),
+    KBBlockConfig(name="logic", budget_key="logic", retrieval_fn=select_logic_issues,
+                  append_fn=_append_rule_entries, title="Логические ориентиры:",
+                  kb_attr=None, uses_structural_call=False, candidate_attr="logic_candidates"),
+    KBBlockConfig(name="composition", budget_key="composition", retrieval_fn=select_structural_by_tags_or_all,
+                  append_fn=_append_structural_entries, title="Принципы композиции:",
+                  kb_attr="composition_principles", uses_structural_call=True, candidate_attr=None),
+    KBBlockConfig(name="composition_errors", budget_key="composition_errors", retrieval_fn=select_structural_by_tags_or_all,
+                  append_fn=_append_structural_entries, title="Ошибки композиции:",
+                  kb_attr="composition_errors", uses_structural_call=True, candidate_attr=None),
+    KBBlockConfig(name="cohesion", budget_key="cohesion", retrieval_fn=select_structural_by_tags_or_all,
+                  append_fn=_append_structural_entries, title="Локальная связность:",
+                  kb_attr="local_cohesion", uses_structural_call=True, candidate_attr=None),
+    KBBlockConfig(name="storytelling", budget_key="storytelling", retrieval_fn=select_structural_by_tags_or_all,
+                  append_fn=_append_structural_entries, title="Сторителлинг-фреймворки:",
+                  kb_attr="storytelling_frameworks", uses_structural_call=True, candidate_attr=None),
+    KBBlockConfig(name="marketing", budget_key="marketing", retrieval_fn=select_structural_by_tags_or_all,
+                  append_fn=_append_structural_entries, title="Маркетинговые шаблоны:",
+                  kb_attr="marketing_templates", uses_structural_call=True, candidate_attr=None),
+    KBBlockConfig(name="rhetoric", budget_key="rhetoric", retrieval_fn=select_structural_by_tags_or_all,
+                  append_fn=_append_structural_entries, title="Риторические приёмы:",
+                  kb_attr="rhetoric_frameworks", uses_structural_call=True, candidate_attr=None),
+    KBBlockConfig(name="editorial", budget_key="editorial", retrieval_fn=select_structural_by_tags_or_all,
+                  append_fn=_append_editorial_entries, title="Редакторские приёмы:",
+                  kb_attr="editorial_techniques", uses_structural_call=True, candidate_attr=None),
 ]
 
+# ---------------------------------------------------------------------------
+# Обработчик одного блока KB (с константой для candidate_limit)
+# ---------------------------------------------------------------------------
+DEFAULT_CANDIDATE_LIMIT = 10
 
-# ---------------------------------------------------------------------------
-# Обработчик одного блока KB
-# ---------------------------------------------------------------------------
 def _process_kb_block(
     config: KBBlockConfig,
     lines: List[str],
@@ -908,7 +662,7 @@ def _process_kb_block(
     if not config.uses_structural_call:
         candidate_limit = getattr(limits, config.candidate_attr) if config.candidate_attr else None
         if candidate_limit is None:
-            candidate_limit = 10
+            candidate_limit = DEFAULT_CANDIDATE_LIMIT
         result = config.retrieval_fn(
             kb=kb,
             text=text,
@@ -921,7 +675,6 @@ def _process_kb_block(
     else:
         if not config.kb_attr:
             return total_few_shot_used
-        # Используем безопасный get вместо getattr
         entries_source = kb.get(config.kb_attr)
         if not entries_source:
             return total_few_shot_used
@@ -933,48 +686,25 @@ def _process_kb_block(
             char_budget=budget.char_budget,
             return_meta=True,
         )
-
     entries, stage, dropped = _unpack_retrieval_result(result)
-
     pair_entries = [e for e in entries if _has_few_shot_pair(e)]
     rule_entries = [e for e in entries if not _has_few_shot_pair(e)]
-
     few_shot_examples = []
     if include_few_shot:
-        allowed = min(
-            FEW_SHOT_MAX_EXAMPLES_PER_BLOCK,
-            FEW_SHOT_MAX_TOTAL_EXAMPLES - total_few_shot_used
-        )
+        allowed = min(3, 5 - total_few_shot_used)
         if allowed > 0:
-            few_shot_examples = _select_few_shot_examples(
-                pair_entries,
-                allowed,
-                seed=few_shot_seed,
-            )
-
+            few_shot_examples = _select_few_shot_examples(pair_entries, allowed, seed=few_shot_seed)
     confidence_note = _get_confidence_note(stage)
     if (rule_entries or few_shot_examples) and confidence_note:
         lines.append(confidence_note)
-
-    if FEW_SHOT_RULES_FIRST:
-        if rule_entries:
-            config.append_fn(lines, config.title, rule_entries)
-        if few_shot_examples:
-            lines.append("Примеры редактирования:")
-            for ex in few_shot_examples:
-                lines.append(_format_few_shot_example(ex))
-            lines.append("")
-    else:
-        if few_shot_examples:
-            lines.append("Примеры редактирования:")
-            for ex in few_shot_examples:
-                lines.append(_format_few_shot_example(ex))
-            lines.append("")
-        if rule_entries:
-            config.append_fn(lines, config.title, rule_entries)
-
+    if rule_entries:
+        config.append_fn(lines, config.title, rule_entries)
+    if few_shot_examples:
+        lines.append("Примеры редактирования:")
+        for ex in few_shot_examples:
+            lines.append(_format_few_shot_example(ex))
+        lines.append("")
     total_few_shot_used += len(few_shot_examples)
-
     meta[config.name] = {
         "stage": stage.value,
         "entries_count": len(entries),
@@ -985,64 +715,383 @@ def _process_kb_block(
         "entry_names": [e.get("name") for e in entries[:5] if e.get("name")],
         "truncated_count": dropped,
     }
-
     if dropped > 0:
-        logger.info(
-            "Char budget truncated %d records for block='%s', domain=%s, intent=%s",
-            dropped, config.name, domain, intent
-        )
+        logger.info("Char budget truncated %d records for block='%s'", dropped, config.name)
     if stage in (FallbackStage.EMPTY, FallbackStage.NEUTRAL):
         _warn_if_empty_retrieval(
-            block=config.name,
-            stage=stage,
-            domain=domain,
-            intent=intent,
-            overlays=overlays,
-            text_len=len(text),
-            primary_tags=primary_tags,
+            block=config.name, stage=stage, domain=domain, intent=intent,
+            overlays=overlays, text_len=len(text), primary_tags=primary_tags,
         )
-
     return total_few_shot_used
 
+def _has_few_shot_pair(entry: Dict[str, Any]) -> bool:
+    wrong = entry.get("wrong") or entry.get("example_wrong")
+    correct = entry.get("correct") or entry.get("example_correct")
+    return bool(wrong and correct)
+
+def _format_few_shot_example(entry: Dict[str, Any]) -> str:
+    wrong = entry.get("wrong") or entry.get("example_wrong")
+    correct = entry.get("correct") or entry.get("example_correct")
+    return f"Было: {wrong}\nСтало: {correct}"
+
+def _select_few_shot_examples(
+    entries_with_pairs: List[Dict[str, Any]],
+    max_examples: int,
+    pool_size: int = 10,
+    seed: Optional[int] = None,
+) -> List[Dict[str, Any]]:
+    if not entries_with_pairs or max_examples <= 0:
+        return []
+    pool = entries_with_pairs[:pool_size]
+    if len(pool) <= max_examples:
+        return pool
+    rng = random.Random(seed)
+    return rng.sample(pool, max_examples)
+
+def _derive_seed(text: str) -> int:
+    digest = hashlib.md5(text[:256].encode()).hexdigest()
+    return int(digest[:8], 16)
 
 # ---------------------------------------------------------------------------
-# PromptBuilder
+# Вспомогательные функции для explainability
+# ---------------------------------------------------------------------------
+def _add_activation_reason(
+    result: FeatureResolutionResult,
+    feature: str,
+    reason: str,
+) -> None:
+    if feature not in result.activation_reasons:
+        result.activation_reasons[feature] = []
+    result.activation_reasons[feature].append(reason)
+    if feature not in result.activated_features:
+        result.activated_features.append(feature)
+
+def _add_suppression_reason(
+    result: FeatureResolutionResult,
+    feature: str,
+    reason: str,
+) -> None:
+    if feature not in result.suppression_reasons:
+        result.suppression_reasons[feature] = []
+    result.suppression_reasons[feature].append(reason)
+    if feature not in result.suppressed_features:
+        result.suppressed_features.append(feature)
+
+def _add_recognized_alias(
+    result: FeatureResolutionResult,
+    feature: str,
+    alias: str,
+) -> None:
+    if feature not in result.recognized_aliases:
+        result.recognized_aliases[feature] = []
+    if alias not in result.recognized_aliases[feature]:
+        result.recognized_aliases[feature].append(alias)
+
+def _add_ignored_unknown(
+    result: FeatureResolutionResult,
+    value: str,
+) -> None:
+    if value not in result.ignored_unknown_values:
+        result.ignored_unknown_values.append(value)
+
+# ---------------------------------------------------------------------------
+# НОВАЯ ЦЕНТРАЛЬНАЯ ФУНКЦИЯ РАЗРЕШЕНИЯ ФИЧ (с explainability)
+# ---------------------------------------------------------------------------
+def resolve_prompt_features(
+    domain: str,
+    intent: Optional[str],
+    overlays: Sequence[str],
+    domain_config: DomainConfig,
+    intent_config: Optional[IntentConfig],
+    overlay_configs: List[OverlayConfig],
+) -> Dict[str, Any]:
+    """
+    Единый канонический источник feature flags с explainability.
+    Возвращает dict с полями, включая диагностические.
+    """
+    # 1. Нормализация
+    norm_intent = normalize_intent(intent)
+    norm_overlays = normalize_overlays(overlays)
+
+    effective_intent = norm_intent
+    effective_overlays = list(norm_overlays)
+    suppressed_layers = []
+    warnings = []
+
+    # 2. Создаём результат с explainability
+    result = FeatureResolutionResult(
+        tags=[],
+        effective_intent=effective_intent,
+        effective_overlays=effective_overlays,
+        suppressed_layers=suppressed_layers,
+        warnings=warnings,
+        storytelling_enabled=False,
+        marketing_enabled=False,
+        antiai_enabled=False,
+        rhetoric_enabled=False,
+        nkrj_enabled=False,
+        editorial_enabled=False,
+        activated_features=[],
+        suppressed_features=[],
+        activation_reasons={},
+        suppression_reasons={},
+        recognized_aliases={},
+        ignored_unknown_values=[],
+    )
+
+    # Фиксируем unknown intent
+    if intent and not norm_intent:
+        _add_ignored_unknown(result, intent)
+
+    # Фиксируем unknown overlays
+    for ov in overlays:
+        if ov.lower().strip() not in ALLOWED_OVERLAYS:
+            _add_ignored_unknown(result, ov)
+
+    # 3. Базовые теги
+    tags = [domain]
+    if effective_intent:
+        tags.append(effective_intent)
+    tags.extend(effective_overlays)
+
+    # 4. Проверка несовместимости интента с доменом
+    if effective_intent and effective_intent in domain_config.incompatible_intents:
+        suppressed_layers.append(f"intent '{effective_intent}' suppressed by domain '{domain}'")
+        warnings.append(f"Intent '{effective_intent}' incompatible with domain '{domain}', ignoring.")
+        _add_suppression_reason(result, "intent", ReasonCode.SUPPRESSED_BY_DOMAIN_INCOMPATIBLE_INTENT)
+        effective_intent = None
+        tags = [t for t in tags if t != effective_intent]
+
+    # 5. Проверка несовместимости оверлеев с доменом
+    for overlay in list(effective_overlays):
+        if overlay in domain_config.incompatible_overlays:
+            effective_overlays.remove(overlay)
+            suppressed_layers.append(f"overlay '{overlay}' suppressed by domain '{domain}'")
+            warnings.append(f"Overlay '{overlay}' incompatible with domain '{domain}', removed.")
+            _add_suppression_reason(result, f"overlay:{overlay}", ReasonCode.SUPPRESSED_BY_DOMAIN_INCOMPATIBLE_OVERLAY)
+            tags = [t for t in tags if t != overlay]
+
+    # 6. Конфликты между оверлеями
+    overlay_map = {cfg.name: cfg for cfg in overlay_configs}
+    for ov in effective_overlays[:]:
+        cfg = overlay_map.get(ov)
+        if cfg and cfg.conflicts_with:
+            for conflict in cfg.conflicts_with:
+                if conflict in effective_overlays:
+                    effective_overlays.remove(conflict)
+                    suppressed_layers.append(f"overlay '{conflict}' suppressed due to conflict with '{ov}'")
+                    warnings.append(f"Overlay conflict: '{conflict}' removed because it conflicts with '{ov}'.")
+                    _add_suppression_reason(result, f"overlay:{conflict}", ReasonCode.SUPPRESSED_BY_OVERLAY_CONFLICT)
+                    tags = [t for t in tags if t != conflict]
+
+    # 7. Получаем фичи из тегов (используя канонические алиасы)
+    all_tags = [domain]
+    if effective_intent:
+        all_tags.append(effective_intent)
+    all_tags.extend(effective_overlays)
+    features = get_features_from_tags(all_tags)
+
+    # 8. Базовые флаги с explainability
+    # Storytelling
+    if domain_config.allow_storytelling and "storytelling" in features:
+        result.storytelling_enabled = True
+        _add_activation_reason(result, "storytelling", ReasonCode.DOMAIN_ALLOWS_STORYTELLING)
+        _add_activation_reason(result, "storytelling", ReasonCode.RECOGNIZED_STORYTELLING_ALIAS)
+        for tag in all_tags:
+            if tag in _TAG_TO_FEATURE and _TAG_TO_FEATURE[tag] == "storytelling":
+                _add_recognized_alias(result, "storytelling", tag)
+    elif "storytelling" in features:
+        _add_suppression_reason(result, "storytelling", ReasonCode.DOMAIN_DENIES_STORYTELLING)
+    else:
+        _add_suppression_reason(result, "storytelling", ReasonCode.NO_RECOGNIZED_ALIAS)
+
+    # Marketing
+    if domain_config.allow_marketing and "marketing" in features:
+        result.marketing_enabled = True
+        _add_activation_reason(result, "marketing", ReasonCode.DOMAIN_ALLOWS_MARKETING)
+        _add_activation_reason(result, "marketing", ReasonCode.RECOGNIZED_MARKETING_ALIAS)
+        for tag in all_tags:
+            if tag in _TAG_TO_FEATURE and _TAG_TO_FEATURE[tag] == "marketing":
+                _add_recognized_alias(result, "marketing", tag)
+    elif "marketing" in features:
+        _add_suppression_reason(result, "marketing", ReasonCode.DOMAIN_DENIES_MARKETING)
+    else:
+        _add_suppression_reason(result, "marketing", ReasonCode.NO_RECOGNIZED_ALIAS)
+
+    # anti-ai
+    if "antiai" in features:
+        result.antiai_enabled = True
+        _add_activation_reason(result, "antiai", ReasonCode.RECOGNIZED_ANTIAI_ALIAS)
+        for tag in all_tags:
+            if tag in _TAG_TO_FEATURE and _TAG_TO_FEATURE[tag] == "antiai":
+                _add_recognized_alias(result, "antiai", tag)
+    else:
+        _add_suppression_reason(result, "antiai", ReasonCode.NO_RECOGNIZED_ALIAS)
+
+    # rhetoric
+    if "rhetoric" in features:
+        result.rhetoric_enabled = True
+        _add_activation_reason(result, "rhetoric", ReasonCode.RECOGNIZED_RHETORIC_ALIAS)
+        for tag in all_tags:
+            if tag in _TAG_TO_FEATURE and _TAG_TO_FEATURE[tag] == "rhetoric":
+                _add_recognized_alias(result, "rhetoric", tag)
+    else:
+        _add_suppression_reason(result, "rhetoric", ReasonCode.NO_RECOGNIZED_ALIAS)
+
+    # nkrj
+    if "nkrj" in features:
+        result.nkrj_enabled = True
+        _add_activation_reason(result, "nkrj", ReasonCode.RECOGNIZED_NKRJ_ALIAS)
+        for tag in all_tags:
+            if tag in _TAG_TO_FEATURE and _TAG_TO_FEATURE[tag] == "nkrj":
+                _add_recognized_alias(result, "nkrj", tag)
+    else:
+        _add_suppression_reason(result, "nkrj", ReasonCode.NO_RECOGNIZED_ALIAS)
+
+    # editorial
+    if "editorial" in features:
+        result.editorial_enabled = True
+        _add_activation_reason(result, "editorial", ReasonCode.RECOGNIZED_EDITORIAL_ALIAS)
+        for tag in all_tags:
+            if tag in _TAG_TO_FEATURE and _TAG_TO_FEATURE[tag] == "editorial":
+                _add_recognized_alias(result, "editorial", tag)
+    else:
+        _add_suppression_reason(result, "editorial", ReasonCode.NO_RECOGNIZED_ALIAS)
+
+    # 9. Применяем suppress правила (первая итерация)
+    if "storytelling" in domain_config.suppresses:
+        result.storytelling_enabled = False
+        suppressed_layers.append("storytelling suppressed by domain")
+        warnings.append("Storytelling disabled by domain 'suppresses' rule.")
+        _add_suppression_reason(result, "storytelling", ReasonCode.SUPPRESSED_BY_DOMAIN_RULE)
+    if "marketing" in domain_config.suppresses or "marketingpush" in domain_config.suppresses:
+        result.marketing_enabled = False
+        suppressed_layers.append("marketing suppressed by domain")
+        warnings.append("Marketing disabled by domain 'suppresses' rule.")
+        _add_suppression_reason(result, "marketing", ReasonCode.SUPPRESSED_BY_DOMAIN_RULE)
+
+    for cfg in overlay_configs:
+        if cfg.name in effective_overlays:
+            if "storytelling" in cfg.suppresses:
+                result.storytelling_enabled = False
+                suppressed_layers.append(f"storytelling suppressed by overlay '{cfg.name}'")
+                warnings.append(f"Storytelling disabled by overlay '{cfg.name}' suppress rule.")
+                _add_suppression_reason(result, "storytelling", ReasonCode.SUPPRESSED_BY_OVERLAY_RULE)
+            if "marketing" in cfg.suppresses or "marketingpush" in cfg.suppresses:
+                result.marketing_enabled = False
+                suppressed_layers.append(f"marketing suppressed by overlay '{cfg.name}'")
+                warnings.append(f"Marketing disabled by overlay '{cfg.name}' suppress rule.")
+                _add_suppression_reason(result, "marketing", ReasonCode.SUPPRESSED_BY_OVERLAY_RULE)
+
+    # 10. Итоговые теги: уникальные
+    final_tags = list(dict.fromkeys(tags))
+    result.tags = final_tags
+    result.effective_intent = effective_intent
+    result.effective_overlays = effective_overlays
+    result.suppressed_layers = suppressed_layers
+    result.warnings = warnings
+
+    # 11. Возвращаем dict для обратной совместимости
+    return result.to_dict()
+
+# ---------------------------------------------------------------------------
+# PromptBuilder (основной класс)
 # ---------------------------------------------------------------------------
 class PromptBuilder:
-    """
-    Фасад для сборки промпта из конфигов и базы знаний.
-    """
-
-    def __init__(
-        self,
-        config_path: Path = Path("config"),
-        kb_path: Path = Path("knowledge_base"),
-        limits: Optional[LimitsConfig] = None,
-    ) -> None:
+    def __init__(self, config_path: Path = Path("config"), kb_path: Path = Path("knowledge_base"),
+                 limits: Optional[LimitsConfig] = None) -> None:
         self.config_path = config_path
         self.kb_path = kb_path
         self._limits = limits or LimitsConfig()
         self.core_config: Optional[CoreConfig] = None
-        # Кеш для KB — инвалидируется по mtime всех файлов KB
+
+        # NEW: кэши для конфигов и output format
+        self._core_cache: Optional[CoreConfig] = None
+        self._domain_cache: Dict[str, DomainConfig] = {}
+        self._intent_cache: Dict[str, Optional[IntentConfig]] = {}
+        self._overlay_cache: Dict[str, OverlayConfig] = {}
+        self._output_format_cache: Dict[str, str] = {}
         self._kb_cache = FileCache(policy=CachePolicy(check_mtime=True))
 
+        self._load_core_config()
+
     # ------------------------------------------------------------------
-    # Startup / reload
+    # Internal get-helper'ы (единая точка доступа)
     # ------------------------------------------------------------------
-    def startup_check(self) -> None:
-        self.core_config = load_core_config(self.config_path)
-        # Валидируем манифест KB на старте — BUG-9
-        self._validate_kb_manifest()
+    def _load_core_config(self) -> CoreConfig:
+        if self._core_cache is None:
+            self._core_cache = load_core_config(self.config_path)
+        return self._core_cache
+
+    def get_core_config(self) -> CoreConfig:
+        return self._load_core_config()
+
+    def get_domain_config(self, domain: str) -> DomainConfig:
+        if domain not in self._domain_cache:
+            self._domain_cache[domain] = load_domain_config(domain, self.config_path)
+        return self._domain_cache[domain]
+
+    def get_intent_config(self, intent: Optional[str]) -> Optional[IntentConfig]:
+        if intent is None or intent == "neutral":
+            return None
+        if intent not in self._intent_cache:
+            self._intent_cache[intent] = load_intent_config(intent, self.config_path)
+        return self._intent_cache[intent]
+
+    def get_overlay_config(self, overlay: str) -> OverlayConfig:
+        if overlay not in self._overlay_cache:
+            self._overlay_cache[overlay] = load_overlay_config(overlay, self.config_path)
+        return self._overlay_cache[overlay]
+
+    def get_overlay_configs(self, overlays: Sequence[str]) -> List[OverlayConfig]:
+        return [self.get_overlay_config(ov) for ov in overlays]
+
+    def get_output_format(self, mode: str) -> str:
+        if mode not in self._output_format_cache:
+            self._output_format_cache[mode] = load_output_format(mode, self.config_path)
+        return self._output_format_cache[mode]
+
+    def get_knowledge_base(self, primary_tags: Set[str], intent: Optional[str]) -> KnowledgeBase:
+        cache_key = f"kb:{','.join(sorted(primary_tags))}:{intent or 'none'}"
+        manifest_path = self.kb_path / "kb_manifest.json"
+        kb_files = [manifest_path]
+        if self.kb_path.exists():
+            kb_files.extend(sorted(self.kb_path.rglob("*.json")))
+        return self._kb_cache.get_or_load_multi(
+            cache_key, kb_files, load_knowledge_base,
+            self.kb_path, primary_tags, intent,
+        )
+
+    # ------------------------------------------------------------------
+    # Cache invalidation
+    # ------------------------------------------------------------------
+    def _invalidate_caches(self) -> None:
+        self._core_cache = None
+        self._domain_cache.clear()
+        self._intent_cache.clear()
+        self._overlay_cache.clear()
+        self._output_format_cache.clear()
+        self._kb_cache.clear()
 
     def reload_configs(self) -> None:
-        _cached_load_domain_config.cache_clear()
-        _cached_load_intent_config.cache_clear()
-        self.core_config = load_core_config(self.config_path)
-        self._kb_cache.clear()  # сбрасываем кеш KB при перезагрузке конфигов
+        self._invalidate_caches()
+        self.core_config = self._load_core_config()
+        logger.info("PromptBuilder caches invalidated and reloaded.")
 
     # ------------------------------------------------------------------
-    # Доступные intents / overlays
+    # Existing public methods (startup_check, get_available_*, _validate_*, etc.)
     # ------------------------------------------------------------------
+    def startup_check(self) -> None:
+        self.core_config = self.get_core_config()
+        self._validate_kb_manifest()
+        # Проверка согласованности алиасов (не блокирующая)
+        try:
+            warnings_list = check_alias_consistency()
+            for w in warnings_list:
+                logger.warning(w)
+        except Exception as e:
+            logger.warning("Alias consistency check failed: %s", e)
+
     def get_available_intents(self) -> Set[str]:
         intents_dir = self.config_path / "intents"
         if not intents_dir.exists():
@@ -1051,11 +1100,7 @@ class PromptBuilder:
         return values or set(ALLOWED_INTENTS)
 
     def getavailableintents(self) -> Set[str]:
-        warnings.warn(
-            "getavailableintents() is deprecated, use get_available_intents()",
-            DeprecationWarning,
-            stacklevel=2
-        )
+        warnings.warn("getavailableintents() deprecated, use get_available_intents()", DeprecationWarning, stacklevel=2)
         return self.get_available_intents()
 
     def get_available_overlays(self) -> Set[str]:
@@ -1066,130 +1111,66 @@ class PromptBuilder:
         return values or set(ALLOWED_OVERLAYS)
 
     def getavailableoverlays(self) -> Set[str]:
-        warnings.warn(
-            "getavailableoverlays() is deprecated, use get_available_overlays()",
-            DeprecationWarning,
-            stacklevel=2
-        )
+        warnings.warn("getavailableoverlays() deprecated, use get_available_overlays()", DeprecationWarning, stacklevel=2)
         return self.get_available_overlays()
 
-    # ------------------------------------------------------------------
-    # ИЗМЕНЕНИЯ 1.3, 1.4, 1.5
-    # ------------------------------------------------------------------
     def _validate_domain(self, domain: str) -> str:
-        """Данные уже провалидированы в EditRequest. Защитный assert."""
         if domain not in ALLOWED_DOMAINS:
-            raise ValueError(
-                f"Unknown domain: {domain!r}. "
-                f"Available domains: {sorted(ALLOWED_DOMAINS)}"
-            )
+            raise ValueError(f"Unknown domain: {domain!r}. Available: {sorted(ALLOWED_DOMAINS)}")
         return domain
 
     def _validate_intent(self, intent: Optional[str]) -> Optional[str]:
-        """Данные уже провалидированы в EditRequest. Защитный assert."""
         if intent is None:
             return None
         if intent not in ALLOWED_INTENTS:
-            raise ValueError(
-                f"Unknown intent: {intent!r}. "
-                f"Available intents: {sorted(ALLOWED_INTENTS)}"
-            )
+            raise ValueError(f"Unknown intent: {intent!r}. Available: {sorted(ALLOWED_INTENTS)}")
         return intent
 
     def _validate_overlays(self, overlays: Sequence[str]) -> List[str]:
-        """
-        Данные уже провалидированы и нормализованы в EditRequest.
-        Защитный assert + дополнительная проверка конфликтов.
-        """
-        # Приводим к нижнему регистру для единообразия (но нормализация уже сделана)
         normalized = [o.lower() for o in overlays]
         for o in normalized:
             if o not in ALLOWED_OVERLAYS:
-                raise ValueError(
-                    f"Unknown overlay: {o!r}. "
-                    f"Available overlays: {sorted(ALLOWED_OVERLAYS)}"
-                )
-
-        # Проверка конфликтов (дополнительная бизнес-логика)
-        overlay_configs = load_overlay_configs(normalized, self.config_path)
+                raise ValueError(f"Unknown overlay: {o!r}. Available: {sorted(ALLOWED_OVERLAYS)}")
+        overlay_configs = self.get_overlay_configs(normalized)
         for ov_cfg in overlay_configs:
             for conflict in ov_cfg.conflicts_with:
                 if conflict.lower() in normalized:
-                    raise ValueError(
-                        f"Overlays conflict: '{ov_cfg.name}' and '{conflict}' "
-                        f"cannot be used together. Choose one."
-                    )
+                    raise ValueError(f"Overlays conflict: '{ov_cfg.name}' and '{conflict}' cannot be used together.")
         return normalized
 
     def _validate_output_mode(self, output_mode: str) -> str:
         normalized = output_mode.strip().lower()
         if normalized not in ALLOWED_OUTPUT_MODES:
-            raise ValueError(
-                f"Unsupported output_mode: {output_mode!r}. "
-                f"Must be one of {sorted(ALLOWED_OUTPUT_MODES)}"
-            )
+            raise ValueError(f"Unsupported output_mode: {output_mode!r}. Must be one of {sorted(ALLOWED_OUTPUT_MODES)}")
         return normalized
 
-    # ------------------------------------------------------------------
-    # Блоки промпта
-    # ------------------------------------------------------------------
     def _build_audience_block(self, audience: Optional[AudienceProfile]) -> str:
         if audience is None:
             return ""
-        parts = [
-            f"Тип аудитории: {audience.kind}",
-            f"Уровень экспертизы: {audience.expertise}",
-            f"Формальность: {audience.formality}",
-        ]
+        parts = [f"Тип аудитории: {audience.kind}", f"Уровень экспертизы: {audience.expertise}",
+                 f"Формальность: {audience.formality}"]
         if getattr(audience, "description", ""):
             parts.append(f"Описание аудитории: {audience.description}")
         return "\n".join(parts)
 
     def _build_mode_constraints_block(self, domain_config: DomainConfig) -> str:
-        """
-        Формирует блок явных ограничений режима на основе флагов домена.
-        Всегда добавляется в промпт, если хотя бы один флаг False.
-        """
-        lines: List[str] = []
+        lines = []
         if not domain_config.allow_storytelling:
-            lines.append(
-                "Сторителлинг запрещён: не добавляй нарративные отступления, "
-                "личные истории и метафорические сравнения, уводящие от сути."
-            )
+            lines.append("Сторителлинг запрещён: не добавляй нарративные отступления, личные истории и метафоры.")
         if not domain_config.allow_marketing:
-            lines.append(
-                "Маркетинг запрещён: удаляй призывы к действию, триггерные слова "
-                "(«уникальный», «лучший», «срочно») и конструкции давления на читателя."
-            )
-        if not lines:
-            return ""
-        return "Режимные ограничения:\n- " + "\n- ".join(lines)
+            lines.append("Маркетинг запрещён: удаляй призывы к действию, триггерные слова и конструкции давления.")
+        return "\n".join(lines) if lines else ""
 
     def _build_ip_ceiling_block(self, domain_config: DomainConfig) -> str:
-        """Формирует блок с целевым значением ИП."""
-        effective_ceiling = (
-            domain_config.ip_ceiling
-            if domain_config.ip_ceiling is not None
-            else (self.core_config.ip_ceiling if self.core_config else 2.5)
-        )
-        return (
-            f"Целевой Индекс пластиковости (ИП): ≤ {effective_ceiling}. "
-            "После редактирования укажи итоговый ИП. "
-            "Если ИП превышает целевое значение — предупреди и предложи второй проход."
-        )
+        effective_ceiling = domain_config.ip_ceiling if domain_config.ip_ceiling is not None else (
+            self.core_config.ip_ceiling if self.core_config else 2.5)
+        return (f"Целевой Индекс пластиковости (ИП): ≤ {effective_ceiling}. "
+                "После редактирования укажи итоговый ИП. "
+                "Если ИП превышает целевое значение — предупреди и предложи второй проход.")
 
-    # ------------------------------------------------------------------
-    # Слияние глобальных и доменных лимитов (BUG‑B: теперь переопределяет все поля)
-    # ------------------------------------------------------------------
     def _merge_domain_limits(self, domain_config: DomainConfig) -> LimitsConfig:
-        """
-        Возвращает LimitsConfig с переопределениями из kb_limits домена.
-        Поддерживает оба варианта ключа для cohesion: "cohesion" (предпочтительно)
-        и "local_cohesion" (для обратной совместимости).
-        """
         overrides = domain_config.kb_limits or {}
         base = self._limits
-
         return LimitsConfig(
             grammar=overrides.get("grammar", base.grammar),
             style=overrides.get("style", base.style),
@@ -1214,7 +1195,7 @@ class PromptBuilder:
         )
 
     # ------------------------------------------------------------------
-    # _build_knowledge_block — версия с реестром и кешем, принимает limits (BUG‑A)
+    # Основной метод сборки knowledge block (с диагностикой)
     # ------------------------------------------------------------------
     def _build_knowledge_block(
         self,
@@ -1228,35 +1209,27 @@ class PromptBuilder:
         include_few_shot: bool,
         total_few_shot_used: int,
         few_shot_seed: Optional[int] = None,
-        limits: Optional[LimitsConfig] = None,          # <-- добавлено
-    ) -> Tuple[str, Dict[str, Any], int]:
-        # Эффективные лимиты: доменные переопределения, иначе базовые.
+        limits: Optional[LimitsConfig] = None,
+        storytelling_enabled: bool = True,
+        marketing_enabled: bool = True,
+        antiai_enabled: bool = False,
+        rhetoric_enabled: bool = False,
+        nkrj_enabled: bool = False,
+        editorial_enabled: bool = False,
+        return_trace: bool = False,
+    ) -> Union[Tuple[str, Dict[str, Any], int], Tuple[str, Dict[str, Any], int, AssemblyTrace]]:
+        """
+        Строит блок базы знаний. Если return_trace=True, возвращает также AssemblyTrace.
+        """
         effective_limits = limits if limits is not None else self._limits
-
-        # KnowledgeBase зависит только от primary_tags и intent (аргументы loader'а).
-        # Фиксируем intent явно в ключе и инвалидируем кеш по mtime ВСЕХ файлов KB,
-        # чтобы правка отдельного файла сбрасывала кеш.
-        cache_key = f"kb:{','.join(sorted(primary_tags))}:{intent or 'none'}"
-
-        manifest_path = self.kb_path / "kb_manifest.json"
-        kb_files = [manifest_path]
-        if self.kb_path.exists():
-            kb_files.extend(sorted(self.kb_path.rglob("*.json")))
-
-        kb = self._kb_cache.get_or_load_multi(
-            cache_key,
-            kb_files,
-            load_knowledge_base,
-            self.kb_path,
-            primary_tags,
-            intent,
-        )
-
+        # Используем кэш KB
+        kb = self.get_knowledge_base(primary_tags, intent)
         lines: List[str] = []
         meta: Dict[str, Any] = {}
         current_total = total_few_shot_used
+        trace = AssemblyTrace() if return_trace else None
 
-        # Стоп-слова — используем effective_limits
+        # Стоп-слова
         stop_words_budget = budget.get("stop_words")
         if stop_words_budget and stop_words_budget.enabled:
             stop_words = kb.get("stop_words", {})
@@ -1267,15 +1240,89 @@ class PromptBuilder:
                     if isinstance(words, list) and words:
                         joined = ", ".join(str(w) for w in words[:effective_limits.stop_words_items])
                         lines.append(f"- {category}: {joined}")
+                if trace:
+                    trace.add_block(AssemblyBlockDiagnostics(
+                        name="stop_words",
+                        eligible=True,
+                        included=True,
+                        reason_codes=[ReasonCode.BLOCK_INCLUDED],
+                        empty=False,
+                        char_count=sum(len(l) for l in lines[-len(stop_words)-1:]),
+                        entries_count=len(stop_words),
+                    ))
+            else:
+                if trace:
+                    trace.add_block(AssemblyBlockDiagnostics(
+                        name="stop_words",
+                        eligible=True,
+                        included=False,
+                        reason_codes=[ReasonCode.BLOCK_EMPTY_AFTER_BUILD],
+                        empty=True,
+                    ))
 
-        # Основные блоки через реестр — передаём effective_limits в _process_kb_block
+        # Основные блоки через реестр
         for block_cfg in KB_BLOCK_REGISTRY:
             block_budget = budget.get(block_cfg.budget_key)
             if not (block_budget and block_budget.enabled):
+                if trace:
+                    trace.add_block(AssemblyBlockDiagnostics(
+                        name=block_cfg.name,
+                        eligible=False,
+                        included=False,
+                        reason_codes=[ReasonCode.BLOCK_INELIGIBLE_BUDGET_DISABLED],
+                    ))
                 continue
+
+            # Проверка feature-флагов
+            feature_gated = False
+            if block_cfg.name == "storytelling" and not storytelling_enabled:
+                feature_gated = True
+                reason = ReasonCode.BLOCK_INELIGIBLE_FEATURE_DISABLED
+            elif block_cfg.name == "marketing" and not marketing_enabled:
+                feature_gated = True
+                reason = ReasonCode.BLOCK_INELIGIBLE_FEATURE_DISABLED
+            elif block_cfg.name == "rhetoric" and not rhetoric_enabled:
+                feature_gated = True
+                reason = ReasonCode.BLOCK_INELIGIBLE_FEATURE_DISABLED
+            elif block_cfg.name == "editorial" and not editorial_enabled:
+                feature_gated = True
+                reason = ReasonCode.BLOCK_INELIGIBLE_FEATURE_DISABLED
+
+            if feature_gated:
+                if trace:
+                    trace.add_block(AssemblyBlockDiagnostics(
+                        name=block_cfg.name,
+                        eligible=False,
+                        included=False,
+                        reason_codes=[reason],
+                    ))
+                continue
+
+            # Проверка наличия KB-данных
             if block_cfg.uses_structural_call and block_cfg.kb_attr:
                 if not kb.get(block_cfg.kb_attr):
+                    if trace:
+                        trace.add_block(AssemblyBlockDiagnostics(
+                            name=block_cfg.name,
+                            eligible=False,
+                            included=False,
+                            reason_codes=[ReasonCode.BLOCK_INELIGIBLE_KB_UNAVAILABLE],
+                        ))
                     continue
+
+            # Блок eligible
+            eligible = True
+            if trace:
+                trace.add_block(AssemblyBlockDiagnostics(
+                    name=block_cfg.name,
+                    eligible=True,
+                    included=False,
+                    reason_codes=[ReasonCode.BLOCK_ELIGIBLE],
+                ))
+
+            # Собираем блок
+            before_len = len("".join(lines))
+            before_entries = current_total
             current_total = _process_kb_block(
                 config=block_cfg,
                 lines=lines,
@@ -1290,69 +1337,124 @@ class PromptBuilder:
                 overlays=overlays,
                 include_few_shot=include_few_shot,
                 total_few_shot_used=current_total,
-                limits=effective_limits,          # <-- было self._limits
+                limits=effective_limits,
                 few_shot_seed=few_shot_seed,
             )
+            after_len = len("".join(lines))
+            included = (after_len > before_len) and (block_cfg.title in "\n".join(lines))
+            empty = included and (after_len == before_len)
+            char_count = after_len - before_len
+            entries_added = current_total - before_entries
+
+            if trace:
+                if trace.blocks and trace.blocks[-1].name == block_cfg.name:
+                    trace.blocks[-1].included = included
+                    trace.blocks[-1].empty = empty
+                    trace.blocks[-1].char_count = char_count
+                    trace.blocks[-1].entries_count = entries_added
+                    if not included and not empty:
+                        trace.blocks[-1].reason_codes.append(ReasonCode.BLOCK_SKIPPED)
+                    elif included:
+                        trace.blocks[-1].reason_codes.append(ReasonCode.BLOCK_INCLUDED)
+                    if empty:
+                        trace.blocks[-1].reason_codes.append(ReasonCode.BLOCK_EMPTY_AFTER_BUILD)
+                else:
+                    trace.add_block(AssemblyBlockDiagnostics(
+                        name=block_cfg.name,
+                        eligible=eligible,
+                        included=included,
+                        reason_codes=[ReasonCode.BLOCK_INCLUDED if included else ReasonCode.BLOCK_SKIPPED],
+                        empty=empty,
+                        char_count=char_count,
+                        entries_count=entries_added,
+                    ))
 
         # Глоссарий
         glossary_budget = budget.get("glossary")
         if glossary_budget and glossary_budget.enabled:
             glossary = kb.get("domain_glossary", {})
             if glossary:
+                before_len = len("".join(lines))
                 _append_glossary(lines, glossary, glossary_budget.entry_limit)
+                after_len = len("".join(lines))
+                if trace:
+                    trace.add_block(AssemblyBlockDiagnostics(
+                        name="glossary",
+                        eligible=True,
+                        included=True,
+                        reason_codes=[ReasonCode.BLOCK_INCLUDED],
+                        empty=False,
+                        char_count=after_len - before_len,
+                        entries_count=len(glossary),
+                    ))
+            else:
+                if trace:
+                    trace.add_block(AssemblyBlockDiagnostics(
+                        name="glossary",
+                        eligible=True,
+                        included=False,
+                        reason_codes=[ReasonCode.BLOCK_EMPTY_AFTER_BUILD],
+                        empty=True,
+                    ))
 
-        # НКРЯ
+        # NKRJ
         nkrj_budget = budget.get("nkrj")
-        if nkrj_budget and nkrj_budget.enabled:
+        if nkrj_budget and nkrj_budget.enabled and nkrj_enabled:
             nkrj = kb.get("nkrj_structure_patterns", {})
             if nkrj:
+                before_len = len("".join(lines))
                 _append_nkrj(lines, nkrj)
+                after_len = len("".join(lines))
+                if trace:
+                    trace.add_block(AssemblyBlockDiagnostics(
+                        name="nkrj",
+                        eligible=True,
+                        included=True,
+                        reason_codes=[ReasonCode.BLOCK_INCLUDED],
+                        empty=False,
+                        char_count=after_len - before_len,
+                        entries_count=len(nkrj),
+                    ))
+            else:
+                if trace:
+                    trace.add_block(AssemblyBlockDiagnostics(
+                        name="nkrj",
+                        eligible=True,
+                        included=False,
+                        reason_codes=[ReasonCode.BLOCK_EMPTY_AFTER_BUILD],
+                        empty=True,
+                    ))
+        else:
+            if trace:
+                trace.add_block(AssemblyBlockDiagnostics(
+                    name="nkrj",
+                    eligible=False,
+                    included=False,
+                    reason_codes=[ReasonCode.BLOCK_INELIGIBLE_FEATURE_DISABLED],
+                ))
 
+        if return_trace:
+            return "\n".join(lines), meta, current_total, trace
         return "\n".join(lines), meta, current_total
 
-    # ------------------------------------------------------------------
-    # Вспомогательный метод для сборки финального промпта
-    # ------------------------------------------------------------------
     def _assemble_prompt(self, blocks: List[str]) -> str:
-        """Собирает финальный промпт из списка блоков."""
         return "\n\n".join(block for block in blocks if block.strip())
 
-    # ------------------------------------------------------------------
-    # Валидация манифеста KB (BUG-9)
-    # ------------------------------------------------------------------
     def _validate_kb_manifest(self) -> None:
-        """
-        Проверяет согласованность манифеста KB до начала обслуживания запросов.
-
-        Поднимает ValueError, если один и тот же ключ блока описан файлами
-        с разным block_type (list vs dict) — иначе часть данных молча теряется
-        в load_knowledge_base (BUG-9).
-        """
         from src.kb_manifest_loader import load_manifest
-
         manifest = load_manifest(self.kb_path / "kb_manifest.json")
         block_types: Dict[str, str] = {}
         for entry in manifest:
-            if entry.block_name:
-                key = entry.block_name
-            elif "/" in entry.file:
-                key = entry.file.split("/")[0]
-            else:
-                key = Path(entry.file).stem
-
+            key = entry.block_name or entry.file.split("/")[0] if "/" in entry.file else Path(entry.file).stem
             btype = getattr(entry, "block_type", "list")
             existing = block_types.get(key)
             if existing is None:
                 block_types[key] = btype
             elif existing != btype:
-                raise ValueError(
-                    f"KB manifest inconsistent: block '{key}' has mixed "
-                    f"block_type ('{existing}' vs '{btype}') across files. "
-                    f"Fix kb_manifest.json / generate_kb_manifest.py."
-                )
+                raise ValueError(f"KB manifest inconsistent: block '{key}' has mixed block_type ('{existing}' vs '{btype}').")
 
     # ------------------------------------------------------------------
-    # D-5: overload для метода build (исправлено: добавлены значения по умолчанию)
+    # Основной метод build (обновлён с использованием get-helper'ов)
     # ------------------------------------------------------------------
     @overload
     def build(
@@ -1406,17 +1508,11 @@ class PromptBuilder:
         few_shot_seed: Optional[int] = None,
         **legacy_kwargs: Any,
     ) -> Union[str, Tuple[str, Dict[str, Any]]]:
-        """
-        Собирает промпт из конфигов и базы знаний.
-        """
-        # Поддержка legacy camelCase kwargs
+        # Legacy support
         legacy_output_mode = legacy_kwargs.pop("outputmode", None)
         legacy_include_knowledge = legacy_kwargs.pop("includeknowledge", None)
-
         if legacy_kwargs:
-            unknown = ", ".join(sorted(legacy_kwargs))
-            raise TypeError(f"Unexpected keyword arguments: {unknown}")
-
+            raise TypeError(f"Unexpected keyword arguments: {', '.join(sorted(legacy_kwargs))}")
         if legacy_output_mode is not None:
             output_mode = legacy_output_mode
         if legacy_include_knowledge is not None:
@@ -1431,15 +1527,53 @@ class PromptBuilder:
         validated_output_mode = self._validate_output_mode(output_mode)
 
         if self.core_config is None:
-            self.core_config = load_core_config(self.config_path)
+            self.core_config = self.get_core_config()
 
-        domain_config = _cached_load_domain_config(validated_domain, str(self.config_path))
-        intent_config = _cached_load_intent_config(validated_intent, str(self.config_path))
-        overlay_configs = load_overlay_configs(validated_overlays, self.config_path)
-        output_format = load_output_format(validated_output_mode, self.config_path)
+        domain_config = self.get_domain_config(validated_domain)
+        intent_config = self.get_intent_config(validated_intent)
+        overlay_configs = self.get_overlay_configs(validated_overlays)
+        output_format = self.get_output_format(validated_output_mode)
+
+        # Разрешение фич через каноническую функцию
+        features = resolve_prompt_features(
+            domain=validated_domain,
+            intent=validated_intent,
+            overlays=validated_overlays,
+            domain_config=domain_config,
+            intent_config=intent_config,
+            overlay_configs=overlay_configs,
+        )
+        effective_overlays = features["effective_overlays"]
+        storytelling_enabled = features["storytelling_enabled"]
+        marketing_enabled = features["marketing_enabled"]
+        antiai_enabled = features["antiai_enabled"]
+        rhetoric_enabled = features["rhetoric_enabled"]
+        nkrj_enabled = features["nkrj_enabled"]
+        editorial_enabled = features["editorial_enabled"]
+        warnings_list = features["warnings"]
+        for warn in warnings_list:
+            logger.warning("PromptBuilder feature resolution: %s", warn)
+
+        # Теги для KB
+        tag_sets = _collect_retrieval_tags(validated_domain, validated_intent, effective_overlays)
+
+        # Явно добавляем теги для включённых фич, чтобы загрузить соответствующие KB-блоки
+        if editorial_enabled:
+            tag_sets["primary"].add("editorial")
+        if storytelling_enabled:
+            tag_sets["primary"].add("storytelling")
+        if marketing_enabled:
+            tag_sets["primary"].add("marketing")
+        if rhetoric_enabled:
+            tag_sets["primary"].add("rhetoric")
+        if nkrj_enabled:
+            tag_sets["primary"].add("nkrj")
+        if antiai_enabled:
+            tag_sets["primary"].add("antiai")
 
         blocks: List[str] = []
 
+        # Базовые блоки
         blocks.append(f"Роль: {self.core_config.role}")
         blocks.append(f"Приоритеты: {self.core_config.priorities}")
         blocks.append(f"Домен: {domain_config.name}")
@@ -1453,40 +1587,24 @@ class PromptBuilder:
             blocks.append(mode_constraints)
 
         if domain_config.tasks:
-            blocks.append(
-                "Задачи редактора в этом домене:\n- "
-                + "\n- ".join(domain_config.tasks)
-            )
+            blocks.append("Задачи редактора в этом домене:\n- " + "\n- ".join(domain_config.tasks))
         if domain_config.constraints:
-            blocks.append(
-                "Ограничения домена:\n- "
-                + "\n- ".join(domain_config.constraints)
-            )
+            blocks.append("Ограничения домена:\n- " + "\n- ".join(domain_config.constraints))
 
         if self.core_config.basic_audit_instructions:
-            blocks.append(
-                "Базовые инструкции:\n- "
-                + "\n- ".join(self.core_config.basic_audit_instructions)
-            )
-
+            blocks.append("Базовые инструкции:\n- " + "\n- ".join(self.core_config.basic_audit_instructions))
         if self.core_config.forbidden:
-            blocks.append(
-                "Запрещено:\n- " + "\n- ".join(self.core_config.forbidden)
-            )
+            blocks.append("Запрещено:\n- " + "\n- ".join(self.core_config.forbidden))
 
         if intent_config and intent_config.instructions:
-            blocks.append(
-                f"Intent: {intent_config.name}\n- "
-                + "\n- ".join(intent_config.instructions)
-            )
+            blocks.append(f"Intent: {intent_config.name}\n- " + "\n- ".join(intent_config.instructions))
 
-        if overlay_configs:
-            overlay_lines: List[str] = []
-            for overlay in overlay_configs:
+        effective_overlay_configs = [cfg for cfg in overlay_configs if cfg.name in effective_overlays]
+        if effective_overlay_configs:
+            overlay_lines = []
+            for overlay in effective_overlay_configs:
                 if overlay.instructions:
-                    overlay_lines.append(
-                        f"[{overlay.name}] " + " | ".join(overlay.instructions)
-                    )
+                    overlay_lines.append(f"[{overlay.name}] " + " | ".join(overlay.instructions))
             if overlay_lines:
                 blocks.append("Overlay-инструкции:\n- " + "\n- ".join(overlay_lines))
 
@@ -1496,56 +1614,59 @@ class PromptBuilder:
 
         retrieval_meta_total: Dict[str, Any] = {}
         if include_knowledge:
-            tag_sets = _collect_retrieval_tags(
-                validated_domain,
-                validated_intent,
-                validated_overlays,
-            )
-            # ---- КЛЮЧЕВОЕ ИЗМЕНЕНИЕ: применяем доменные лимиты ----
             effective_limits = self._merge_domain_limits(domain_config)
             budget = KnowledgeBudgetManager(token_budget).allocate(
                 limits=effective_limits,
                 level=knowledge_level,
             )
-            if not domain_config.allow_storytelling:
+            if not storytelling_enabled:
                 budget.disable("storytelling")
-            if not domain_config.allow_marketing:
+            if not marketing_enabled:
                 budget.disable("marketing")
+            if not rhetoric_enabled:
+                budget.disable("rhetoric")
+            if not editorial_enabled:
+                budget.disable("editorial")
+            if not nkrj_enabled:
+                budget.disable("nkrj")
 
             effective_seed = few_shot_seed if few_shot_seed is not None else _derive_seed(text)
 
-            knowledge_block, block_meta, _ = self._build_knowledge_block(
+            knowledge_block, block_meta, _, trace = self._build_knowledge_block(
                 text=text,
                 primary_tags=tag_sets["primary"],
                 expanded_tags=tag_sets["expanded"],
                 budget=budget,
                 domain=validated_domain,
                 intent=validated_intent,
-                overlays=validated_overlays,
+                overlays=effective_overlays,
                 include_few_shot=include_few_shot,
                 total_few_shot_used=0,
                 few_shot_seed=effective_seed,
-                limits=effective_limits,          # <-- добавлено
+                limits=effective_limits,
+                storytelling_enabled=storytelling_enabled,
+                marketing_enabled=marketing_enabled,
+                antiai_enabled=antiai_enabled,
+                rhetoric_enabled=rhetoric_enabled,
+                nkrj_enabled=nkrj_enabled,
+                editorial_enabled=editorial_enabled,
+                return_trace=True,
             )
             retrieval_meta_total = block_meta
             if knowledge_block:
                 blocks.append("База знаний:\n" + knowledge_block)
+
+            self._last_trace = trace  # для тестов и диагностики
 
         blocks.append(self._build_ip_ceiling_block(domain_config))
         blocks.append("Формат ответа:\n" + output_format)
         blocks.append("Исходный текст:\n" + text.strip())
 
         prompt = self._assemble_prompt(blocks)
-
         if include_retrieval_meta:
             return prompt, retrieval_meta_total
         return prompt
 
-    # legacy alias
     def build_prompt(self, **kwargs: Any) -> str:
-        warnings.warn(
-            "build_prompt() is deprecated, use build()",
-            DeprecationWarning,
-            stacklevel=2
-        )
+        warnings.warn("build_prompt() is deprecated, use build()", DeprecationWarning, stacklevel=2)
         return self.build(**kwargs)

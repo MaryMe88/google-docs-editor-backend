@@ -1,3 +1,4 @@
+# tests/test_kb_loading_contract.py
 """
 Контрактные тесты загрузки базы знаний и формирования блоков промпта.
 Фиксируют исправления BUG-1, BUG-2, BUG-3, BUG-6.
@@ -80,19 +81,19 @@ def test_knowledge_level_changes_prompt_despite_cache():
 
     p_core = pb.build(
         text=text,
-        domain="fiction",
+        domain="basic_edit",
         knowledge_level=KnowledgeLevel.CORE,
         include_retrieval_meta=False,
     )
     p_full = pb.build(
         text=text,
-        domain="fiction",
+        domain="basic_edit",
         knowledge_level=KnowledgeLevel.FULL,
         include_retrieval_meta=False,
     )
 
     assert len(p_full) > len(p_core), "FULL-промпт должен быть длиннее CORE"
-    assert "Редакторские приёмы" in p_full, "При FULL должен быть блок 'Редакторские приёмы'"
+    assert "Редакторские приёмы" in p_full, "При FULL и домене basic_edit должен быть блок 'Редакторские приёмы'"
     assert "Редакторские приёмы" not in p_core, "При CORE не должно быть блока 'Редакторские приёмы'"
 
 
