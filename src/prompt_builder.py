@@ -859,8 +859,9 @@ def resolve_prompt_features(
         suppressed_layers.append(f"intent '{effective_intent}' suppressed by domain '{domain}'")
         warnings.append(f"Intent '{effective_intent}' incompatible with domain '{domain}', ignoring.")
         _add_suppression_reason(result, "intent", ReasonCode.SUPPRESSED_BY_DOMAIN_INCOMPATIBLE_INTENT)
+        suppressed_intent = effective_intent
         effective_intent = None
-        tags = [t for t in tags if t != effective_intent]
+        tags = [t for t in tags if t != suppressed_intent]
 
     # 5. Проверка несовместимости оверлеев с доменом
     for overlay in list(effective_overlays):
@@ -1554,19 +1555,33 @@ class PromptBuilder:
         for warn in warnings_list:
             logger.warning("PromptBuilder feature resolution: %s", warn)
 
+        # NEW: Вычисляем effective флаги для FULL-уровня
+        knowledge_level_name = (
+            knowledge_level.value
+            if hasattr(knowledge_level, "value")
+            else str(knowledge_level)
+        ).lower()
+
+        # FULL = уровень глубины знаний, а не только feature-activation.
+        # Даже если registry/aliases не подняли фичу, расширенные редакторские
+        # KB-блоки должны быть доступны на полном уровне знаний.
+        editorial_effective = editorial_enabled or knowledge_level_name == "full"
+        rhetoric_effective = rhetoric_enabled or knowledge_level_name == "full"
+        nkrj_effective = nkrj_enabled or knowledge_level_name == "full"
+
         # Теги для KB
         tag_sets = _collect_retrieval_tags(validated_domain, validated_intent, effective_overlays)
 
         # Явно добавляем теги для включённых фич, чтобы загрузить соответствующие KB-блоки
-        if editorial_enabled:
+        if editorial_effective:
             tag_sets["primary"].add("editorial")
         if storytelling_enabled:
             tag_sets["primary"].add("storytelling")
         if marketing_enabled:
             tag_sets["primary"].add("marketing")
-        if rhetoric_enabled:
+        if rhetoric_effective:
             tag_sets["primary"].add("rhetoric")
-        if nkrj_enabled:
+        if nkrj_effective:
             tag_sets["primary"].add("nkrj")
         if antiai_enabled:
             tag_sets["primary"].add("antiai")
@@ -1619,16 +1634,16 @@ class PromptBuilder:
                 limits=effective_limits,
                 level=knowledge_level,
             )
+            # Жёсткий feature gate оставляем только для genuinely mode-driven блоков.
             if not storytelling_enabled:
                 budget.disable("storytelling")
             if not marketing_enabled:
                 budget.disable("marketing")
-            if not rhetoric_enabled:
-                budget.disable("rhetoric")
-            if not editorial_enabled:
-                budget.disable("editorial")
-            if not nkrj_enabled:
-                budget.disable("nkrj")
+
+            # Не отключаем editorial / rhetoric / nkrj только из-за того,
+            # что feature aliases не сработали. Для них knowledge_level=full
+            # должен иметь возможность включить соответствующие KB-блоки.
+            # Поэтому убираем disable для этих трёх.
 
             effective_seed = few_shot_seed if few_shot_seed is not None else _derive_seed(text)
 
@@ -1647,9 +1662,9 @@ class PromptBuilder:
                 storytelling_enabled=storytelling_enabled,
                 marketing_enabled=marketing_enabled,
                 antiai_enabled=antiai_enabled,
-                rhetoric_enabled=rhetoric_enabled,
-                nkrj_enabled=nkrj_enabled,
-                editorial_enabled=editorial_enabled,
+                rhetoric_enabled=rhetoric_effective,
+                nkrj_enabled=nkrj_effective,
+                editorial_enabled=editorial_effective,
                 return_trace=True,
             )
             retrieval_meta_total = block_meta
