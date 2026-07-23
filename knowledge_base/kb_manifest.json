@@ -34,7 +34,7 @@
     {
       "file": "editorial_techniques/anti_ai_techniques.json",
       "subfolder": "editorial_techniques",
-      "size_kb": 72.8,
+      "size_kb": 74.3,
       "stage": "deai_cleanup",
       "priority": 1,
       "load_mode": "always",
@@ -74,7 +74,7 @@
     {
       "file": "stop_words.json",
       "subfolder": "",
-      "size_kb": 21.1,
+      "size_kb": 28.5,
       "stage": "deai_cleanup",
       "priority": 1,
       "load_mode": "always",
