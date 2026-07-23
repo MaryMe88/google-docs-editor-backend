@@ -2,7 +2,7 @@
   "_meta": {
     "description": "Манифест базы знаний. Управляет загрузкой файлов в prompt_builder.",
     "generated_by": "generate_kb_manifest.py",
-    "total_files": 44,
+    "total_files": 45,
     "stages": {
       "deai_cleanup": 5,
       "editorial_core": 7,
@@ -16,7 +16,8 @@
       "overlay_final": 1,
       "overlay_genre": 1,
       "overlay_marketing": 4,
-      "overlay_storytelling": 2
+      "overlay_storytelling": 2,
+      "unclassified": 1
     },
     "load_modes": {
       "always": "Файл грузится при каждом запросе",
@@ -939,6 +940,20 @@
       "status": "active",
       "note": "",
       "block_name": "storytelling_frameworks",
+      "block_type": "list"
+    },
+    {
+      "file": "otsenki.json",
+      "subfolder": "",
+      "size_kb": 12.5,
+      "stage": "unclassified",
+      "priority": 99,
+      "load_mode": "never",
+      "budget_weight": "low",
+      "tags": [],
+      "intents": [],
+      "status": "unclassified",
+      "note": "Файл не найден в FILE_RULES — проверь и добавь вручную",
       "block_type": "list"
     }
   ]
