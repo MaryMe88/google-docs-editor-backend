@@ -133,7 +133,7 @@
     {
       "file": "composition_principles.json",
       "subfolder": "",
-      "size_kb": 27.2,
+      "size_kb": 34.8,
       "stage": "editorial_core",
       "priority": 2,
       "load_mode": "always",
@@ -905,7 +905,7 @@
     {
       "file": "storytelling_macrostructures.json",
       "subfolder": "",
-      "size_kb": 18.2,
+      "size_kb": 31.8,
       "stage": "overlay_storytelling",
       "priority": 9,
       "load_mode": "by_tags",
