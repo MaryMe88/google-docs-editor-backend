@@ -327,7 +327,7 @@
     {
       "file": "stylistic_issues/syntax_errors.json",
       "subfolder": "stylistic_issues",
-      "size_kb": 22.2,
+      "size_kb": 27.6,
       "stage": "stylistic_diagnosis",
       "priority": 3,
       "load_mode": "always",
@@ -523,7 +523,7 @@
     {
       "file": "logic_issues.json",
       "subfolder": "",
-      "size_kb": 41.7,
+      "size_kb": 47.7,
       "stage": "logic",
       "priority": 6,
       "load_mode": "always",
