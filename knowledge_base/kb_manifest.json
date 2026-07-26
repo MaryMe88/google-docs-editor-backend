@@ -905,7 +905,7 @@
     {
       "file": "storytelling_macrostructures.json",
       "subfolder": "",
-      "size_kb": 31.8,
+      "size_kb": 46.0,
       "stage": "overlay_storytelling",
       "priority": 9,
       "load_mode": "by_tags",
@@ -925,7 +925,7 @@
     {
       "file": "storytelling_microtechniques.json",
       "subfolder": "",
-      "size_kb": 25.9,
+      "size_kb": 33.7,
       "stage": "overlay_storytelling",
       "priority": 9,
       "load_mode": "by_tags",
