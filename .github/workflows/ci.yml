@@ -40,6 +40,12 @@ jobs:
         run: |
           python scripts/validate_kb_tags.py
 
+      - name: Run audit_tags.py
+        env:
+          PYTHONPATH: .
+        run: |
+          python scripts/audit_tags.py
+
       - name: Run pytest
         env:
           PYTHONPATH: .
