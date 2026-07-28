@@ -79,21 +79,24 @@ def test_knowledge_level_changes_prompt_despite_cache():
     pb.startup_check()
     text = "Короткий тестовый текст для проверки состава блоков."
 
+    # ИСПРАВЛЕНИЕ: используем домен nora_gal, где editorial включён (значение > 0),
+    # в отличие от basic_edit, где все расширенные блоки отключены (0).
+    # Это позволяет проверить, что при FULL уровне добавляются новые блоки.
     p_core = pb.build(
         text=text,
-        domain="basic_edit",
+        domain="nora_gal",
         knowledge_level=KnowledgeLevel.CORE,
         include_retrieval_meta=False,
     )
     p_full = pb.build(
         text=text,
-        domain="basic_edit",
+        domain="nora_gal",
         knowledge_level=KnowledgeLevel.FULL,
         include_retrieval_meta=False,
     )
 
     assert len(p_full) > len(p_core), "FULL-промпт должен быть длиннее CORE"
-    assert "Редакторские приёмы" in p_full, "При FULL и домене basic_edit должен быть блок 'Редакторские приёмы'"
+    assert "Редакторские приёмы" in p_full, "При FULL и домене nora_gal должен быть блок 'Редакторские приёмы'"
     assert "Редакторские приёмы" not in p_core, "При CORE не должно быть блока 'Редакторские приёмы'"
 
 

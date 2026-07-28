@@ -123,7 +123,8 @@ def test_load_domain_config_range_clamped(tmp_path, caplog):
 
     # Проверяем, что были предупреждения о зажиме
     warnings_found = [rec for rec in caplog.records if "вне диапазона" in rec.message]
-    assert len(warnings_found) >= 3
+    # ИЗМЕНЕНИЕ (Итерация 5): значение 0 теперь допустимо, поэтому предупреждений только 2
+    assert len(warnings_found) >= 2
 
 
 def test_load_domain_config_bool_value_rejected(tmp_path, caplog):
