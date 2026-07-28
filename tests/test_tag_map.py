@@ -2,6 +2,7 @@
 tests/test_tag_map.py
 
 Тесты для задачи 3 (TP-2): вынос CANONICAL_TAGS в JSON и проверка покрытия.
+Также тесты на коллизии имён и существование файлов оверлеев.
 """
 
 from __future__ import annotations
@@ -16,6 +17,7 @@ import pytest
 from src.config_types import CANONICAL_TAGS, get_primary_tags_for_category
 from src.shared_contracts import ALLOWED_DOMAINS, ALLOWED_INTENTS, ALLOWED_OVERLAYS
 from src.startup_checks import _check_tag_map_coverage, run_startup_checks
+from src.tag_registry import normalize_tag
 
 
 def test_canonical_tags_loaded_from_json() -> None:
@@ -90,3 +92,45 @@ def test_run_startup_checks_does_not_fail_due_to_tag_map() -> None:
         # Но если все записи есть, предупреждений может не быть. Поэтому проверяем только отсутствие исключений.
         # Это тест не должен упасть.
         assert True
+
+
+# ============================================================================
+# НОВЫЕ ТЕСТЫ (CI и коллизии)
+# ============================================================================
+
+def test_known_duplicates_normalize_to_same() -> None:
+    """
+    Проверяет, что известные дублирующиеся пары нормализуются к одному каноническому имени.
+    Это гарантирует, что коллизии не приводят к ошибкам, а обрабатываются через нормализацию.
+    """
+    duplicates = [
+        ("noragal", "nora_gal"),
+        ("pressrelease", "press_release"),
+        ("readerfirst", "reader_first"),
+        ("stopwords", "stop_words"),
+        ("finalcheck", "final_check"),
+        ("antiai", "anti_ai"),
+    ]
+    for a, b in duplicates:
+        assert normalize_tag(a) == normalize_tag(b), (
+            f"Нормализация '{a}' и '{b}' даёт разные результаты: "
+            f"'{normalize_tag(a)}' vs '{normalize_tag(b)}'"
+        )
+
+
+def test_overlay_files_exist() -> None:
+    """
+    Проверяет, что для каждого зарегистрированного оверлея существует соответствующий JSON-файл.
+    Это предотвращает ситуацию, когда оверлей объявлен в ALLOWED_OVERLAYS,
+    но файл конфига отсутствует (как было с editorial).
+    """
+    config_dir = Path("config") / "overlays"
+    missing = []
+    for overlay in ALLOWED_OVERLAYS:
+        file_path = config_dir / f"{overlay}.json"
+        if not file_path.is_file():
+            missing.append(overlay)
+
+    assert not missing, (
+        f"Следующие оверлеи зарегистрированы, но файлы конфигов отсутствуют: {missing}"
+    )
