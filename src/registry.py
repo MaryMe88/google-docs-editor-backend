@@ -16,7 +16,8 @@ from src.tag_registry import normalize_tag
 CANONICAL_FEATURE_ALIASES: Final[Dict[str, List[str]]] = {
     "storytelling": ["storytelling", "story", "narrative"],
     "marketing": ["marketing", "marketingpush", "sales", "promo"],
-    "antiai": ["deai", "antiai", "anti-llm", "humanize", "antiplastic"],
+    # ИСПРАВЛЕНИЕ (Итерация 3-4): замена "anti-llm" на "anti_llm" для согласованности с tag_map.json
+    "antiai": ["deai", "antiai", "anti_llm", "humanize", "antiplastic"],
     "rhetoric": ["rhetoric", "persuasion", "figures"],
     "nkrj": ["nkrj", "taiga", "socialnorms"],
     "editorial": ["editorial", "editing", "noragal", "cleanup", "readerfirst", "basic_edit"],

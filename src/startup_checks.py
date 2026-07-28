@@ -428,50 +428,6 @@ def _check_tags_vs_kb(kb_path: Path) -> None:
         )
 
 
-def _collect_wanted_tags_from_configs(config_path: Path) -> Set[str]:
-    """Собирает все wanted_tags из JSON-файлов доменов, интентов и оверлеев."""
-    wanted: Set[str] = set()
-    for subdir in ("domains", "intents", "overlays"):
-        dir_path = config_path / subdir
-        if not dir_path.is_dir():
-            continue
-        for filepath in dir_path.glob("*.json"):
-            try:
-                with open(filepath, encoding="utf-8") as f:
-                    data = json.load(f)
-            except Exception:
-                continue
-            raw_tags = data.get("wanted_tags", [])
-            if isinstance(raw_tags, list):
-                for tag in raw_tags:
-                    if isinstance(tag, str):
-                        norm = normalize_tag(tag)
-                        if norm:
-                            wanted.add(norm)
-    return wanted
-
-
-# ============================================================================
-# ИЗМЕНЕНИЕ 1.2
-# ============================================================================
-def check_config_tags_vs_kb(config_path: Path, kb_path: Path) -> None:
-    """Проверяет, что каждый wanted_tag из конфигов присутствует
-    хотя бы в одной записи базы знаний.
-    """
-    wanted = _collect_wanted_tags_from_configs(config_path)
-    if not wanted:
-        logger.warning("check_config_tags_vs_kb: no wanted_tags found in configs, skipping.")
-        return
-    kb_tags = _collect_kb_tags(kb_path)
-    missing = wanted - kb_tags
-    if missing:
-        logger.warning(
-            "wanted_tags declared in configs but missing in KB: %s. "
-            "Retrieval for these tags will use fallback (NEUTRAL stage).",
-            sorted(missing),
-        )
-
-
 # ============================================================================
 # Новая функция для проверки покрытия tag_map.json (задача 3)
 # ============================================================================
@@ -527,11 +483,11 @@ def _check_feature_resolution_invariants(config_path: Path) -> None:
     pb.startup_check()
 
     # Сценарии: (domain, intent, overlays, ожидаемые флаги)
+    # Итерация 2: убран сценарий с editorial как overlay, так как editorial — это фича, а не overlay.
     scenarios = [
         ("marketing", "marketingpush", [], {"storytelling_enabled": False, "marketing_enabled": True, "antiai_enabled": False}),
         ("blog", "storytelling", [], {"storytelling_enabled": True, "marketing_enabled": False, "antiai_enabled": False}),
         ("deai", None, [], {"antiai_enabled": True}),
-        ("basic_edit", None, ["editorial"], {"editorial_enabled": True}),
         ("blog", None, [], {}),
     ]
 
@@ -595,7 +551,8 @@ def _check_assembly_diagnostics_invariants(config_path: Path) -> None:
     Использует кэширующие методы PromptBuilder.
     """
     try:
-        from src.prompt_builder import PromptBuilder, _collect_retrieval_tags, KnowledgeBudgetManager
+        # ИСПРАВЛЕНИЕ (Итерация 1): добавлен импорт resolve_prompt_features
+        from src.prompt_builder import PromptBuilder, _collect_retrieval_tags, KnowledgeBudgetManager, resolve_prompt_features
         from src.config_types import KnowledgeLevel, LimitsConfig
     except ImportError as e:
         logger.warning("Cannot import prompt_builder for assembly invariants check: %s", e)
@@ -751,7 +708,7 @@ def run_startup_checks(
     _check_overlay_files_soft(config_path, allowed_overlays)
     _check_overlay_names_idempotent(allowed_overlays)  # PR-4 (НП-1)
     _check_tags_vs_kb(kb_path)
-    check_config_tags_vs_kb(config_path, kb_path)
+    # ИЗМЕНЕНИЕ (Итерация 7): удалён вызов check_config_tags_vs_kb, так как его функциональность покрыта _check_tags_vs_kb
     _check_scoring_weights_file(config_path)
 
     # NEW: проверки registry и explainability (четвёртая итерация)

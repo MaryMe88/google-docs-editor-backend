@@ -468,8 +468,9 @@ class KnowledgeBudgetManager:
             self._char_budget // n_enabled if self._char_budget is not None else None
         )
 
+        # ИЗМЕНЕНИЕ (Итерация 5): блок отключается, если entry_limit == 0
         def _blk(name: str, entry_limit: int) -> BlockBudget:
-            is_enabled = level == KnowledgeLevel.FULL or name in allowed
+            is_enabled = (level == KnowledgeLevel.FULL or name in allowed) and entry_limit > 0
             return BlockBudget(
                 entry_limit=entry_limit,
                 char_budget=per_block_chars if is_enabled else None,

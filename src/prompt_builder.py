@@ -74,7 +74,8 @@ ALLOWED_KB_LIMIT_KEYS: frozenset = frozenset({
     "grammar_candidates", "style_candidates", "logic_candidates",
     "storytelling_candidates", "marketing_candidates", "rhetoric_candidates",
 })
-KB_LIMIT_MIN: int = 1
+# ИЗМЕНЕНИЕ (Итерация 5): разрешаем 0 как допустимое значение для отключения категории
+KB_LIMIT_MIN: int = 0
 KB_LIMIT_MAX: int = 100
 
 # ---------------------------------------------------------------------------
