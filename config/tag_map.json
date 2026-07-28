@@ -52,7 +52,7 @@
     "deai": {
       "primary": [
         "deai",
-        "anti_ai"
+        "antiai"
       ],
       "expanded": [
         "humanize",
@@ -103,6 +103,7 @@
     },
     "basic_edit": {
       "primary": [
+        "basic_edit",
         "editing"
       ],
       "expanded": [
@@ -148,6 +149,7 @@
         "editing"
       ],
       "expanded": [
+        "noragal",
         "brevity",
         "clarity",
         "techniques",
@@ -239,6 +241,7 @@
     },
     "readerfirst": {
       "primary": [
+        "readerfirst",
         "clarity"
       ],
       "expanded": [
@@ -508,7 +511,7 @@
     },
     "pressrelease": {
       "primary": [
-        "press_release"
+        "pressrelease"
       ],
       "expanded": [
         "genre",
@@ -600,6 +603,74 @@
         "tact",
         "sensitivity",
         "audience"
+      ]
+    },
+    "post": {
+      "primary": [
+        "post"
+      ],
+      "expanded": [
+        "social",
+        "smm"
+      ]
+    }
+  },
+  "features": {
+    "storytelling": {
+      "primary": [
+        "storytelling"
+      ],
+      "expanded": [
+        "story",
+        "narrative"
+      ]
+    },
+    "marketing": {
+      "primary": [
+        "marketing"
+      ],
+      "expanded": [
+        "marketingpush",
+        "sales",
+        "promo"
+      ]
+    },
+    "antiai": {
+      "primary": [
+        "antiai"
+      ],
+      "expanded": [
+        "deai",
+        "anti-llm",
+        "humanize",
+        "antiplastic"
+      ]
+    },
+    "rhetoric": {
+      "primary": [
+        "rhetoric"
+      ],
+      "expanded": [
+        "persuasion",
+        "figures"
+      ]
+    },
+    "nkrj": {
+      "primary": [
+        "nkrj"
+      ],
+      "expanded": [
+        "taiga",
+        "socialnorms"
+      ]
+    },
+    "editorial": {
+      "primary": [
+        "editorial"
+      ],
+      "expanded": [
+        "cleanup",
+        "editing"
       ]
     }
   }
