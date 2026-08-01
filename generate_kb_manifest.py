@@ -400,41 +400,41 @@ FILE_RULES: dict[str, dict[str, Any]] = {
         "block_name": "storytelling_frameworks",
     },
 
-    # ── overlays: marketing (по интенту) ──────────────────────────────────
+    # ── overlays: marketing (по тегам) ──────────────────────────────────
     "marketing_web.json": {
         "stage": "overlay_marketing",
         "priority": 9,
-        "load_mode": "by_intent",
+        "load_mode": "by_tags",                 # изменено: было "by_intent"
         "budget_weight": "medium",
-        "tags": ["marketing", "web", "landing", "cta"],
-        "intents": ["marketing", "landing_page", "product"],
+        "tags": ["marketing", "web", "landing", "cta"],  # добавлен "marketing"
+        "intents": [],                          # очищено
         "block_name": "marketing_templates",
     },
     "marketing_email.json": {
         "stage": "overlay_marketing",
         "priority": 9,
-        "load_mode": "by_intent",
+        "load_mode": "by_tags",                 # изменено: было "by_intent"
         "budget_weight": "medium",
-        "tags": ["marketing", "email", "newsletter", "lead_magnet"],
-        "intents": ["marketing", "email"],
+        "tags": ["marketing", "email", "newsletter", "lead_magnet"],  # добавлен "marketing"
+        "intents": [],                          # очищено
         "block_name": "marketing_templates",
     },
     "marketing_social.json": {
         "stage": "overlay_marketing",
         "priority": 9,
-        "load_mode": "by_intent",
+        "load_mode": "by_tags",                 # изменено: было "by_intent"
         "budget_weight": "medium",
-        "tags": ["marketing", "social", "smm", "post"],
-        "intents": ["marketing", "social_media"],
+        "tags": ["marketing", "social", "smm", "post"],  # добавлен "marketing"
+        "intents": [],                          # очищено
         "block_name": "marketing_templates",
     },
     "marketing_other.json": {
         "stage": "overlay_marketing",
         "priority": 9,
-        "load_mode": "by_intent",
+        "load_mode": "by_tags",                 # изменено: было "by_intent"
         "budget_weight": "low",
-        "tags": ["marketing", "case_study", "presentation"],
-        "intents": ["marketing"],
+        "tags": ["marketing", "case_study", "presentation"],  # добавлен "marketing"
+        "intents": [],                          # очищено
         "block_name": "marketing_templates",
     },
 
