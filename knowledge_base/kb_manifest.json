@@ -817,7 +817,7 @@
       "size_kb": 10.0,
       "stage": "overlay_marketing",
       "priority": 9,
-      "load_mode": "by_intent",
+      "load_mode": "by_tags",
       "budget_weight": "medium",
       "tags": [
         "marketing",
@@ -825,10 +825,7 @@
         "newsletter",
         "lead_magnet"
       ],
-      "intents": [
-        "marketing",
-        "email"
-      ],
+      "intents": [],
       "status": "active",
       "note": "",
       "block_name": "marketing_templates",
@@ -840,16 +837,14 @@
       "size_kb": 13.4,
       "stage": "overlay_marketing",
       "priority": 9,
-      "load_mode": "by_intent",
+      "load_mode": "by_tags",
       "budget_weight": "low",
       "tags": [
         "marketing",
         "case_study",
         "presentation"
       ],
-      "intents": [
-        "marketing"
-      ],
+      "intents": [],
       "status": "active",
       "note": "",
       "block_name": "marketing_templates",
@@ -861,7 +856,7 @@
       "size_kb": 6.5,
       "stage": "overlay_marketing",
       "priority": 9,
-      "load_mode": "by_intent",
+      "load_mode": "by_tags",
       "budget_weight": "medium",
       "tags": [
         "marketing",
@@ -869,10 +864,7 @@
         "smm",
         "post"
       ],
-      "intents": [
-        "marketing",
-        "social_media"
-      ],
+      "intents": [],
       "status": "active",
       "note": "",
       "block_name": "marketing_templates",
@@ -884,7 +876,7 @@
       "size_kb": 15.5,
       "stage": "overlay_marketing",
       "priority": 9,
-      "load_mode": "by_intent",
+      "load_mode": "by_tags",
       "budget_weight": "medium",
       "tags": [
         "marketing",
@@ -892,11 +884,7 @@
         "landing",
         "cta"
       ],
-      "intents": [
-        "marketing",
-        "landing_page",
-        "product"
-      ],
+      "intents": [],
       "status": "active",
       "note": "",
       "block_name": "marketing_templates",
