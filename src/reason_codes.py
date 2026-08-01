@@ -26,6 +26,7 @@ class ReasonCode(str, Enum):
     RECOGNIZED_RHETORIC_ALIAS = "recognized_rhetoric_alias"
     RECOGNIZED_NKRJ_ALIAS = "recognized_nkrj_alias"
     RECOGNIZED_EDITORIAL_ALIAS = "recognized_editorial_alias"
+    FULL_LEVEL_OVERRIDE = "full_level_override"   # НОВЫЙ КОД
 
     # ------------------------------------------------------------------
     # Feature suppression reasons (фича выключена)
@@ -78,6 +79,7 @@ ACTIVATION_REASONS: Final[Set[str]] = {
     ReasonCode.RECOGNIZED_RHETORIC_ALIAS,
     ReasonCode.RECOGNIZED_NKRJ_ALIAS,
     ReasonCode.RECOGNIZED_EDITORIAL_ALIAS,
+    ReasonCode.FULL_LEVEL_OVERRIDE,  # добавлено
 }
 
 # Множество всех suppression reasons

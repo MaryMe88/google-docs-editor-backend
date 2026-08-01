@@ -805,6 +805,7 @@ def resolve_prompt_features(
     domain_config: DomainConfig,
     intent_config: Optional[IntentConfig],
     overlay_configs: List[OverlayConfig],
+    knowledge_level: Optional[KnowledgeLevel] = None,  # НОВЫЙ ПАРАМЕТР
 ) -> Dict[str, Any]:
     """
     Единый канонический источник feature flags с explainability.
@@ -959,6 +960,27 @@ def resolve_prompt_features(
                 _add_recognized_alias(result, "editorial", tag)
     else:
         _add_suppression_reason(result, "editorial", ReasonCode.NO_RECOGNIZED_ALIAS)
+
+    # 8.5 Принудительное включение при FULL уровне
+    if knowledge_level == KnowledgeLevel.FULL:
+        # Storytelling
+        if domain_config.allow_storytelling and not result.storytelling_enabled:
+            result.storytelling_enabled = True
+            _add_activation_reason(result, "storytelling", ReasonCode.FULL_LEVEL_OVERRIDE)
+        # Marketing
+        if domain_config.allow_marketing and not result.marketing_enabled:
+            result.marketing_enabled = True
+            _add_activation_reason(result, "marketing", ReasonCode.FULL_LEVEL_OVERRIDE)
+        # Editorial, Rhetoric, NKRJ — включаем всегда при FULL (они не имеют флагов разрешения в домене)
+        if not result.editorial_enabled:
+            result.editorial_enabled = True
+            _add_activation_reason(result, "editorial", ReasonCode.FULL_LEVEL_OVERRIDE)
+        if not result.rhetoric_enabled:
+            result.rhetoric_enabled = True
+            _add_activation_reason(result, "rhetoric", ReasonCode.FULL_LEVEL_OVERRIDE)
+        if not result.nkrj_enabled:
+            result.nkrj_enabled = True
+            _add_activation_reason(result, "nkrj", ReasonCode.FULL_LEVEL_OVERRIDE)
 
     # 9. Применяем suppress правила (первая итерация)
     if "storytelling" in domain_config.suppresses:
@@ -1536,7 +1558,7 @@ class PromptBuilder:
         overlay_configs = self.get_overlay_configs(validated_overlays)
         output_format = self.get_output_format(validated_output_mode)
 
-        # Разрешение фич через каноническую функцию
+        # Разрешение фич через каноническую функцию (теперь с knowledge_level)
         features = resolve_prompt_features(
             domain=validated_domain,
             intent=validated_intent,
@@ -1544,6 +1566,7 @@ class PromptBuilder:
             domain_config=domain_config,
             intent_config=intent_config,
             overlay_configs=overlay_configs,
+            knowledge_level=knowledge_level,  # передаём уровень знаний
         )
         effective_overlays = features["effective_overlays"]
         storytelling_enabled = features["storytelling_enabled"]
@@ -1556,33 +1579,20 @@ class PromptBuilder:
         for warn in warnings_list:
             logger.warning("PromptBuilder feature resolution: %s", warn)
 
-        # NEW: Вычисляем effective флаги для FULL-уровня
-        knowledge_level_name = (
-            knowledge_level.value
-            if hasattr(knowledge_level, "value")
-            else str(knowledge_level)
-        ).lower()
-
-        # FULL = уровень глубины знаний, а не только feature-activation.
-        # Даже если registry/aliases не подняли фичу, расширенные редакторские
-        # KB-блоки должны быть доступны на полном уровне знаний.
-        editorial_effective = editorial_enabled or knowledge_level_name == "full"
-        rhetoric_effective = rhetoric_enabled or knowledge_level_name == "full"
-        nkrj_effective = nkrj_enabled or knowledge_level_name == "full"
-
         # Теги для KB
         tag_sets = _collect_retrieval_tags(validated_domain, validated_intent, effective_overlays)
 
         # Явно добавляем теги для включённых фич, чтобы загрузить соответствующие KB-блоки
-        if editorial_effective:
+        # Используем готовые флаги из resolve_prompt_features
+        if editorial_enabled:
             tag_sets["primary"].add("editorial")
         if storytelling_enabled:
             tag_sets["primary"].add("storytelling")
         if marketing_enabled:
             tag_sets["primary"].add("marketing")
-        if rhetoric_effective:
+        if rhetoric_enabled:
             tag_sets["primary"].add("rhetoric")
-        if nkrj_effective:
+        if nkrj_enabled:
             tag_sets["primary"].add("nkrj")
         if antiai_enabled:
             tag_sets["primary"].add("antiai")
@@ -1635,16 +1645,16 @@ class PromptBuilder:
                 limits=effective_limits,
                 level=knowledge_level,
             )
-            # Жёсткий feature gate оставляем только для genuinely mode-driven блоков.
+            # Отключаем блоки, для которых фичи выключены (уже с учётом FULL)
             if not storytelling_enabled:
                 budget.disable("storytelling")
             if not marketing_enabled:
                 budget.disable("marketing")
-
-            # Не отключаем editorial / rhetoric / nkrj только из-за того,
-            # что feature aliases не сработали. Для них knowledge_level=full
-            # должен иметь возможность включить соответствующие KB-блоки.
-            # Поэтому убираем disable для этих трёх.
+            # Editorial, rhetoric, nkrj не отключаем, даже если их фичи выключены,
+            # потому что они управляются через knowledge_level, а не через отдельные флаги.
+            # Однако если они выключены, то они не будут включены в промпт,
+            # потому что в _build_knowledge_block мы передаём соответствующие флаги.
+            # Здесь мы просто не отключаем их в бюджете.
 
             effective_seed = few_shot_seed if few_shot_seed is not None else _derive_seed(text)
 
@@ -1663,9 +1673,9 @@ class PromptBuilder:
                 storytelling_enabled=storytelling_enabled,
                 marketing_enabled=marketing_enabled,
                 antiai_enabled=antiai_enabled,
-                rhetoric_enabled=rhetoric_effective,
-                nkrj_enabled=nkrj_effective,
-                editorial_enabled=editorial_effective,
+                rhetoric_enabled=rhetoric_enabled,
+                nkrj_enabled=nkrj_enabled,
+                editorial_enabled=editorial_enabled,
                 return_trace=True,
             )
             retrieval_meta_total = block_meta

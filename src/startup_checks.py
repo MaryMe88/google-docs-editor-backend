@@ -19,15 +19,20 @@ from src.registry import check_alias_consistency
 logger = logging.getLogger(__name__)
 
 
-def _check_domain_files(
+# ============================================================================
+# Строгие проверки наличия и синхронности конфигов
+# ============================================================================
+
+def _check_domain_files_strict(
     config_path: Path,
     allowed_domains: Set[str],
 ) -> None:
-    """Проверяет существование и читаемость файлов доменов."""
+    """Проверяет, что для каждого домена из ALLOWED_DOMAINS есть файл, и нет лишних файлов."""
     domains_dir = config_path / "domains"
     if not domains_dir.is_dir():
         raise FileNotFoundError(f"Domains directory not found: {domains_dir}")
 
+    # Проверяем наличие файлов для всех доменов
     missing = []
     for domain in allowed_domains:
         file_path = domains_dir / f"{domain}.json"
@@ -45,101 +50,32 @@ def _check_domain_files(
             f"Missing domain config files: {', '.join(missing)}"
         )
 
-
-def _check_domain_files_soft(
-    config_path: Path,
-    allowed_domains: Set[str],
-) -> None:
-    """Мягкая версия: предупреждает о недостающих файлах доменов вместо исключения.
-
-    Используется в run_startup_checks, чтобы сервис мог стартовать даже при
-    удалении конфига домена — load_domain_config вернёт дефолтный конфиг.
-    """
-    domains_dir = config_path / "domains"
-    if not domains_dir.is_dir():
-        logger.warning(
-            "_check_domain_files_soft: domains directory not found: %s — "
-            "all domain requests will use default config.",
-            domains_dir,
+    # Проверяем, нет ли лишних файлов (которые не объявлены в ALLOWED_DOMAINS)
+    existing_files = {p.stem for p in domains_dir.glob("*.json") if p.is_file()}
+    extra = existing_files - allowed_domains
+    if extra:
+        raise RuntimeError(
+            f"Extra domain config files not in ALLOWED_DOMAINS: {', '.join(sorted(extra))}"
         )
-        return
-
-    for domain in allowed_domains:
-        file_path = domains_dir / f"{domain}.json"
-        if not file_path.is_file():
-            logger.warning(
-                "Domain config file missing: %s — "
-                "requests for domain=%r will use default domain config (neutral tone).",
-                file_path, domain,
-            )
-        else:
-            try:
-                with open(file_path, encoding="utf-8") as f:
-                    json.load(f)
-            except Exception as e:
-                raise RuntimeError(f"Failed to parse domain file {domain}.json: {e}") from e
 
 
-def _check_intent_files(
+def _check_intent_files_strict(
     config_path: Path,
     allowed_intents: Set[str],
 ) -> None:
-    """Проверяет существование, структуру instructions для интентов (кроме neutral)."""
+    """Проверяет файлы интентов, кроме neutral, и отсутствие лишних."""
     intents_dir = config_path / "intents"
     if not intents_dir.is_dir():
         raise FileNotFoundError(f"Intents directory not found: {intents_dir}")
 
-    for intent in allowed_intents:
-        if intent == "neutral":
-            continue
+    # neutral не имеет файла, пропускаем
+    intents_with_files = allowed_intents - {"neutral"}
+
+    missing = []
+    for intent in intents_with_files:
         file_path = intents_dir / f"{intent}.json"
         if not file_path.is_file():
-            raise FileNotFoundError(f"Intent config file not found: {file_path}")
-        try:
-            with open(file_path, encoding="utf-8") as f:
-                data = json.load(f)
-            instructions = data.get("instructions")
-            if not isinstance(instructions, list):
-                raise TypeError(
-                    f"Intent {intent}: 'instructions' must be a list, got {type(instructions).__name__}"
-                )
-            for idx, item in enumerate(instructions):
-                if not isinstance(item, str):
-                    raise TypeError(
-                        f"Intent {intent}: instructions[{idx}] must be a string, got {type(item).__name__}"
-                    )
-        except Exception as e:
-            raise RuntimeError(f"Invalid intent file {intent}.json: {e}") from e
-
-
-def _check_intent_files_soft(
-    config_path: Path,
-    allowed_intents: Set[str],
-) -> None:
-    """Мягкая версия: предупреждает о недостающих файлах интентов вместо исключения.
-
-    Используется в run_startup_checks. При отсутствии файла load_intent_config
-    вернёт None (обрабатывается как neutral).
-    """
-    intents_dir = config_path / "intents"
-    if not intents_dir.is_dir():
-        logger.warning(
-            "_check_intent_files_soft: intents directory not found: %s — "
-            "all intent-specific instructions will be skipped.",
-            intents_dir,
-        )
-        return
-
-    for intent in allowed_intents:
-        if intent == "neutral":
-            continue
-        file_path = intents_dir / f"{intent}.json"
-        if not file_path.is_file():
-            logger.warning(
-                "Intent config file missing: %s — "
-                "requests with intent=%r will be treated as neutral.",
-                file_path, intent,
-            )
+            missing.append(intent)
         else:
             try:
                 with open(file_path, encoding="utf-8") as f:
@@ -147,24 +83,35 @@ def _check_intent_files_soft(
                 instructions = data.get("instructions")
                 if not isinstance(instructions, list):
                     raise TypeError(
-                        f"Intent {intent}: 'instructions' must be a list, "
-                        f"got {type(instructions).__name__}"
+                        f"Intent {intent}: 'instructions' must be a list, got {type(instructions).__name__}"
                     )
                 for idx, item in enumerate(instructions):
                     if not isinstance(item, str):
                         raise TypeError(
-                            f"Intent {intent}: instructions[{idx}] must be a string, "
-                            f"got {type(item).__name__}"
+                            f"Intent {intent}: instructions[{idx}] must be a string, got {type(item).__name__}"
                         )
             except Exception as e:
                 raise RuntimeError(f"Invalid intent file {intent}.json: {e}") from e
 
+    if missing:
+        raise FileNotFoundError(
+            f"Missing intent config files: {', '.join(missing)}"
+        )
 
-def _check_overlay_files(
+    # Проверяем лишние файлы (кроме neutral, которого нет)
+    existing_files = {p.stem for p in intents_dir.glob("*.json") if p.is_file()}
+    extra = existing_files - intents_with_files
+    if extra:
+        raise RuntimeError(
+            f"Extra intent config files not in ALLOWED_INTENTS: {', '.join(sorted(extra))}"
+        )
+
+
+def _check_overlay_files_strict(
     config_path: Path,
     allowed_overlays: Set[str],
 ) -> None:
-    """Проверяет существование и читаемость файлов оверлеев."""
+    """Проверяет файлы оверлеев и отсутствие лишних."""
     overlays_dir = config_path / "overlays"
     if not overlays_dir.is_dir():
         raise FileNotFoundError(f"Overlays directory not found: {overlays_dir}")
@@ -186,51 +133,16 @@ def _check_overlay_files(
             f"Missing overlay config files: {', '.join(missing)}"
         )
 
-
-def _check_overlay_files_soft(
-    config_path: Path,
-    allowed_overlays: Set[str],
-) -> None:
-    """Мягкая версия: предупреждает о недостающих файлах оверлеев вместо исключения.
-
-    Используется в run_startup_checks. При отсутствии файла load_overlay_config
-    вернёт пустой OverlayConfig (без инструкций).
-    """
-    overlays_dir = config_path / "overlays"
-    if not overlays_dir.is_dir():
-        logger.warning(
-            "_check_overlay_files_soft: overlays directory not found: %s — "
-            "all overlay instructions will be skipped.",
-            overlays_dir,
+    existing_files = {p.stem for p in overlays_dir.glob("*.json") if p.is_file()}
+    extra = existing_files - allowed_overlays
+    if extra:
+        raise RuntimeError(
+            f"Extra overlay config files not in ALLOWED_OVERLAYS: {', '.join(sorted(extra))}"
         )
-        return
-
-    for overlay in allowed_overlays:
-        file_path = overlays_dir / f"{overlay}.json"
-        if not file_path.is_file():
-            logger.warning(
-                "Overlay config file missing: %s — "
-                "requests with overlay=%r will use empty overlay (no overlay instructions applied).",
-                file_path, overlay,
-            )
-        else:
-            try:
-                with open(file_path, encoding="utf-8") as f:
-                    json.load(f)
-            except Exception as e:
-                raise RuntimeError(f"Failed to parse overlay file {overlay}.json: {e}") from e
 
 
 def _check_overlay_names_idempotent(allowed_overlays: Set[str]) -> None:
-    """PR-4 (НП-1): проверяет, что имена файлов оверлеев идемпотентны к normalize_tag.
-
-    Гарантирует, что нормализация в contracts.py (normalize_tag) и проверка
-    допустимости в prompt_builder.py работают с одинаковыми строками —
-    без скрытых расхождений при добавлении новых оверлеев.
-
-    Пример нарушения: файл 'Final-Check.json' → normalize_tag даст 'final_check',
-    а ALLOWED_OVERLAYS будет содержать 'Final-Check' → несовпадение.
-    """
+    """PR-4 (НП-1): проверяет, что имена файлов оверлеев идемпотентны к normalize_tag."""
     bad: list[str] = []
     for name in allowed_overlays:
         if normalize_tag(name) != name:
@@ -244,13 +156,13 @@ def _check_overlay_names_idempotent(allowed_overlays: Set[str]) -> None:
 
 
 # ============================================================================
-# ИСПРАВЛЕННАЯ ФУНКЦИЯ (задача 7)
+# Проверка scoring_weights (мягкая, не блокирующая)
 # ============================================================================
+
 def _check_scoring_weights_file(config_path: Path) -> None:
-    """
-    Проверяет наличие и корректность файла config/scoring_weights.json.
-    Если файл отсутствует — только предупреждение (будут использованы значения по умолчанию).
-    Если файл присутствует, но повреждён или имеет неверную структуру — ошибка.
+    """Проверяет наличие и корректность файла config/scoring_weights.json.
+    Если файл отсутствует – только предупреждение (будут использованы значения по умолчанию).
+    Если файл присутствует, но повреждён или имеет неверную структуру – ошибка.
     """
     weights_file = config_path / "scoring_weights.json"
     if not weights_file.is_file():
@@ -287,6 +199,10 @@ def _check_scoring_weights_file(config_path: Path) -> None:
         raise RuntimeError(f"Failed to validate scoring_weights.json: {e}") from e
 
 
+# ============================================================================
+# Проверка тегов в KB (мягкая, не блокирующая)
+# ============================================================================
+
 def _flatten_records(item: Any) -> List[Dict[str, Any]]:
     """Рекурсивно извлекает все записи с полем 'tags' из item."""
     records: List[Dict[str, Any]] = []
@@ -308,7 +224,6 @@ def _flatten_records(item: Any) -> List[Dict[str, Any]]:
 
 
 # Файлы KB, которые заведомо не содержат поле 'tags' и не нужны для проверки.
-# Добавляй сюда новые файлы только если они точно не имеют тегов.
 _KB_FILES_WITHOUT_TAGS: Set[str] = {
     "stop_words.json",
     "nkrj_structure_patterns.json",
@@ -316,25 +231,12 @@ _KB_FILES_WITHOUT_TAGS: Set[str] = {
 
 
 def _collect_kb_tags(kb_path: Path) -> Set[str]:
-    """Собирает все нормализованные теги из всех JSON-файлов базы знаний.
-
-    Автоматически сканирует всю папку knowledge_base/ — добавление нового
-    файла с тегами не требует правок этого кода.
-
-    Файлы из _KB_FILES_WITHOUT_TAGS пропускаются как заведомо не содержащие
-    поле 'tags'.
-
-    Поддерживает два формата KB-файлов:
-    - список записей верхнего уровня: ``[{"tags": [...], ...}, ...]``
-    - dict с корневыми тегами и вложенными записями:
-      ``{"tags": [...], "frameworks": [...]}``
-    """
+    """Собирает все нормализованные теги из всех JSON-файлов базы знаний."""
     kb_tags: Set[str] = set()
     if not kb_path.is_dir():
         logger.warning("Knowledge base directory not found: %s", kb_path)
         return kb_tags
 
-    # ИЗМЕНЕНИЕ: рекурсивный обход всех подпапок (заменено *.json на **/*.json)
     kb_files = sorted(
         p for p in kb_path.glob("**/*.json")
         if p.name not in _KB_FILES_WITHOUT_TAGS
@@ -355,8 +257,6 @@ def _collect_kb_tags(kb_path: Path) -> Set[str]:
         if isinstance(data, list):
             items = data
         elif isinstance(data, dict):
-            # Читаем корневые теги (поле "tags" или "inherit_tags") —
-            # они применяются ко всему файлу и добавляются напрямую.
             for root_field in ("tags", "inherit_tags"):
                 root_tags = data.get(root_field)
                 if isinstance(root_tags, list):
@@ -366,7 +266,6 @@ def _collect_kb_tags(kb_path: Path) -> Set[str]:
                             if norm:
                                 kb_tags.add(norm)
 
-            # Все остальные list-значения — это коллекции записей
             for key, value in data.items():
                 if key in ("tags", "inherit_tags"):
                     continue
@@ -390,14 +289,8 @@ def _collect_kb_tags(kb_path: Path) -> Set[str]:
     return kb_tags
 
 
-# ============================================================================
-# ИЗМЕНЕНИЕ 1.1
-# ============================================================================
 def _check_tags_vs_kb(kb_path: Path) -> None:
-    """
-    Собирает все теги, которые могут быть запрошены (из CANONICAL_TAGS),
-    и проверяет, что каждый из них присутствует хотя бы в одной записи KB.
-    """
+    """Проверяет, что все теги из CANONICAL_TAGS присутствуют в KB (только предупреждение)."""
     expected_tags: Set[str] = set()
     for category_data in CANONICAL_TAGS.values():
         for tag_data in category_data.values():
@@ -422,25 +315,18 @@ def _check_tags_vs_kb(kb_path: Path) -> None:
     if missing_tags:
         logger.warning(
             "Tags declared in CANONICAL_TAGS but missing in KB: %s. "
-            "KB retrieval for these tags will fall back to NEUTRAL stage "
-            "(rules will be selected without tag matching).",
+            "KB retrieval for these tags will fall back to NEUTRAL stage.",
             sorted(missing_tags),
         )
 
 
-# ============================================================================
-# Новая функция для проверки покрытия tag_map.json (задача 3)
-# ============================================================================
 def _check_tag_map_coverage(
     config_path: Path,
     allowed_domains: Set[str],
     allowed_intents: Set[str],
     allowed_overlays: Set[str],
 ) -> None:
-    """
-    Проверяет, что каждый домен/интент/оверлей из allowed_* имеет запись в tag_map.json.
-    Если tag_map.json отсутствует — только предупреждение.
-    """
+    """Проверяет покрытие tag_map.json (только предупреждение)."""
     from src.config_types import CANONICAL_TAGS
     if not CANONICAL_TAGS:
         logger.warning("CANONICAL_TAGS is empty — skipping tag map coverage check.")
@@ -463,15 +349,10 @@ def _check_tag_map_coverage(
 
 
 # ============================================================================
-# NEW: Проверки explainability (третья итерация) — обновлены для четвёртой итерации
+# Проверки explainability (не блокирующие)
 # ============================================================================
 
 def _check_feature_resolution_invariants(config_path: Path) -> None:
-    """
-    Проверяет инварианты feature resolution на representative сценариях.
-    Использует реальный PromptBuilder и resolve_prompt_features.
-    Теперь использует кэширующие методы PromptBuilder.
-    """
     try:
         from src.prompt_builder import PromptBuilder, resolve_prompt_features
         from src.reason_codes import ACTIVATION_REASONS, SUPPRESSION_REASONS
@@ -482,8 +363,6 @@ def _check_feature_resolution_invariants(config_path: Path) -> None:
     pb = PromptBuilder(config_path=config_path)
     pb.startup_check()
 
-    # Сценарии: (domain, intent, overlays, ожидаемые флаги)
-    # Итерация 2: убран сценарий с editorial как overlay, так как editorial — это фича, а не overlay.
     scenarios = [
         ("marketing", "marketingpush", [], {"storytelling_enabled": False, "marketing_enabled": True, "antiai_enabled": False}),
         ("blog", "storytelling", [], {"storytelling_enabled": True, "marketing_enabled": False, "antiai_enabled": False}),
@@ -493,7 +372,6 @@ def _check_feature_resolution_invariants(config_path: Path) -> None:
 
     for domain, intent, overlays, expected in scenarios:
         try:
-            # Получаем конфиги через кэширующие методы PromptBuilder
             domain_config = pb.get_domain_config(domain)
             intent_config = pb.get_intent_config(intent)
             overlay_configs = pb.get_overlay_configs(overlays) if overlays else []
@@ -505,14 +383,12 @@ def _check_feature_resolution_invariants(config_path: Path) -> None:
                 intent_config=intent_config,
                 overlay_configs=overlay_configs,
             )
-            # Проверяем наличие диагностических полей
             assert "activated_features" in result_dict, f"Missing activated_features for {domain}/{intent}"
             assert "activation_reasons" in result_dict, f"Missing activation_reasons for {domain}/{intent}"
             assert "suppression_reasons" in result_dict, f"Missing suppression_reasons for {domain}/{intent}"
             assert "recognized_aliases" in result_dict, f"Missing recognized_aliases for {domain}/{intent}"
             assert "ignored_unknown_values" in result_dict, f"Missing ignored_unknown_values for {domain}/{intent}"
 
-            # Проверяем ожидаемые флаги
             for flag, expected_value in expected.items():
                 actual = result_dict.get(flag)
                 if actual != expected_value:
@@ -522,7 +398,6 @@ def _check_feature_resolution_invariants(config_path: Path) -> None:
                         domain, intent, overlays, flag, actual, expected_value
                     )
 
-            # Проверяем, что если флаг True, есть activation reason
             for flag in ["storytelling_enabled", "marketing_enabled", "antiai_enabled",
                          "rhetoric_enabled", "nkrj_enabled", "editorial_enabled"]:
                 if result_dict.get(flag):
@@ -546,12 +421,7 @@ def _check_feature_resolution_invariants(config_path: Path) -> None:
 
 
 def _check_assembly_diagnostics_invariants(config_path: Path) -> None:
-    """
-    Проверяет инварианты сборки блоков: eligible/included согласованы с фичами.
-    Использует кэширующие методы PromptBuilder.
-    """
     try:
-        # ИСПРАВЛЕНИЕ (Итерация 1): добавлен импорт resolve_prompt_features
         from src.prompt_builder import PromptBuilder, _collect_retrieval_tags, KnowledgeBudgetManager, resolve_prompt_features
         from src.config_types import KnowledgeLevel, LimitsConfig
     except ImportError as e:
@@ -642,14 +512,7 @@ def _check_assembly_diagnostics_invariants(config_path: Path) -> None:
         logger.warning("Assembly diagnostics invariant check failed: %s", e)
 
 
-# ============================================================================
-# NEW: Проверка согласованности registry и shared_contracts (четвёртая итерация)
-# ============================================================================
 def _check_registry_consistency() -> None:
-    """
-    Проверяет, что registry и shared_contracts согласованы.
-    Это часть четвёртой итерации для обеспечения единого источника истины.
-    """
     try:
         from src.registry import get_known_intents, get_known_overlays
         from src.shared_contracts import ALLOWED_INTENTS, ALLOWED_OVERLAYS
@@ -670,8 +533,9 @@ def _check_registry_consistency() -> None:
 
 
 # ============================================================================
-# Основная функция запуска проверок (обновлена для четвёртой итерации)
+# Главная функция запуска проверок (обновлена)
 # ============================================================================
+
 def run_startup_checks(
     allowed_domains: Set[str],
     allowed_intents: Set[str],
@@ -683,45 +547,38 @@ def run_startup_checks(
     Выполняет все проверки при старте сервиса.
 
     Жёсткие проверки (сервис не стартует при ошибке):
-    - директории доменов/интентов/оверлеев существуют
-    - существующие файлы конфигов валидны (корректный JSON, нужные поля)
-    - имена оверлеев идемпотентны к normalize_tag (PR-4)
+    - наличие файлов для всех доменов/интентов/оверлеев (кроме neutral)
+    - отсутствие лишних файлов
+    - идемпотентность имён оверлеев
 
-    Мягкие проверки (только WARNING, сервис стартует):
-    - отдельные файлы доменов/интентов/оверлеев могут отсутствовать —
-      load_*_config вернёт дефолтный конфиг
-    - теги из CANONICAL_TAGS / wanted_tags могут не покрываться KB —
-      retrieval деградирует до NEUTRAL stage
-    - scoring_weights.json может отсутствовать — используются дефолтные веса
-    - покрытие tag_map.json может быть неполным
-
-    NEW (четвёртая итерация):
-    - проверка согласованности registry и shared_contracts
-    - все инвариантные проверки используют кэширующие методы PromptBuilder
+    Мягкие проверки (только WARNING):
+    - покрытие тегов в KB
+    - наличие scoring_weights.json
+    - покрытие tag_map.json
+    - инварианты explainability (не блокируют)
     """
-    logger.info("Running startup checks (fourth iteration)...")
+    logger.info("Running startup checks (strict mode)...")
 
-    # Существующие мягкие проверки
+    # Жёсткие проверки
+    _check_domain_files_strict(config_path, allowed_domains)
+    _check_intent_files_strict(config_path, allowed_intents)
+    _check_overlay_files_strict(config_path, allowed_overlays)
+    _check_overlay_names_idempotent(allowed_overlays)
+
+    # Мягкие проверки (не блокирующие)
     _check_tag_map_coverage(config_path, allowed_domains, allowed_intents, allowed_overlays)
-    _check_domain_files_soft(config_path, allowed_domains)
-    _check_intent_files_soft(config_path, allowed_intents)
-    _check_overlay_files_soft(config_path, allowed_overlays)
-    _check_overlay_names_idempotent(allowed_overlays)  # PR-4 (НП-1)
     _check_tags_vs_kb(kb_path)
-    # ИЗМЕНЕНИЕ (Итерация 7): удалён вызов check_config_tags_vs_kb, так как его функциональность покрыта _check_tags_vs_kb
     _check_scoring_weights_file(config_path)
 
-    # NEW: проверки registry и explainability (четвёртая итерация)
+    # Проверки согласованности и explainability (не блокирующие)
     try:
         _check_registry_consistency()
-        # check_alias_consistency импортирована из registry
         warnings = check_alias_consistency()
         for w in warnings:
             logger.warning(w)
         _check_feature_resolution_invariants(config_path)
         _check_assembly_diagnostics_invariants(config_path)
     except Exception as e:
-        # Эти проверки не должны останавливать сервис, только логировать
         logger.warning("Explainability/registry invariants check failed: %s", e)
 
     logger.info("Startup checks passed successfully.")
