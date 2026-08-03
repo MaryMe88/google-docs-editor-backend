@@ -18,5 +18,6 @@
     "rhetoric": 0,
     "storytelling": 0,
     "marketing": 0
-  }
+  },
+  "incompatible_overlays": ["infostyle"]
 }
