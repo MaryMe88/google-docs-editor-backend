@@ -26,7 +26,7 @@ class ReasonCode(str, Enum):
     RECOGNIZED_RHETORIC_ALIAS = "recognized_rhetoric_alias"
     RECOGNIZED_NKRJ_ALIAS = "recognized_nkrj_alias"
     RECOGNIZED_EDITORIAL_ALIAS = "recognized_editorial_alias"
-    FULL_LEVEL_OVERRIDE = "full_level_override"   # НОВЫЙ КОД
+    FULL_LEVEL_OVERRIDE = "full_level_override"
 
     # ------------------------------------------------------------------
     # Feature suppression reasons (фича выключена)
@@ -34,6 +34,7 @@ class ReasonCode(str, Enum):
     SUPPRESSED_BY_DOMAIN_PRIORITY = "suppressed_by_domain_priority"
     SUPPRESSED_BY_DOMAIN_RULE = "suppressed_by_domain_rule"
     SUPPRESSED_BY_OVERLAY_RULE = "suppressed_by_overlay_rule"
+    SUPPRESSED_BY_INTENT_RULE = "suppressed_by_intent_rule"          # NEW
     SUPPRESSED_BY_OVERLAY_CONFLICT = "suppressed_by_overlay_conflict"
     SUPPRESSED_BY_DOMAIN_INCOMPATIBLE_INTENT = "suppressed_by_domain_incompatible_intent"
     SUPPRESSED_BY_DOMAIN_INCOMPATIBLE_OVERLAY = "suppressed_by_domain_incompatible_overlay"
@@ -79,7 +80,7 @@ ACTIVATION_REASONS: Final[Set[str]] = {
     ReasonCode.RECOGNIZED_RHETORIC_ALIAS,
     ReasonCode.RECOGNIZED_NKRJ_ALIAS,
     ReasonCode.RECOGNIZED_EDITORIAL_ALIAS,
-    ReasonCode.FULL_LEVEL_OVERRIDE,  # добавлено
+    ReasonCode.FULL_LEVEL_OVERRIDE,
 }
 
 # Множество всех suppression reasons
@@ -87,6 +88,7 @@ SUPPRESSION_REASONS: Final[Set[str]] = {
     ReasonCode.SUPPRESSED_BY_DOMAIN_PRIORITY,
     ReasonCode.SUPPRESSED_BY_DOMAIN_RULE,
     ReasonCode.SUPPRESSED_BY_OVERLAY_RULE,
+    ReasonCode.SUPPRESSED_BY_INTENT_RULE,          # NEW
     ReasonCode.SUPPRESSED_BY_OVERLAY_CONFLICT,
     ReasonCode.SUPPRESSED_BY_DOMAIN_INCOMPATIBLE_INTENT,
     ReasonCode.SUPPRESSED_BY_DOMAIN_INCOMPATIBLE_OVERLAY,

@@ -4,17 +4,26 @@ from __future__ import annotations
 import json
 import logging
 from pathlib import Path
-from typing import Any, Dict, List, Set, Optional
+from typing import Any, Dict, List, Set, Optional, Tuple
 
 from src.config_types import (
     CANONICAL_TAGS,
     FeatureResolutionResult,
     AssemblyTrace,
     AssemblyBlockDiagnostics,
+    DomainConfig,
+    IntentConfig,
+    OverlayConfig,
 )
 from src.reason_codes import ReasonCode, ACTIVATION_REASONS, SUPPRESSION_REASONS
 from src.tag_registry import normalize_tag
-from src.registry import check_alias_consistency
+from src.registry import check_alias_consistency, CANONICAL_FEATURE_ALIASES
+from src.prompt_builder import (
+    load_domain_config,
+    load_intent_config,
+    load_overlay_config,
+)
+from src.shared_contracts import ALLOWED_DOMAINS, ALLOWED_INTENTS, ALLOWED_OVERLAYS
 
 logger = logging.getLogger(__name__)
 
@@ -32,7 +41,6 @@ def _check_domain_files_strict(
     if not domains_dir.is_dir():
         raise FileNotFoundError(f"Domains directory not found: {domains_dir}")
 
-    # Проверяем наличие файлов для всех доменов
     missing = []
     for domain in allowed_domains:
         file_path = domains_dir / f"{domain}.json"
@@ -50,7 +58,6 @@ def _check_domain_files_strict(
             f"Missing domain config files: {', '.join(missing)}"
         )
 
-    # Проверяем, нет ли лишних файлов (которые не объявлены в ALLOWED_DOMAINS)
     existing_files = {p.stem for p in domains_dir.glob("*.json") if p.is_file()}
     extra = existing_files - allowed_domains
     if extra:
@@ -68,7 +75,6 @@ def _check_intent_files_strict(
     if not intents_dir.is_dir():
         raise FileNotFoundError(f"Intents directory not found: {intents_dir}")
 
-    # neutral не имеет файла, пропускаем
     intents_with_files = allowed_intents - {"neutral"}
 
     missing = []
@@ -98,7 +104,6 @@ def _check_intent_files_strict(
             f"Missing intent config files: {', '.join(missing)}"
         )
 
-    # Проверяем лишние файлы (кроме neutral, которого нет)
     existing_files = {p.stem for p in intents_dir.glob("*.json") if p.is_file()}
     extra = existing_files - intents_with_files
     if extra:
@@ -160,10 +165,7 @@ def _check_overlay_names_idempotent(allowed_overlays: Set[str]) -> None:
 # ============================================================================
 
 def _check_scoring_weights_file(config_path: Path) -> None:
-    """Проверяет наличие и корректность файла config/scoring_weights.json.
-    Если файл отсутствует – только предупреждение (будут использованы значения по умолчанию).
-    Если файл присутствует, но повреждён или имеет неверную структуру – ошибка.
-    """
+    """Проверяет наличие и корректность файла config/scoring_weights.json."""
     weights_file = config_path / "scoring_weights.json"
     if not weights_file.is_file():
         logger.warning("scoring_weights.json not found, will use default weights.")
@@ -192,7 +194,6 @@ def _check_scoring_weights_file(config_path: Path) -> None:
                     "expected int or float. Using default weights for this key.",
                     k, type(data[k]).__name__,
                 )
-        # Дополнительные ключи разрешены, но не используются
     except json.JSONDecodeError as e:
         raise RuntimeError(f"Invalid JSON in scoring_weights.json: {e}") from e
     except Exception as e:
@@ -204,7 +205,6 @@ def _check_scoring_weights_file(config_path: Path) -> None:
 # ============================================================================
 
 def _flatten_records(item: Any) -> List[Dict[str, Any]]:
-    """Рекурсивно извлекает все записи с полем 'tags' из item."""
     records: List[Dict[str, Any]] = []
     if isinstance(item, dict):
         nested_keys = [
@@ -223,7 +223,6 @@ def _flatten_records(item: Any) -> List[Dict[str, Any]]:
     return records
 
 
-# Файлы KB, которые заведомо не содержат поле 'tags' и не нужны для проверки.
 _KB_FILES_WITHOUT_TAGS: Set[str] = {
     "stop_words.json",
     "nkrj_structure_patterns.json",
@@ -231,7 +230,6 @@ _KB_FILES_WITHOUT_TAGS: Set[str] = {
 
 
 def _collect_kb_tags(kb_path: Path) -> Set[str]:
-    """Собирает все нормализованные теги из всех JSON-файлов базы знаний."""
     kb_tags: Set[str] = set()
     if not kb_path.is_dir():
         logger.warning("Knowledge base directory not found: %s", kb_path)
@@ -290,7 +288,6 @@ def _collect_kb_tags(kb_path: Path) -> Set[str]:
 
 
 def _check_tags_vs_kb(kb_path: Path) -> None:
-    """Проверяет, что все теги из CANONICAL_TAGS присутствуют в KB (только предупреждение)."""
     expected_tags: Set[str] = set()
     for category_data in CANONICAL_TAGS.values():
         for tag_data in category_data.values():
@@ -326,7 +323,6 @@ def _check_tag_map_coverage(
     allowed_intents: Set[str],
     allowed_overlays: Set[str],
 ) -> None:
-    """Проверяет покрытие tag_map.json (только предупреждение)."""
     from src.config_types import CANONICAL_TAGS
     if not CANONICAL_TAGS:
         logger.warning("CANONICAL_TAGS is empty — skipping tag map coverage check.")
@@ -355,7 +351,6 @@ def _check_tag_map_coverage(
 def _check_feature_resolution_invariants(config_path: Path) -> None:
     try:
         from src.prompt_builder import PromptBuilder, resolve_prompt_features
-        from src.reason_codes import ACTIVATION_REASONS, SUPPRESSION_REASONS
     except ImportError as e:
         logger.warning("Cannot import prompt_builder for invariants check: %s", e)
         return
@@ -533,6 +528,183 @@ def _check_registry_consistency() -> None:
 
 
 # ============================================================================
+# НОВОЕ: Проверка конфликтных правил (Итерация 6)
+# ============================================================================
+
+def _normalize_reference(ref: str) -> Tuple[Optional[str], str]:
+    """
+    Разбирает ссылку вида 'intent:name', 'overlay:name', 'feature:name' или просто 'name'.
+    Возвращает (тип, имя) или (None, имя) если тип не указан.
+    """
+    if ':' in ref:
+        parts = ref.split(':', 1)
+        if len(parts) == 2:
+            return parts[0].strip().lower(), parts[1].strip()
+    return None, ref.strip()
+
+
+def _is_valid_feature(feature_name: str) -> bool:
+    """Проверяет, что имя фичи присутствует в CANONICAL_FEATURE_ALIASES."""
+    return feature_name in CANONICAL_FEATURE_ALIASES
+
+
+def _check_conflict_rules(config_path: Path) -> None:
+    """
+    Проверяет все конфликтные правила:
+    - существование ссылок
+    - отсутствие self-conflict
+    - отсутствие циклов suppression
+    - equal priority конфликты должны иметь явного победителя
+    """
+    logger.info("Checking conflict rules...")
+
+    # Загружаем все конфиги, чтобы получить их правила
+    domains: Dict[str, DomainConfig] = {}
+    for domain_name in ALLOWED_DOMAINS:
+        try:
+            domains[domain_name] = load_domain_config(domain_name, config_path)
+        except Exception as e:
+            raise RuntimeError(f"Failed to load domain config for {domain_name}: {e}") from e
+
+    intents: Dict[str, IntentConfig] = {}
+    for intent_name in ALLOWED_INTENTS - {"neutral"}:
+        try:
+            cfg = load_intent_config(intent_name, config_path)
+            if cfg is not None:
+                intents[intent_name] = cfg
+        except Exception as e:
+            raise RuntimeError(f"Failed to load intent config for {intent_name}: {e}") from e
+
+    overlays: Dict[str, OverlayConfig] = {}
+    for overlay_name in ALLOWED_OVERLAYS:
+        try:
+            overlays[overlay_name] = load_overlay_config(overlay_name, config_path)
+        except Exception as e:
+            raise RuntimeError(f"Failed to load overlay config for {overlay_name}: {e}") from e
+
+    # Проверка ссылок на существование
+    all_known_names = set(ALLOWED_INTENTS) | set(ALLOWED_OVERLAYS) | set(CANONICAL_FEATURE_ALIASES.keys())
+    # Для обратной совместимости: если ссылка без префикса, пытаемся угадать тип
+    def validate_reference(ref: str, source: str, field: str) -> None:
+        ref_type, name = _normalize_reference(ref)
+        if ref_type == "intent":
+            if name not in ALLOWED_INTENTS:
+                raise ValueError(f"Invalid {field} reference in {source}: 'intent:{name}' does not exist")
+        elif ref_type == "overlay":
+            if name not in ALLOWED_OVERLAYS:
+                raise ValueError(f"Invalid {field} reference in {source}: 'overlay:{name}' does not exist")
+        elif ref_type == "feature":
+            if not _is_valid_feature(name):
+                raise ValueError(f"Invalid {field} reference in {source}: 'feature:{name}' does not exist")
+        else:
+            # Без префикса: пробуем определить по наличию
+            if name in ALLOWED_OVERLAYS:
+                # Это overlay, допустимо, но предупредим
+                logger.warning(
+                    f"Unprefixed overlay reference '{name}' in {source}.{field} – "
+                    "consider using 'overlay:{name}' for clarity."
+                )
+            elif name in ALLOWED_INTENTS:
+                logger.warning(
+                    f"Unprefixed intent reference '{name}' in {source}.{field} – "
+                    "consider using 'intent:{name}' for clarity."
+                )
+            elif _is_valid_feature(name):
+                logger.warning(
+                    f"Unprefixed feature reference '{name}' in {source}.{field} – "
+                    "consider using 'feature:{name}' for clarity."
+                )
+            else:
+                raise ValueError(f"Invalid {field} reference in {source}: '{name}' not found in any registry")
+
+    # Проверяем suppresses и conflicts_with всех конфигов
+    for domain_name, cfg in domains.items():
+        for ref in cfg.suppresses:
+            validate_reference(ref, f"domain {domain_name}", "suppresses")
+        for ref in cfg.conflicts_with:
+            validate_reference(ref, f"domain {domain_name}", "conflicts_with")
+        for ref in cfg.incompatible_intents:
+            validate_reference(ref, f"domain {domain_name}", "incompatible_intents")
+        for ref in cfg.incompatible_overlays:
+            validate_reference(ref, f"domain {domain_name}", "incompatible_overlays")
+
+    for intent_name, cfg in intents.items():
+        for ref in cfg.suppresses:
+            validate_reference(ref, f"intent {intent_name}", "suppresses")
+        for ref in cfg.conflicts_with:
+            validate_reference(ref, f"intent {intent_name}", "conflicts_with")
+
+    for overlay_name, cfg in overlays.items():
+        for ref in cfg.suppresses:
+            validate_reference(ref, f"overlay {overlay_name}", "suppresses")
+        for ref in cfg.conflicts_with:
+            validate_reference(ref, f"overlay {overlay_name}", "conflicts_with")
+
+    # Проверка self-conflict: overlay не может конфликтовать с собой
+    for overlay_name, cfg in overlays.items():
+        for ref in cfg.conflicts_with:
+            _, name = _normalize_reference(ref)
+            if name == overlay_name:
+                raise ValueError(f"Self-conflict in overlay {overlay_name}: conflicts_with contains itself")
+
+    # Проверка циклов suppression (простая: если A подавляет B и B подавляет A)
+    # Строим граф suppression для всех сущностей (домены, интенты, оверлеи)
+    # Для простоты ограничимся проверкой циклов длины 2 (взаимное подавление)
+    suppression_graph: Dict[str, Set[str]] = {}
+    for entity, cfg in {**domains, **intents, **overlays}.items():
+        # ключ entity должен быть уникальным, но домены, интенты и оверлеи могут иметь одинаковые имена?
+        # В разных каталогах могут быть одинаковые имена, но это маловероятно.
+        # Для надёжности используем префикс: domain:{name}, intent:{name}, overlay:{name}
+        prefix = "domain" if entity in domains else ("intent" if entity in intents else "overlay")
+        key = f"{prefix}:{entity}"
+        suppression_graph[key] = set()
+        for ref in cfg.suppresses:
+            _, name = _normalize_reference(ref)
+            # определяем тип подавляемой сущности (пока просто по наличию)
+            if name in ALLOWED_OVERLAYS:
+                target = f"overlay:{name}"
+            elif name in ALLOWED_INTENTS:
+                target = f"intent:{name}"
+            elif _is_valid_feature(name):
+                target = f"feature:{name}"
+            else:
+                # невалидная ссылка уже поймана выше
+                continue
+            suppression_graph[key].add(target)
+
+    # Проверяем взаимные циклы (A подавляет B и B подавляет A)
+    for a, targets in suppression_graph.items():
+        for b in targets:
+            if b in suppression_graph and a in suppression_graph[b]:
+                raise ValueError(f"Suppression cycle detected: {a} suppresses {b} and {b} suppresses {a}")
+
+    # Проверка equal priority конфликтов: для каждой пары overlays, которые конфликтуют,
+    # если их приоритеты равны, должен быть явный победитель (т.е. один из них подавляет другой).
+    for overlay_name, cfg in overlays.items():
+        for ref in cfg.conflicts_with:
+            _, conflict_name = _normalize_reference(ref)
+            if conflict_name not in overlays:
+                continue  # уже проверено выше
+            conflict_cfg = overlays[conflict_name]
+            # Проверяем, что конфликт взаимный? (не обязательно, но в наших конфигах он взаимный)
+            # Проверяем, есть ли явное подавление
+            if cfg.priority == conflict_cfg.priority:
+                # Проверяем, что один подавляет другого
+                has_suppress = (
+                    (conflict_name in cfg.suppresses) or
+                    (overlay_name in conflict_cfg.suppresses)
+                )
+                if not has_suppress:
+                    raise ValueError(
+                        f"Equal priority conflict between overlays '{overlay_name}' and '{conflict_name}' "
+                        f"(both priority {cfg.priority}) without explicit suppress rule. "
+                        "Add a suppress rule for one of them."
+                    )
+
+    logger.info("Conflict rules validation passed.")
+
+
+# ============================================================================
 # Главная функция запуска проверок (обновлена)
 # ============================================================================
 
@@ -550,12 +722,7 @@ def run_startup_checks(
     - наличие файлов для всех доменов/интентов/оверлеев (кроме neutral)
     - отсутствие лишних файлов
     - идемпотентность имён оверлеев
-
-    Мягкие проверки (только WARNING):
-    - покрытие тегов в KB
-    - наличие scoring_weights.json
-    - покрытие tag_map.json
-    - инварианты explainability (не блокируют)
+    - корректность конфликтных правил (ссылки, циклы, equal priority)
     """
     logger.info("Running startup checks (strict mode)...")
 
@@ -564,6 +731,9 @@ def run_startup_checks(
     _check_intent_files_strict(config_path, allowed_intents)
     _check_overlay_files_strict(config_path, allowed_overlays)
     _check_overlay_names_idempotent(allowed_overlays)
+
+    # НОВОЕ: проверка конфликтных правил (жёсткая)
+    _check_conflict_rules(config_path)
 
     # Мягкие проверки (не блокирующие)
     _check_tag_map_coverage(config_path, allowed_domains, allowed_intents, allowed_overlays)

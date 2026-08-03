@@ -874,18 +874,71 @@ def resolve_prompt_features(
             _add_suppression_reason(result, f"overlay:{overlay}", ReasonCode.SUPPRESSED_BY_DOMAIN_INCOMPATIBLE_OVERLAY)
             tags = [t for t in tags if t != overlay]
 
-    # 6. Конфликты между оверлеями
+    # ======================================================================
+    # 6. Конфликты между оверлеями (с учётом priority и явных suppresses)
+    # ======================================================================
     overlay_map = {cfg.name: cfg for cfg in overlay_configs}
-    for ov in effective_overlays[:]:
+    # Сначала собираем все конфликты, чтобы не удалять элементы во время итерации
+    conflicts_to_resolve = []
+    for ov in effective_overlays:
         cfg = overlay_map.get(ov)
         if cfg and cfg.conflicts_with:
             for conflict in cfg.conflicts_with:
-                if conflict in effective_overlays:
-                    effective_overlays.remove(conflict)
-                    suppressed_layers.append(f"overlay '{conflict}' suppressed due to conflict with '{ov}'")
-                    warnings.append(f"Overlay conflict: '{conflict}' removed because it conflicts with '{ov}'.")
-                    _add_suppression_reason(result, f"overlay:{conflict}", ReasonCode.SUPPRESSED_BY_OVERLAY_CONFLICT)
-                    tags = [t for t in tags if t != conflict]
+                if conflict in effective_overlays and conflict != ov:
+                    conflicts_to_resolve.append((ov, conflict))
+
+    # Разрешаем каждый конфликт, выбирая победителя по priority и явным suppresses
+    for ov, conflict in conflicts_to_resolve:
+        # Проверяем, не был ли уже удалён один из них
+        if ov not in effective_overlays or conflict not in effective_overlays:
+            continue
+
+        cfg_ov = overlay_map.get(ov)
+        cfg_conflict = overlay_map.get(conflict)
+
+        if cfg_ov is None or cfg_conflict is None:
+            continue
+
+        # Проверяем явное suppresses: если один подавляет другой, то он побеждает
+        if conflict in cfg_ov.suppresses:
+            # ov подавляет conflict -> удаляем conflict
+            effective_overlays.remove(conflict)
+            suppressed_layers.append(f"overlay '{conflict}' suppressed by overlay '{ov}' (explicit suppress)")
+            warnings.append(f"Overlay '{conflict}' explicitly suppressed by '{ov}'.")
+            _add_suppression_reason(result, f"overlay:{conflict}", ReasonCode.SUPPRESSED_BY_OVERLAY_RULE)
+            tags = [t for t in tags if t != conflict]
+            continue
+        if ov in cfg_conflict.suppresses:
+            # conflict подавляет ov -> удаляем ov
+            effective_overlays.remove(ov)
+            suppressed_layers.append(f"overlay '{ov}' suppressed by overlay '{conflict}' (explicit suppress)")
+            warnings.append(f"Overlay '{ov}' explicitly suppressed by '{conflict}'.")
+            _add_suppression_reason(result, f"overlay:{ov}", ReasonCode.SUPPRESSED_BY_OVERLAY_RULE)
+            tags = [t for t in tags if t != ov]
+            continue
+
+        # Сравниваем priority
+        if cfg_ov.priority > cfg_conflict.priority:
+            # ov побеждает -> удаляем conflict
+            effective_overlays.remove(conflict)
+            suppressed_layers.append(f"overlay '{conflict}' suppressed due to conflict with '{ov}' (higher priority)")
+            warnings.append(f"Overlay conflict: '{conflict}' removed (priority {cfg_conflict.priority}) < '{ov}' (priority {cfg_ov.priority}).")
+            _add_suppression_reason(result, f"overlay:{conflict}", ReasonCode.SUPPRESSED_BY_OVERLAY_CONFLICT)
+            tags = [t for t in tags if t != conflict]
+        elif cfg_conflict.priority > cfg_ov.priority:
+            # conflict побеждает -> удаляем ov
+            effective_overlays.remove(ov)
+            suppressed_layers.append(f"overlay '{ov}' suppressed due to conflict with '{conflict}' (higher priority)")
+            warnings.append(f"Overlay conflict: '{ov}' removed (priority {cfg_ov.priority}) < '{conflict}' (priority {cfg_conflict.priority}).")
+            _add_suppression_reason(result, f"overlay:{ov}", ReasonCode.SUPPRESSED_BY_OVERLAY_CONFLICT)
+            tags = [t for t in tags if t != ov]
+        else:
+            # Приоритеты равны и нет явного подавления — ошибка конфигурации
+            raise ValueError(
+                f"Overlay conflict between '{ov}' and '{conflict}' with equal priority ({cfg_ov.priority}) "
+                "and no explicit suppress rule. Please define a winner or adjust priorities."
+            )
+    # ======================================================================
 
     # 7. Получаем фичи из тегов (используя канонические алиасы)
     all_tags = [domain]
@@ -1006,6 +1059,42 @@ def resolve_prompt_features(
                 suppressed_layers.append(f"marketing suppressed by overlay '{cfg.name}'")
                 warnings.append(f"Marketing disabled by overlay '{cfg.name}' suppress rule.")
                 _add_suppression_reason(result, "marketing", ReasonCode.SUPPRESSED_BY_OVERLAY_RULE)
+
+    # 9.5 Применяем suppress правила интента (НОВОЕ для Итерации 4)
+    if intent_config:
+        for suppressed in intent_config.suppresses:
+            if suppressed == "storytelling":
+                result.storytelling_enabled = False
+                if "storytelling" not in result.suppressed_features:
+                    result.suppressed_features.append("storytelling")
+                _add_suppression_reason(result, "storytelling", ReasonCode.SUPPRESSED_BY_INTENT_RULE)
+            elif suppressed in ("marketing", "marketingpush"):
+                result.marketing_enabled = False
+                if "marketing" not in result.suppressed_features:
+                    result.suppressed_features.append("marketing")
+                _add_suppression_reason(result, "marketing", ReasonCode.SUPPRESSED_BY_INTENT_RULE)
+            elif suppressed == "antiai":
+                result.antiai_enabled = False
+                if "antiai" not in result.suppressed_features:
+                    result.suppressed_features.append("antiai")
+                _add_suppression_reason(result, "antiai", ReasonCode.SUPPRESSED_BY_INTENT_RULE)
+            elif suppressed == "rhetoric":
+                result.rhetoric_enabled = False
+                if "rhetoric" not in result.suppressed_features:
+                    result.suppressed_features.append("rhetoric")
+                _add_suppression_reason(result, "rhetoric", ReasonCode.SUPPRESSED_BY_INTENT_RULE)
+            elif suppressed == "nkrj":
+                result.nkrj_enabled = False
+                if "nkrj" not in result.suppressed_features:
+                    result.suppressed_features.append("nkrj")
+                _add_suppression_reason(result, "nkrj", ReasonCode.SUPPRESSED_BY_INTENT_RULE)
+            elif suppressed == "editorial":
+                result.editorial_enabled = False
+                if "editorial" not in result.suppressed_features:
+                    result.suppressed_features.append("editorial")
+                _add_suppression_reason(result, "editorial", ReasonCode.SUPPRESSED_BY_INTENT_RULE)
+            # Если suppressed начинается с "overlay:" или "intent:", мы игнорируем (пока)
+            # Другие значения не обрабатываем
 
     # 10. Итоговые теги: уникальные
     final_tags = list(dict.fromkeys(tags))
