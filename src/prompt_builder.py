@@ -795,6 +795,24 @@ def _add_ignored_unknown(
     if value not in result.ignored_unknown_values:
         result.ignored_unknown_values.append(value)
 
+# ============================================================================
+# Новая функция для построения карты оверлеев по слагу
+# ============================================================================
+def _build_overlay_slug_map(
+    overlays: Sequence[str],
+    overlay_configs: Sequence[OverlayConfig],
+) -> Dict[str, OverlayConfig]:
+    """Сопоставляет слаг оверлея (как в config/overlays/<slug>.json) с его конфигом.
+    Нельзя использовать cfg.name как ключ — это человекочитаемое название из JSON,
+    а не слаг файла."""
+    mapping: Dict[str, OverlayConfig] = {}
+    for slug, cfg in zip(overlays, overlay_configs):
+        mapping[slug] = cfg
+    # Резерв для тестов, где cfg.name может совпадать со слагом
+    for cfg in overlay_configs:
+        mapping.setdefault(cfg.name, cfg)
+    return mapping
+
 # ---------------------------------------------------------------------------
 # НОВАЯ ЦЕНТРАЛЬНАЯ ФУНКЦИЯ РАЗРЕШЕНИЯ ФИЧ (с explainability)
 # ---------------------------------------------------------------------------
@@ -875,9 +893,41 @@ def resolve_prompt_features(
             tags = [t for t in tags if t != overlay]
 
     # ======================================================================
+    # 5.5. Явные suppresses между оверлеями (независимо от conflicts_with)
+    # ======================================================================
+    overlay_map = _build_overlay_slug_map(effective_overlays, overlay_configs)
+    suppressed_by_overlay: Set[str] = set()
+
+    for ov in list(effective_overlays):
+        cfg = overlay_map.get(ov)
+        if not cfg or not cfg.suppresses:
+            continue
+        for target in cfg.suppresses:
+            if target in effective_overlays and target != ov:
+                suppressed_by_overlay.add(target)
+                suppressed_layers.append(
+                    f"overlay '{target}' suppressed by overlay '{ov}' (explicit suppress)"
+                )
+                warnings.append(
+                    f"Overlay '{target}' explicitly suppressed by '{ov}'."
+                )
+                _add_suppression_reason(
+                    result,
+                    f"overlay:{target}",
+                    ReasonCode.SUPPRESSED_BY_OVERLAY_RULE,
+                )
+                tags = [t for t in tags if t != target]
+
+    if suppressed_by_overlay:
+        effective_overlays = [
+            ov for ov in effective_overlays if ov not in suppressed_by_overlay
+        ]
+    # ======================================================================
+
+    # ======================================================================
     # 6. Конфликты между оверлеями (с учётом priority и явных suppresses)
     # ======================================================================
-    overlay_map = {cfg.name: cfg for cfg in overlay_configs}
+    overlay_map = _build_overlay_slug_map(effective_overlays, overlay_configs)
     # Сначала собираем все конфликты, чтобы не удалять элементы во время итерации
     conflicts_to_resolve = []
     for ov in effective_overlays:
