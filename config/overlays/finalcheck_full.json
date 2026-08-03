@@ -1,6 +1,7 @@
 {
   "name": "finalcheck_full",
   "conflicts_with": ["finalcheck_light"],
+  "suppresses": ["finalcheck_light"],
   "edit_level_compatible": ["remake"],
   "output_format": "plain_text",
   "format_note": "Все рекомендации и исправленный текст выводить только в виде обычного текста. Запрещено использовать символы Markdown: ##, ###, **, *, - как маркер списка. Для перечислений использовать нумерацию (1., 2.) или тире с пробелом как часть текста, но не как Markdown-список.",
