@@ -346,7 +346,7 @@ const MODE_CONFIG = {
   statya_article: {
     menu: 'Статья (черновик)',
     group: 'genre',          // было 'blog' — теперь режим показывается в подменю «Жанры»
-    order: 50,               // чтобы идти после coldemail/pressrelease/landing/workdoc
+    order: 60,               // чтобы идти после coldemail/pressrelease/landing/workdoc/casestudy
     domain: 'statya',        // реальный файл config/domains/statya.json
     intent: 'analytical',    // файл config/intents/analytical.json
     overlays: ['infostyle', 'audiencesegment'],
@@ -565,6 +565,20 @@ const MODE_CONFIG = {
     overlays: ['infostyle', 'workdoc'],
     temperature: 0.15,
     handler: 'editSelection_genre_workdoc'
+  },
+
+
+
+
+  genre_casestudy: {
+    menu: 'Кейс (Case Study)',
+    group: 'genre',
+    order: 50,
+    domain: 'genre',         // реальный файл config/domains/genre.json
+    intent: 'analytical',    // файл config/intents/analytical.json; жанр усилен overlay casestudy
+    overlays: ['infostyle', 'casestudy'],
+    temperature: 0.3,
+    handler: 'editSelection_genre_casestudy'
   },
 
 
@@ -1115,6 +1129,13 @@ function editSelection_genre_landing() {
 
 function editSelection_genre_workdoc() {
   runModeById_('genre_workdoc');
+}
+
+
+
+
+function editSelection_genre_casestudy() {
+  runModeById_('genre_casestudy');
 }
 
 
