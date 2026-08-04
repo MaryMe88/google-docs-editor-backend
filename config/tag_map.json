@@ -16,7 +16,7 @@
         "post",
         "web",
         "landing",
-        "case_study",
+        "casestudy",
         "presentation",
         "cta"
       ]
@@ -480,6 +480,18 @@
         "style",
         "principles",
         "workflow"
+      ]
+    },
+    "casestudy": {
+      "primary": [
+        "casestudy"
+      ],
+      "expanded": [
+        "marketing",
+        "storytelling",
+        "results",
+        "testimonial",
+        "cta"
       ]
     },
     "coldemail": {
