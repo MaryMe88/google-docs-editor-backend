@@ -439,7 +439,7 @@ const MODE_CONFIG = {
     order: 50,
     domain: 'deai',          // валидный domain — оставляем
     intent: null,            // intent 'deai' даёт HTTP 500, поэтому не отправляем
-    overlays: ['infostyle'],
+    overlays: ['base'],      // заменено с 'infostyle' на 'base' (Итерация 9)
     output_mode: 'text_and_report',
     temperature: 0.2,
     handler: 'editSelection_deai'
