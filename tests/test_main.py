@@ -1,7 +1,7 @@
 """
 tests/test_main.py
 ==================
-Тесты для main.py, проверяющие изменения из шагов 2, 3, 4.
+Тесты для main.py, проверяющие изменения из шагов 2, 3, 4 и новые преобразования ошибок.
 
 Запуск:
     pytest tests/test_main.py -v
@@ -16,6 +16,8 @@ from fastapi.testclient import TestClient
 
 from src.main import app, _PROVIDER_KEY_ENV, _CORS_ORIGINS, invalidate_provider_cache
 from src.contracts import EditResponse
+from src.main import _llm_error_to_http_exception
+from src.llm_client import LLMFallbackError, LLMError, LLMAPIError
 
 
 client = TestClient(app)
@@ -195,3 +197,83 @@ def test_edit_response_does_not_log_prompt_entirely(
         assert "super secret system prompt" not in msg
     assert any("edit_request" in msg for msg in log_messages)
     assert any("text_length" in msg for msg in log_messages)
+
+
+# ---------- Тесты для _llm_error_to_http_exception ----------
+
+def test_llm_error_to_http_exception_rate_limit() -> None:
+    """rate_limit → 429."""
+    error = LLMFallbackError("rate", kind="rate_limit")
+    exc = _llm_error_to_http_exception(error)
+    assert exc.status_code == 429
+    assert "rate limit" in exc.detail.lower()
+
+
+def test_llm_error_to_http_exception_context_limit() -> None:
+    """context_limit → 422."""
+    error = LLMFallbackError("context", kind="context_limit")
+    exc = _llm_error_to_http_exception(error)
+    assert exc.status_code == 422
+    assert "too large" in exc.detail.lower()
+
+
+def test_llm_error_to_http_exception_timeout_or_upstream() -> None:
+    """timeout/upstream_error → 503."""
+    error = LLMFallbackError("timeout", kind="timeout")
+    exc = _llm_error_to_http_exception(error)
+    assert exc.status_code == 503
+    assert "temporarily unavailable" in exc.detail.lower()
+
+    error2 = LLMFallbackError("upstream", kind="upstream_error")
+    exc2 = _llm_error_to_http_exception(error2)
+    assert exc2.status_code == 503
+
+
+def test_llm_error_to_http_exception_authentication_or_configuration() -> None:
+    """authentication/configuration → 503 с другим сообщением."""
+    error = LLMFallbackError("auth", kind="authentication")
+    exc = _llm_error_to_http_exception(error)
+    assert exc.status_code == 503
+    assert "configuration" in exc.detail.lower()
+
+    error2 = LLMFallbackError("config", kind="configuration")
+    exc2 = _llm_error_to_http_exception(error2)
+    assert exc2.status_code == 503
+
+
+def test_llm_error_to_http_exception_unknown() -> None:
+    """unknown → 502."""
+    error = LLMFallbackError("unknown", kind="unknown")
+    exc = _llm_error_to_http_exception(error)
+    assert exc.status_code == 502
+    assert "invalid response" in exc.detail.lower()
+
+
+def test_llm_error_to_http_exception_plain_llm_error() -> None:
+    """Обычный LLMError (не LLMFallbackError) → 502."""
+    error = LLMError("Generic")
+    exc = _llm_error_to_http_exception(error)
+    assert exc.status_code == 502
+
+
+def test_llm_error_to_http_exception_does_not_leak_details() -> None:
+    """Проверяем, что детали не содержат внутренних данных."""
+    error = LLMFallbackError(
+        "internal",
+        kind="upstream_error",
+        provider="openrouter",
+        upstream_status=500,
+        skipped_providers=("anthropic",),
+        unknown_providers=("foo",),
+        prompt_length=123,
+        primary_error=LLMAPIError("secret upstream error", status_code=500),
+    )
+    exc = _llm_error_to_http_exception(error)
+    detail = exc.detail
+    assert "openrouter" not in detail
+    assert "anthropic" not in detail
+    assert "foo" not in detail
+    assert "123" not in detail
+    assert "secret" not in detail
+    assert "upstream" not in detail
+    assert "provider" not in detail.lower()
