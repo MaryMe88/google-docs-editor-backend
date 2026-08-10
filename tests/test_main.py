@@ -249,6 +249,17 @@ def test_llm_error_to_http_exception_unknown() -> None:
     assert "invalid response" in exc.detail.lower()
 
 
+def test_llm_error_to_http_exception_invalid_response() -> None:
+    """invalid_response → 502 с безопасным сообщением."""
+    error = LLMFallbackError("invalid", kind="invalid_response")
+    exc = _llm_error_to_http_exception(error)
+    assert exc.status_code == 502
+    assert "empty or invalid response" in exc.detail.lower()
+    # Убедимся, что детали не содержат внутренних данных
+    assert "provider" not in exc.detail.lower()
+    assert "reason" not in exc.detail.lower()
+
+
 def test_llm_error_to_http_exception_plain_llm_error() -> None:
     """Обычный LLMError (не LLMFallbackError) → 502."""
     error = LLMError("Generic")
