@@ -104,6 +104,18 @@ class LLMFallbackError(LLMError):
         self.kind = kind
 
 
+class LLMInvalidResponseError(LLMError):
+    """Провайдер вернул HTTP-успех, но ответ не годится для текстовой генерации."""
+
+    def __init__(self, reason_code: str) -> None:
+        self.reason_code = reason_code
+        if reason_code in ("EMPTY_CONTENT", "NON_TEXT_CONTENT"):
+            message = f"Provider returned empty or non-text content ({reason_code})"
+        else:
+            message = f"Invalid LLM response: {reason_code}"
+        super().__init__(message)
+
+
 def _extract_upstream_status(error: LLMError) -> Optional[int]:
     """Извлекает HTTP статус из ошибки, если он присутствует."""
     if hasattr(error, "status_code") and isinstance(error.status_code, int):
@@ -116,6 +128,17 @@ def _extract_upstream_status(error: LLMError) -> Optional[int]:
 
 def _classify_error(error: LLMError) -> str:
     """Классифицирует ошибку для LLMFallbackError."""
+    # Проверяем на invalid_response (приоритет выше общего upstream_error)
+    if isinstance(error, LLMInvalidResponseError):
+        return "invalid_response"
+    # Проверяем цепочку причин
+    if error.__cause__:
+        cause = error.__cause__
+        if isinstance(cause, LLMInvalidResponseError):
+            return "invalid_response"
+        if isinstance(cause, LLMError):
+            return _classify_error(cause)
+
     if isinstance(error, LLMRateLimitError):
         return "rate_limit"
     if isinstance(error, LLMTimeoutError):
@@ -139,11 +162,9 @@ def _classify_error(error: LLMError) -> str:
             )):
                 return "context_limit"
         return "upstream_error"
-    # Проверяем цепочку причин
+    # Проверяем цепочку причин для timeout
     if error.__cause__:
         cause = error.__cause__
-        if isinstance(cause, LLMError):
-            return _classify_error(cause)
         if isinstance(cause, httpx.TimeoutException):
             return "timeout"
     return "unknown"
@@ -359,15 +380,29 @@ class _OpenAICompatibleClient(BaseLLMClient):
 
     def parse_response(self, data: Dict[str, Any]) -> LLMResponse:
         try:
-            content = data["choices"][0]["message"]["content"]
-            finish_reason = data["choices"][0].get("finish_reason")
+            if "choices" not in data or not isinstance(data["choices"], list) or len(data["choices"]) == 0:
+                raise LLMInvalidResponseError("MISSING_CHOICES")
+
+            choice = data["choices"][0]
+            if "message" not in choice or not isinstance(choice["message"], dict):
+                raise LLMInvalidResponseError("MISSING_MESSAGE")
+
+            content = choice["message"].get("content")
+
+            if content is None:
+                raise LLMInvalidResponseError("EMPTY_CONTENT")
+
+            if not isinstance(content, str):
+                raise LLMInvalidResponseError("NON_TEXT_CONTENT")
+
+            if not content.strip():
+                raise LLMInvalidResponseError("EMPTY_CONTENT")
+
+            finish_reason = choice.get("finish_reason")
 
             tokens_used = None
             if "usage" in data and isinstance(data["usage"], dict):
                 tokens_used = data["usage"].get("total_tokens")
-
-            if not isinstance(content, str) or not content.strip():
-                raise LLMError("Provider returned empty or non-text content")
 
             return LLMResponse(
                 content=content,
@@ -378,7 +413,7 @@ class _OpenAICompatibleClient(BaseLLMClient):
             )
 
         except (KeyError, IndexError, TypeError) as error:
-            raise LLMError(f"Failed to parse response: {error}") from error
+            raise LLMInvalidResponseError("MALFORMED_RESPONSE") from error
 
 
 class PerplexityClient(_OpenAICompatibleClient):
@@ -446,16 +481,21 @@ class AnthropicClient(BaseLLMClient):
             content_blocks = data.get("content", [])
             text_chunks: List[str] = []
 
-            if isinstance(content_blocks, list):
-                for block in content_blocks:
-                    if isinstance(block, dict) and block.get("type") == "text":
-                        text = block.get("text")
-                        if isinstance(text, str):
-                            text_chunks.append(text)
+            if not isinstance(content_blocks, list):
+                raise LLMInvalidResponseError("MALFORMED_RESPONSE")
+
+            for block in content_blocks:
+                if not isinstance(block, dict):
+                    continue
+                if block.get("type") == "text":
+                    text = block.get("text")
+                    if isinstance(text, str):
+                        text_chunks.append(text)
 
             content = "\n".join(text_chunks).strip()
+
             if not content:
-                raise LLMError("Anthropic response does not contain text content")
+                raise LLMInvalidResponseError("EMPTY_CONTENT")
 
             usage = data.get("usage", {})
             tokens_used = None
@@ -474,7 +514,7 @@ class AnthropicClient(BaseLLMClient):
             )
 
         except (KeyError, IndexError, TypeError) as error:
-            raise LLMError(f"Failed to parse response: {error}") from error
+            raise LLMInvalidResponseError("MALFORMED_RESPONSE") from error
 
 
 def create_llm_client(
@@ -617,15 +657,25 @@ async def call_with_fallback(
     # После исчерпания всех провайдеров — всегда выбрасываем LLMFallbackError
     kind = "unknown"
     upstream_status = None
+    response_reason_code = None
+    primary_error_type = None
+
     if primary_error is not None:
         kind = _classify_error(primary_error)
         upstream_status = _extract_upstream_status(primary_error)
+        primary_error_type = type(primary_error).__name__
+        if isinstance(primary_error, LLMInvalidResponseError):
+            response_reason_code = primary_error.reason_code
+
         logger.warning(
             "All providers exhausted. primary_provider=%s, error_kind=%s, "
-            "upstream_status=%s, skipped_providers=%s, unknown_providers=%s, prompt_length=%d",
+            "upstream_status=%s, primary_error_type=%s, response_reason_code=%s, "
+            "skipped_providers=%s, unknown_providers=%s, prompt_length=%d",
             primary_provider,
             kind,
             upstream_status,
+            primary_error_type,
+            response_reason_code,
             skipped_providers,
             unknown_providers,
             len(prompt),
