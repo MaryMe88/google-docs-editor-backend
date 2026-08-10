@@ -23,7 +23,7 @@ from slowapi.util import get_remote_address
 from src.auth import verify_api_key
 from src.config_types import AudienceProfile
 from src.contracts import CONTRACT_VERSION, EditRequest, EditResponse, HealthResponse
-from src.llm_client import LLMError, call_with_fallback, create_llm_client, LLMFallbackError  # NEW: added LLMFallbackError
+from src.llm_client import LLMError, call_with_fallback, create_llm_client, LLMFallbackError
 from src.output_guard import (
     find_placeholder_leaks,
     harden_prompt_against_placeholders,
@@ -52,18 +52,7 @@ _rate_limit = "1000/minute" if _is_testing else "10/minute"
 
 
 def _client_ip_key(request: Request) -> str:
-    """Ключ rate-limit по реальному IP клиента за reverse-proxy.
-
-    На Render (и любом прокси) ``request.client.host`` равен IP прокси и
-    одинаков для всех клиентов — тогда лимит становится глобальным.
-    Берём первый IP из ``X-Forwarded-For`` (ближайший к клиенту),
-    а при его отсутствии — fallback на стандартный get_remote_address.
-
-    Замечание по безопасности: заголовок X-Forwarded-For клиент может
-    подделать, если запрос идёт не через доверенный прокси. На Render
-    входящий трафик всегда проходит через их прокси, который
-    перезаписывает этот заголовок, поэтому для текущего деплоя это приемлемо.
-    """
+    """Ключ rate-limit по реальному IP клиента за reverse-proxy."""
     forwarded_for = request.headers.get("X-Forwarded-For")
     if forwarded_for:
         first_ip = forwarded_for.split(",")[0].strip()
@@ -122,7 +111,6 @@ _CORS_ORIGINS: list[str] = (
 # Вспомогательные функции для семантического индекса
 # ---------------------------------------------------------------------------
 def _collect_semantic_entries(app: FastAPI) -> list[dict]:
-    """Собирает все записи из базы знаний, сохранённой в app.state.kb."""
     kb = getattr(app.state, "kb", None)
     if kb is None:
         logger.warning("SemanticIndex: kb не загружен, пропускаем сбор записей")
@@ -137,7 +125,6 @@ def _collect_semantic_entries(app: FastAPI) -> list[dict]:
 
 
 async def _build_semantic_index_background(app: FastAPI) -> None:
-    """Фоновая задача построения семантического индекса."""
     if app.state.semantic_index_status != "not_started":
         logger.info("SemanticIndex: уже запущен или завершён, пропускаем")
         return
@@ -396,22 +383,18 @@ def _log_edit_request_meta(body: EditRequest, retrieval_meta: Optional[Dict] = N
 
 
 class InvalidLLMOutputError(Exception):
-    """LLM вернула ответ, не соответствующий ожидаемому формату."""
-
     def __init__(self, reasons: list[str]) -> None:
         self.reasons = reasons
         super().__init__(f"Invalid LLM output: {reasons}")
 
 
 def _split_edit_output(raw: str, output_mode: str) -> Tuple[str, Optional[str]]:
-    """Разбирает сырой ответ LLM на текст и (опционально) отчёт."""
     if output_mode == "text_and_report":
         return _parse_text_and_report(raw)
     return raw, None
 
 
 def _looks_like_report_instead_of_text(text: str) -> bool:
-    """Эвристика: ответ похож на анализ/отчёт, а не на отредактированный текст."""
     normalized = text.strip().lower()
     if not normalized:
         return True
@@ -437,7 +420,6 @@ def _validate_edit_output(
     report: Optional[str],
     output_mode: str,
 ) -> list[str]:
-    """Возвращает список причин, по которым ответ LLM невалиден."""
     reasons: list[str] = []
 
     if has_placeholder_leak(edited_text):
@@ -463,7 +445,6 @@ async def _generate_clean_edit(
     providers: list[str],
     body: EditRequest,
 ) -> Tuple[Any, str, Optional[str]]:
-    """Генерирует отредактированный текст с защитой от плейсхолдеров и сломанного формата."""
     response = await call_with_fallback(
         prompt=prompt,
         providers=providers,
@@ -521,7 +502,6 @@ async def _generate_clean_edit(
     return response, edited_text, report
 
 
-# NEW: функция преобразования LLMError в HTTPException
 def _llm_error_to_http_exception(error: LLMError) -> HTTPException:
     """Преобразует LLMError в HTTPException с безопасным сообщением."""
     if isinstance(error, LLMFallbackError):
@@ -545,6 +525,11 @@ def _llm_error_to_http_exception(error: LLMError) -> HTTPException:
             return HTTPException(
                 status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
                 detail="LLM service configuration is temporarily unavailable.",
+            )
+        if kind == "invalid_response":
+            return HTTPException(
+                status_code=status.HTTP_502_BAD_GATEWAY,
+                detail="LLM service returned an empty or invalid response. Please try again later.",
             )
         # unknown
         return HTTPException(
@@ -644,7 +629,6 @@ async def edit_text(request: Request, body: EditRequest) -> EditResponse:
             ),
         ) from error
     except LLMError as error:
-        # CHANGED: логируем и преобразуем через новую функцию
         if isinstance(error, LLMFallbackError):
             logger.warning(
                 "LLMFallbackError: provider=%s kind=%s upstream_status=%s skipped=%s unknown=%s prompt_length=%d",
@@ -669,7 +653,7 @@ async def edit_text(request: Request, body: EditRequest) -> EditResponse:
     except ValidationError as error:
         logger.error("Validation error: %s", error, exc_info=True)
         raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             detail=error.errors(),
         ) from error
     except Exception as error:
@@ -688,15 +672,6 @@ _MARKER_REPORT = re.compile(r"={2,}\s*ОТЧЁТ\s*={2,}", re.IGNORECASE)
 
 
 def _parse_text_and_report(raw: str) -> Tuple[str, Optional[str]]:
-    """Разбирает ответ LLM на отредактированный текст и отчёт.
-
-    Поддерживает оба порядка маркеров:
-    - штатный ``===ТЕКСТ=== ... ===ОТЧЁТ=== ...``;
-    - перевёрнутый ``===ОТЧЁТ=== ... ===ТЕКСТ=== ...``.
-
-    Если маркер ТЕКСТ отсутствует, сохраняем обратную совместимость:
-    весь ответ возвращается как текст.
-    """
     text_match = _MARKER_TEXT.search(raw)
     report_match = _MARKER_REPORT.search(raw)
 
