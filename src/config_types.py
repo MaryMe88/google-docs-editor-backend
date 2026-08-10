@@ -127,6 +127,8 @@ class DomainConfig:
     conflicts_with: tuple = field(default_factory=tuple)
     incompatible_intents: tuple = field(default_factory=tuple)
     incompatible_overlays: tuple = field(default_factory=tuple)
+    # НОВОЕ: уровень глубины структурного редактирования (дорожная карта)
+    edit_level: str = "processing"
 
 
 @dataclass(frozen=True)

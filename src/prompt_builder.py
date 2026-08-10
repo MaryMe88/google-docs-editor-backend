@@ -74,6 +74,10 @@ ALLOWED_KB_LIMIT_KEYS: frozenset = frozenset({
     "grammar_candidates", "style_candidates", "logic_candidates",
     "storytelling_candidates", "marketing_candidates", "rhetoric_candidates",
 })
+# НОВОЕ: допустимые уровни редактирования (Этап 2)
+ALLOWED_EDIT_LEVELS: frozenset = frozenset(
+    {"light", "processing", "remake", "adaptive_remake"}
+)
 # ИЗМЕНЕНИЕ (Итерация 5): разрешаем 0 как допустимое значение для отключения категории
 KB_LIMIT_MIN: int = 0
 KB_LIMIT_MAX: int = 100
@@ -260,6 +264,18 @@ def load_domain_config(domain: str, base_path: Path = Path("config")) -> DomainC
     incompatible_intents = tuple(normalize_string_list(data.get("incompatible_intents", [])))
     incompatible_overlays = tuple(normalize_string_list(data.get("incompatible_overlays", [])))
 
+    # ---- edit_level (НОВОЕ) ----
+    raw_edit_level = data.get("edit_level", "processing")
+    if not isinstance(raw_edit_level, str) or raw_edit_level not in ALLOWED_EDIT_LEVELS:
+        logger.warning(
+            "load_domain_config: недопустимый edit_level=%r в домене '%s' — "
+            "используется 'processing'. Допустимые значения: %s",
+            raw_edit_level,
+            data.get("name", normalized_domain),
+            sorted(ALLOWED_EDIT_LEVELS),
+        )
+        raw_edit_level = "processing"
+
     return DomainConfig(
         name=data.get("name", normalized_domain),
         system_rules=data.get("system_rules", ""),
@@ -275,6 +291,7 @@ def load_domain_config(domain: str, base_path: Path = Path("config")) -> DomainC
         conflicts_with=conflicts_with,
         incompatible_intents=incompatible_intents,
         incompatible_overlays=incompatible_overlays,
+        edit_level=raw_edit_level,   # новое поле
     )
 
 def load_intent_config(intent: Optional[str], base_path: Path = Path("config")) -> Optional[IntentConfig]:
@@ -1324,6 +1341,43 @@ class PromptBuilder:
             lines.append("Маркетинг запрещён: удаляй призывы к действию, триггерные слова и конструкции давления.")
         return "\n".join(lines) if lines else ""
 
+    # ------------------------------------------------------------------
+    # НОВОЕ: блок уровня редактирования (Этап 3)
+    # ------------------------------------------------------------------
+    def _build_edit_level_block(self, domain_config: DomainConfig) -> str:
+        level = domain_config.edit_level
+        if level == "light":
+            return (
+                "Уровень правки: лёгкая (light).\n"
+                "Разрешена только точечная правка: исправляй грамматику, стиль и пунктуацию. "
+                "Не переставляй, не объединяй и не дроби абзацы без грамматической необходимости. "
+                "Не добавляй новые структурные элементы. Не меняй композицию и порядок аргументов."
+            )
+        elif level == "processing":
+            return (
+                "Уровень правки: обработка (processing).\n"
+                "Композицию и порядок абзацев не менять. Работай со стилем, грамматикой и локальной связностью. "
+                "Не перестраивай структуру текста, не меняй порядок блоков."
+            )
+        elif level == "remake":
+            return (
+                "Уровень правки: переделка (remake).\n"
+                "Разрешена перестройка композиции и порядка аргументов. Можно менять структуру текста, "
+                "переставлять абзацы, объединять или дробить их. Не выдумывай факты и не меняй позицию автора."
+            )
+        elif level == "adaptive_remake":
+            return (
+                "Уровень правки: адаптивная переделка (adaptive_remake).\n"
+                "Сначала проверь, соответствует ли исходный текст структуре указанного жанра (из overlay). "
+                "Если соответствует — ограничься языковой правкой, не меняя структуру. "
+                "Если не соответствует — выполни полную переделку: смени композицию, порядок аргументов "
+                "и структурные блоки согласно инструкциям overlay, сохранив факты и позицию автора. "
+                "Не выдумывай факты."
+            )
+        else:
+            # fallback (не должно случиться, т.к. валидация уже есть)
+            return ""
+
     def _build_ip_ceiling_block(self, domain_config: DomainConfig) -> str:
         effective_ceiling = domain_config.ip_ceiling if domain_config.ip_ceiling is not None else (
             self.core_config.ip_ceiling if self.core_config else 2.5)
@@ -1750,6 +1804,13 @@ class PromptBuilder:
         mode_constraints = self._build_mode_constraints_block(domain_config)
         if mode_constraints:
             blocks.append(mode_constraints)
+
+        # ------------------------------------------------------------------
+        # НОВОЕ: вставляем блок уровня редактирования (Этап 3)
+        # ------------------------------------------------------------------
+        edit_level_block = self._build_edit_level_block(domain_config)
+        if edit_level_block:
+            blocks.append(edit_level_block)
 
         if domain_config.tasks:
             blocks.append("Задачи редактора в этом домене:\n- " + "\n- ".join(domain_config.tasks))
