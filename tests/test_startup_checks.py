@@ -80,3 +80,15 @@ def test_scoring_weights_invalid_json_raises_error() -> None:
         weights_file.write_text("{invalid json}", encoding="utf-8")
         with pytest.raises(RuntimeError, match="Invalid JSON"):
             _check_scoring_weights_file(config_path)
+
+
+# ============================================================================
+# НОВЫЙ ТЕСТ: импортный smoke-тест для PromptBuilder (Этап 5)
+# ============================================================================
+
+def test_prompt_builder_import_and_startup_check() -> None:
+    """Проверяет, что PromptBuilder импортируется и startup_check не падает (smoke-тест)."""
+    from src.prompt_builder import PromptBuilder
+    builder = PromptBuilder()
+    # startup_check вызывает загрузку конфигов, не должен падать
+    builder.startup_check()

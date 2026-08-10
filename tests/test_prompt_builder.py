@@ -785,3 +785,127 @@ def test_load_output_format_no_markdown_removed() -> None:
     result = load_output_format("text_only")
     assert "Markdown" in result
     assert "no_markdown" not in result
+
+
+# ============================================================================
+# НОВЫЕ ТЕСТЫ ДЛЯ edit_level (Этап 5) — ИСПРАВЛЕНЫ
+# ============================================================================
+
+def test_edit_level_default_processing(builder: PromptBuilder) -> None:
+    """При отсутствии edit_level в JSON значение по умолчанию 'processing'."""
+    import tempfile
+    import json
+    from pathlib import Path
+    from src.prompt_builder import load_domain_config
+
+    with tempfile.TemporaryDirectory() as tmp:
+        config_dir = Path(tmp) / "config" / "domains"
+        config_dir.mkdir(parents=True)
+        domain_file = config_dir / "test_domain.json"
+        domain_data = {
+            "name": "test_domain",
+            "system_rules": "",
+            "tone": "neutral",
+            "allow_storytelling": False,
+            "allow_marketing": False,
+        }
+        domain_file.write_text(json.dumps(domain_data), encoding="utf-8")
+
+        config = load_domain_config("test_domain", base_path=Path(tmp) / "config")
+        assert config.edit_level == "processing"
+
+
+def test_edit_level_valid_value(builder: PromptBuilder) -> None:
+    """Валидное значение edit_level загружается без изменений."""
+    import tempfile
+    import json
+    from pathlib import Path
+    from src.prompt_builder import load_domain_config
+
+    with tempfile.TemporaryDirectory() as tmp:
+        config_dir = Path(tmp) / "config" / "domains"
+        config_dir.mkdir(parents=True)
+        domain_file = config_dir / "test_domain.json"
+        domain_data = {
+            "name": "test_domain",
+            "system_rules": "",
+            "tone": "neutral",
+            "edit_level": "adaptive_remake",
+        }
+        domain_file.write_text(json.dumps(domain_data), encoding="utf-8")
+
+        config = load_domain_config("test_domain", base_path=Path(tmp) / "config")
+        assert config.edit_level == "adaptive_remake"
+
+
+@pytest.mark.parametrize("invalid_value", [None, 123, [], "unsafe_rewrite"])
+def test_edit_level_invalid_fallback(
+    builder: PromptBuilder,
+    caplog: pytest.LogCaptureFixture,
+    invalid_value,
+) -> None:
+    """Невалидные значения приводят к fallback 'processing' и логу предупреждения."""
+    import tempfile
+    import json
+    from pathlib import Path
+    from src.prompt_builder import load_domain_config
+
+    with tempfile.TemporaryDirectory() as tmp:
+        config_dir = Path(tmp) / "config" / "domains"
+        config_dir.mkdir(parents=True)
+        domain_file = config_dir / "test_domain.json"
+        domain_data = {
+            "name": "test_domain",
+            "system_rules": "",
+            "tone": "neutral",
+            "edit_level": invalid_value,
+        }
+        domain_file.write_text(json.dumps(domain_data), encoding="utf-8")
+
+        with caplog.at_level("WARNING", logger="src.prompt_builder"):
+            config = load_domain_config("test_domain", base_path=Path(tmp) / "config")
+            assert config.edit_level == "processing"
+            assert "недопустимый edit_level" in caplog.text
+            assert "используется 'processing'" in caplog.text
+
+
+@pytest.mark.parametrize("level,expected_phrase", [
+    ("light", "Не переставляй, не объединяй"),
+    ("processing", "Композицию и порядок абзацев не менять"),
+    ("remake", "Разрешена перестройка композиции"),
+    ("adaptive_remake", "Если соответствует"),
+])
+def test_build_edit_level_block_contains_key_phrases(builder: PromptBuilder, level: str, expected_phrase: str) -> None:
+    """Проверяет, что _build_edit_level_block возвращает правильные фразы для каждого уровня."""
+    domain_config = DomainConfig(
+        name="test",
+        system_rules="",
+        tone="neutral",
+        edit_level=level,
+    )
+    block = builder._build_edit_level_block(domain_config)
+    assert expected_phrase in block, f"Фраза '{expected_phrase}' не найдена для уровня {level}"
+
+
+def test_build_edit_level_block_integration(builder: PromptBuilder) -> None:
+    """Интеграционный тест: для домена genre с overlay casestudy, проверяем наличие adaptive_remake и условной логики."""
+    prompt = builder.build(
+        text="Мы делаем сайты уже пять лет. У нас хорошая команда.",
+        domain="genre",
+        overlays=["casestudy"],
+        include_knowledge=False,
+    )
+    assert "Уровень правки: адаптивная переделка" in prompt
+    assert "Если соответствует" in prompt
+    assert "Если не соответствует" in prompt
+
+
+def test_build_edit_level_for_domain_without_edit_level(builder: PromptBuilder) -> None:
+    """Для домена без edit_level (например, blog) выводится 'обработка'."""
+    prompt = builder.build(
+        text="Тестовый текст",
+        domain="blog",
+        include_knowledge=False,
+    )
+    assert "Уровень правки: обработка" in prompt
+    assert "Композицию и порядок абзацев не менять" in prompt
