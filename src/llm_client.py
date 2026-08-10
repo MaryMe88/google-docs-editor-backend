@@ -22,7 +22,7 @@ import os
 import random
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 import httpx
 from dotenv import load_dotenv
@@ -79,6 +79,76 @@ class LLMRateLimitError(LLMError):
     """Rate limit от провайдера."""
 
 
+class LLMFallbackError(LLMError):
+    """Ошибка при переборе провайдеров: все попытки неудачны."""
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        provider: Optional[str] = None,
+        primary_error: Optional[LLMError] = None,
+        skipped_providers: Tuple[str, ...] = (),
+        unknown_providers: Tuple[str, ...] = (),
+        prompt_length: int = 0,
+        upstream_status: Optional[int] = None,
+        kind: str = "unknown",
+    ) -> None:
+        super().__init__(message)
+        self.provider = provider
+        self.primary_error = primary_error
+        self.skipped_providers = skipped_providers
+        self.unknown_providers = unknown_providers
+        self.prompt_length = prompt_length
+        self.upstream_status = upstream_status
+        self.kind = kind
+
+
+def _extract_upstream_status(error: LLMError) -> Optional[int]:
+    """Извлекает HTTP статус из ошибки, если он присутствует."""
+    if hasattr(error, "status_code") and isinstance(error.status_code, int):
+        return error.status_code
+    cause = error.__cause__
+    if cause is not None and hasattr(cause, "status_code") and isinstance(cause.status_code, int):
+        return cause.status_code
+    return None
+
+
+def _classify_error(error: LLMError) -> str:
+    """Классифицирует ошибку для LLMFallbackError."""
+    if isinstance(error, LLMRateLimitError):
+        return "rate_limit"
+    if isinstance(error, LLMTimeoutError):
+        return "timeout"
+    if isinstance(error, LLMAPIError):
+        status = _extract_upstream_status(error)
+        # Проверяем rate_limit по статусу 429 (может быть обёрнут в LLMAPIError)
+        if status == 429:
+            return "rate_limit"
+        if status == 401 or status == 403:
+            return "authentication"
+        if status == 413:
+            return "context_limit"
+        if status and 500 <= status < 600:
+            return "upstream_error"
+        if status == 400:
+            msg = str(error).lower()
+            if any(phrase in msg for phrase in (
+                "context length", "context window", "maximum context",
+                "max tokens", "token limit", "too many tokens"
+            )):
+                return "context_limit"
+        return "upstream_error"
+    # Проверяем цепочку причин
+    if error.__cause__:
+        cause = error.__cause__
+        if isinstance(cause, LLMError):
+            return _classify_error(cause)
+        if isinstance(cause, httpx.TimeoutException):
+            return "timeout"
+    return "unknown"
+
+
 def _backoff_with_jitter(base_delay: float, attempt: int) -> float:
     """
     Экспоненциальный backoff с полным jitter.
@@ -99,17 +169,11 @@ def _backoff_with_jitter(base_delay: float, attempt: int) -> float:
 # ---------------------------------------------------------------------------
 # Адаптивный расчёт max_tokens
 # ---------------------------------------------------------------------------
-# Дефолт клиента можно держать более щедрым, но сама adaptive-функция
-# должна сохранять контракт тестов: короткие промпты получают floor,
-# длинные — масштабируются вверх до потолка.
 _DEFAULT_MAX_TOKENS = 6000
 _MIN_MAX_TOKENS = 1536
 _MAX_MAX_TOKENS = 12000
 
-# Эвристика для смешанного RU/EN текста.
 _CHARS_PER_TOKEN = 4
-
-# На длинных редакторских промптах разумно дать запас на ответ.
 _RESPONSE_BUDGET_MULTIPLIER = 1.35
 
 
@@ -119,12 +183,6 @@ def estimate_max_tokens(prompt: str) -> int:
     Для коротких промптов возвращает нижнюю границу. Для длинных —
     масштабирует бюджет ответа пропорционально оценке входа, но
     ограничивает результат диапазоном [_MIN_MAX_TOKENS, _MAX_MAX_TOKENS].
-
-    Args:
-        prompt: финальный текст промпта, отправляемый модели.
-
-    Returns:
-        Рекомендуемое значение max_tokens.
     """
     prompt_length = max(len(prompt), 0)
     estimated_input_tokens = prompt_length // _CHARS_PER_TOKEN
@@ -148,12 +206,6 @@ class BaseLLMClient(ABC):
 
     @staticmethod
     def extract_error_message(response: httpx.Response) -> str:
-        """Извлекает человекочитаемое сообщение об ошибке из ответа провайдера.
-
-        Единая реализация для всех провайдеров: поддерживает формат
-        ``{"error": {"message": ...}}`` и ``{"error": "..."}``,
-        с безопасным fallback на ``HTTP <status_code>``.
-        """
         try:
             error_data = response.json()
             if "error" in error_data:
@@ -164,31 +216,24 @@ class BaseLLMClient(ABC):
                     return err
                 return "API error"
             return f"HTTP {response.status_code}"
-        except Exception:  # noqa: BLE001
+        except Exception:
             return f"HTTP {response.status_code}"
 
-    async def __aenter__(self) -> "BaseLLMClient":
+    async def __aenter__(self) -> BaseLLMClient:
         return self
 
     async def __aexit__(self, exc_type: Any, exc_val: Any, exc_tb: Any) -> None:
         await self.client.aclose()
 
     async def close(self) -> None:
-        """Явно закрывает HTTP-клиент."""
         await self.client.aclose()
 
     def _sleep_delay_for(self, attempt: int) -> Optional[float]:
-        """Возвращает задержку перед следующей попыткой или None.
-
-        None означает, что попытка ``attempt`` (0-based) — последняя, и
-        спать перед выходом из цикла не нужно.
-        """
         if attempt + 1 >= self.config.max_retries:
             return None
         return _backoff_with_jitter(self.config.retry_delay, attempt)
 
     async def generate(self, prompt: str) -> LLMResponse:
-        """Генерирует ответ с retry-логикой и jitter."""
         attempt = 0
         last_error: Optional[Exception] = None
 
@@ -267,22 +312,13 @@ class BaseLLMClient(ABC):
 
     @abstractmethod
     async def call_api(self, prompt: str) -> LLMResponse:
-        """Выполняет вызов API провайдера."""
+        pass
 
 
 class _OpenAICompatibleClient(BaseLLMClient):
-    """Базовый клиент для провайдеров с OpenAI-совместимым API.
-
-    Perplexity, OpenAI и OpenRouter используют идентичный формат
-    ``/chat/completions``: одинаковый payload и схема ответа
-    (``choices[0].message.content``). Наследники переопределяют только
-    ``API_URL`` и при необходимости ``_build_headers``.
-    """
-
     API_URL: str = ""
 
     def _build_headers(self) -> Dict[str, str]:
-        """Стандартные заголовки Bearer-авторизации. Наследники могут расширить."""
         return {
             "Authorization": f"Bearer {self.config.api_key}",
             "Content-Type": "application/json",
@@ -346,20 +382,14 @@ class _OpenAICompatibleClient(BaseLLMClient):
 
 
 class PerplexityClient(_OpenAICompatibleClient):
-    """Клиент Perplexity API."""
-
     API_URL = "https://api.perplexity.ai/chat/completions"
 
 
 class OpenAIClient(_OpenAICompatibleClient):
-    """Клиент OpenAI API."""
-
     API_URL = "https://api.openai.com/v1/chat/completions"
 
 
 class OpenRouterClient(_OpenAICompatibleClient):
-    """Клиент OpenRouter API."""
-
     API_URL = "https://openrouter.ai/api/v1/chat/completions"
 
     def _build_headers(self) -> Dict[str, str]:
@@ -370,8 +400,6 @@ class OpenRouterClient(_OpenAICompatibleClient):
 
 
 class AnthropicClient(BaseLLMClient):
-    """Клиент Anthropic API."""
-
     API_URL = "https://api.anthropic.com/v1/messages"
     API_VERSION = "2023-06-01"
 
@@ -385,12 +413,7 @@ class AnthropicClient(BaseLLMClient):
             "model": self.config.model,
             "max_tokens": self.config.max_tokens,
             "temperature": self.config.temperature,
-            "messages": [
-                {
-                    "role": "user",
-                    "content": prompt,
-                }
-            ],
+            "messages": [{"role": "user", "content": prompt}],
         }
 
         try:
@@ -464,14 +487,6 @@ def create_llm_client(
     timeout: float = 60.0,
     max_retries: int = 3,
 ) -> BaseLLMClient:
-    """
-    Фабрика LLM-клиента.
-
-    Важно:
-    - поддерживает оба имени параметра: api_key и apikey;
-    - при отсутствии API key бросает ValueError;
-    - возвращает объект, пригодный для `async with`.
-    """
     if api_key is None and apikey is not None:
         api_key = apikey
 
@@ -529,22 +544,6 @@ def create_llm_client(
     return client_class(config)
 
 
-async def generate_text(
-    prompt: str,
-    provider: LLMProvider = LLMProvider.PERPLEXITY,
-    model: Optional[str] = None,
-    temperature: float = 0.3,
-) -> str:
-    """Упрощённый helper для генерации текста."""
-    async with create_llm_client(
-        provider=provider,
-        model=model,
-        temperature=temperature,
-    ) as client:
-        response = await client.generate(prompt)
-        return response.content
-
-
 async def call_with_fallback(
     prompt: str,
     providers: List[str],
@@ -553,45 +552,37 @@ async def call_with_fallback(
     max_retries_per_provider: int = 1,
     max_tokens: Optional[int] = None,
 ) -> LLMResponse:
-    """Последовательно пробует провайдеров из списка.
-
-    Возвращает первый успешный ответ. При исчерпании всех провайдеров
-    поднимает LLMError с причиной последнего сбоя.
-
-    Args:
-        prompt: текст промпта для LLM.
-        providers: список имён провайдеров в порядке приоритета.
-        model: имя модели (None — использовать дефолтную для провайдера).
-        temperature: температура генерации.
-        max_retries_per_provider: количество попыток на каждого провайдера.
-        max_tokens: лимит токенов ответа. None — рассчитывается адаптивно
-            из длины промпта через ``estimate_max_tokens``.
-    """
     if max_tokens is None:
         max_tokens = estimate_max_tokens(prompt)
 
     if not providers:
         raise LLMError("No providers specified. Cannot execute LLM call.")
 
-    last_error: Optional[Exception] = None
+    primary_error: Optional[LLMError] = None
+    primary_provider: Optional[str] = None
+    skipped_providers: List[str] = []
+    unknown_providers: List[str] = []
 
-    for provider_name in providers:
+    for idx, provider_name in enumerate(providers):
         try:
             provider_enum = LLMProvider(provider_name)
         except ValueError:
             logger.warning("Unknown provider %r, skipping.", provider_name)
+            unknown_providers.append(provider_name)
             continue
+
+        model_for_this = model if idx == 0 else None
 
         try:
             logger.info(
                 "call_with_fallback: trying provider=%s model=%s max_tokens=%s",
                 provider_name,
-                model,
+                model_for_this,
                 max_tokens,
             )
             async with create_llm_client(
                 provider=provider_enum,
-                model=model,
+                model=model_for_this,
                 temperature=temperature,
                 max_retries=max_retries_per_provider,
                 max_tokens=max_tokens,
@@ -609,7 +600,8 @@ async def call_with_fallback(
                 "call_with_fallback: provider=%s unavailable (missing key or model), skipping",
                 provider_name,
             )
-            last_error = LLMError(f"Provider {provider_name} is not configured")
+            skipped_providers.append(provider_name)
+            continue
 
         except LLMError as error:
             logger.warning(
@@ -617,9 +609,61 @@ async def call_with_fallback(
                 provider_name,
                 type(error).__name__,
             )
-            last_error = error
+            if primary_error is None:
+                primary_error = error
+                primary_provider = provider_name
+            continue
 
-    raise last_error or LLMError("All providers failed")
+    # После исчерпания всех провайдеров — всегда выбрасываем LLMFallbackError
+    kind = "unknown"
+    upstream_status = None
+    if primary_error is not None:
+        kind = _classify_error(primary_error)
+        upstream_status = _extract_upstream_status(primary_error)
+        logger.warning(
+            "All providers exhausted. primary_provider=%s, error_kind=%s, "
+            "upstream_status=%s, skipped_providers=%s, unknown_providers=%s, prompt_length=%d",
+            primary_provider,
+            kind,
+            upstream_status,
+            skipped_providers,
+            unknown_providers,
+            len(prompt),
+        )
+    else:
+        kind = "configuration"
+        logger.warning(
+            "All providers skipped or unknown. skipped_providers=%s, unknown_providers=%s, prompt_length=%d",
+            skipped_providers,
+            unknown_providers,
+            len(prompt),
+        )
+
+    raise LLMFallbackError(
+        f"All providers failed. Last error from {primary_provider if primary_provider else 'none'}",
+        provider=primary_provider,
+        primary_error=primary_error,
+        skipped_providers=tuple(skipped_providers),
+        unknown_providers=tuple(unknown_providers),
+        prompt_length=len(prompt),
+        upstream_status=upstream_status,
+        kind=kind,
+    )
+
+
+async def generate_text(
+    prompt: str,
+    provider: LLMProvider = LLMProvider.PERPLEXITY,
+    model: Optional[str] = None,
+    temperature: float = 0.3,
+) -> str:
+    async with create_llm_client(
+        provider=provider,
+        model=model,
+        temperature=temperature,
+    ) as client:
+        response = await client.generate(prompt)
+        return response.content
 
 
 if __name__ == "__main__":
@@ -646,7 +690,7 @@ if __name__ == "__main__":
                 print(f"Provider: {response.provider}")
                 print(f"Tokens used: {response.tokens_used}")
                 print(f"Finish reason: {response.finish_reason}")
-        except Exception as error:  # noqa: BLE001
+        except Exception as error:
             print(f"LLM error: {error}")
 
     _asyncio.run(_test_client())
