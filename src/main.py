@@ -23,7 +23,7 @@ from slowapi.util import get_remote_address
 from src.auth import verify_api_key
 from src.config_types import AudienceProfile
 from src.contracts import CONTRACT_VERSION, EditRequest, EditResponse, HealthResponse
-from src.llm_client import LLMError, call_with_fallback, create_llm_client
+from src.llm_client import LLMError, call_with_fallback, create_llm_client, LLMFallbackError  # NEW: added LLMFallbackError
 from src.output_guard import (
     find_placeholder_leaks,
     harden_prompt_against_placeholders,
@@ -521,6 +521,43 @@ async def _generate_clean_edit(
     return response, edited_text, report
 
 
+# NEW: функция преобразования LLMError в HTTPException
+def _llm_error_to_http_exception(error: LLMError) -> HTTPException:
+    """Преобразует LLMError в HTTPException с безопасным сообщением."""
+    if isinstance(error, LLMFallbackError):
+        kind = error.kind
+        if kind == "rate_limit":
+            return HTTPException(
+                status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+                detail="LLM provider rate limit reached. Please try again later.",
+            )
+        if kind == "context_limit":
+            return HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="The text or editing instructions are too large. Please shorten them.",
+            )
+        if kind in ("timeout", "upstream_error"):
+            return HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="LLM service is temporarily unavailable. Please try again later.",
+            )
+        if kind in ("authentication", "configuration"):
+            return HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="LLM service configuration is temporarily unavailable.",
+            )
+        # unknown
+        return HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail="LLM service returned an invalid response. Please try again later.",
+        )
+    # Обычный LLMError (не LLMFallbackError)
+    return HTTPException(
+        status_code=status.HTTP_502_BAD_GATEWAY,
+        detail="LLM service returned an invalid response. Please try again later.",
+    )
+
+
 @app.post("/api/edit", response_model=EditResponse, dependencies=[Depends(verify_api_key)])
 @limiter.limit(_rate_limit)
 async def edit_text(request: Request, body: EditRequest) -> EditResponse:
@@ -607,11 +644,20 @@ async def edit_text(request: Request, body: EditRequest) -> EditResponse:
             ),
         ) from error
     except LLMError as error:
-        logger.error("LLM error: %s", error, exc_info=True)
-        raise HTTPException(
-            status_code=status.HTTP_502_BAD_GATEWAY,
-            detail="LLM service temporarily unavailable. Try again later.",
-        ) from error
+        # CHANGED: логируем и преобразуем через новую функцию
+        if isinstance(error, LLMFallbackError):
+            logger.warning(
+                "LLMFallbackError: provider=%s kind=%s upstream_status=%s skipped=%s unknown=%s prompt_length=%d",
+                error.provider,
+                error.kind,
+                error.upstream_status,
+                error.skipped_providers,
+                error.unknown_providers,
+                error.prompt_length,
+            )
+        else:
+            logger.error("LLM error: %s", error, exc_info=True)
+        raise _llm_error_to_http_exception(error) from error
     except FileNotFoundError as error:
         logger.error("Config file not found: %s", error, exc_info=True)
         raise HTTPException(
