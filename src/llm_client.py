@@ -28,6 +28,11 @@ import httpx
 from dotenv import load_dotenv
 
 from src.provider_registry import LLMProvider
+from src.context_budget import (
+    resolve_context_budget,
+    get_context_profile_from_env,
+    LLMContextLimitError,
+)
 
 load_dotenv()
 
@@ -188,7 +193,7 @@ def _backoff_with_jitter(base_delay: float, attempt: int) -> float:
 
 
 # ---------------------------------------------------------------------------
-# Адаптивный расчёт max_tokens
+# Адаптивный расчёт max_tokens (legacy, используется как fallback)
 # ---------------------------------------------------------------------------
 _DEFAULT_MAX_TOKENS = 6000
 _MIN_MAX_TOKENS = 1536
@@ -273,11 +278,17 @@ class BaseLLMClient(ABC):
                 )
 
                 response = await self.call_api(prompt)
+
+                # ИСПРАВЛЕНИЕ: добавляем actual_model и estimated_input_tokens в лог
                 logger.info(
                     "LLM request successful",
                     extra={
                         "provider": self.config.provider.value,
                         "model": self.config.model,
+                        "actual_model": response.model,  # может отличаться от запрошенного
+                        "prompt_length": len(prompt),
+                        "estimated_input_tokens": len(prompt) // _CHARS_PER_TOKEN,
+                        "max_tokens": self.config.max_tokens,
                         "response_length": len(response.content),
                         "tokens_used": response.tokens_used,
                         "finish_reason": response.finish_reason,
@@ -404,9 +415,12 @@ class _OpenAICompatibleClient(BaseLLMClient):
             if "usage" in data and isinstance(data["usage"], dict):
                 tokens_used = data["usage"].get("total_tokens")
 
+            # ИСПРАВЛЕНИЕ: извлекаем фактическую модель из ответа
+            actual_model = data.get("model", self.config.model)
+
             return LLMResponse(
                 content=content,
-                model=self.config.model,
+                model=actual_model,
                 provider=self.config.provider.value,
                 tokens_used=tokens_used,
                 finish_reason=finish_reason,
@@ -505,9 +519,12 @@ class AnthropicClient(BaseLLMClient):
                 if isinstance(input_tokens, int) and isinstance(output_tokens, int):
                     tokens_used = input_tokens + output_tokens
 
+            # ИСПРАВЛЕНИЕ: извлекаем фактическую модель из ответа (если есть)
+            actual_model = data.get("model", self.config.model)
+
             return LLMResponse(
                 content=content,
-                model=self.config.model,
+                model=actual_model,
                 provider=self.config.provider.value,
                 tokens_used=tokens_used,
                 finish_reason=data.get("stop_reason"),
@@ -591,9 +608,33 @@ async def call_with_fallback(
     temperature: float = 0.3,
     max_retries_per_provider: int = 1,
     max_tokens: Optional[int] = None,
+    source_text: Optional[str] = None,
 ) -> LLMResponse:
-    if max_tokens is None:
+    """
+    Выполняет запрос к LLM с перебором провайдеров.
+
+    Args:
+        prompt: Полный промпт
+        providers: Список имён провайдеров в порядке приоритета
+        model: Модель для первого провайдера (для остальных — default)
+        temperature: Температура
+        max_retries_per_provider: Количество повторных попыток на провайдера
+        max_tokens: Явный max_tokens (если None — вычисляется автоматически)
+        source_text: Исходный текст пользователя (для оценки выходного бюджета)
+
+    Returns:
+        LLMResponse от успешного провайдера
+
+    Raises:
+        LLMFallbackError: Если все провайдеры не смогли обработать запрос
+    """
+    if max_tokens is None and source_text is None:
+        # Обратная совместимость: используем старую эвристику
         max_tokens = estimate_max_tokens(prompt)
+        logger.debug("Using legacy estimate_max_tokens because source_text is None")
+    elif max_tokens is None and source_text is not None:
+        # max_tokens будет вычислен отдельно для каждого провайдера на основе бюджета
+        pass
 
     if not providers:
         raise LLMError("No providers specified. Cannot execute LLM call.")
@@ -613,19 +654,84 @@ async def call_with_fallback(
 
         model_for_this = model if idx == 0 else None
 
+        # Определяем max_tokens для этого провайдера
+        provider_max_tokens = max_tokens  # если явно передан
+
+        if provider_max_tokens is None and source_text is not None:
+            # Используем контекстный бюджет
+            try:
+                # Получаем профиль контекста из env
+                profile = get_context_profile_from_env(provider_name, model_for_this)
+
+                # Рассчитываем бюджет
+                budget = resolve_context_budget(
+                    provider=provider_name,
+                    model=model_for_this,
+                    prompt=prompt,
+                    source_text=source_text,
+                    context_window=profile.context_window,
+                    safety_margin=profile.safety_margin,
+                    mode=profile.mode,
+                )
+
+                provider_max_tokens = budget.effective_output_tokens
+
+                # Логируем бюджет
+                logger.info(
+                    "Context budget for %s: input_tokens=%d, requested=%d, effective=%d, capped=%s, mode=%s",
+                    provider_name,
+                    budget.input_tokens_estimate,
+                    budget.requested_output_tokens,
+                    budget.effective_output_tokens,
+                    budget.was_capped,
+                    budget.mode,
+                )
+
+                # Если effective_output_tokens == 0, провайдер не может обработать запрос
+                if provider_max_tokens <= 0:
+                    logger.warning(
+                        "Provider %s has zero effective output tokens, skipping",
+                        provider_name,
+                    )
+                    skipped_providers.append(provider_name)
+                    continue
+
+            except LLMContextLimitError as error:
+                # Если режим enforce, пропускаем провайдера
+                logger.warning(
+                    "Provider %s cannot handle request: %s (mode=%s)",
+                    provider_name,
+                    error.reason,
+                    getattr(error, "mode", "enforce"),
+                )
+                skipped_providers.append(provider_name)
+                if primary_error is None:
+                    primary_error = error
+                    primary_provider = provider_name
+                continue
+        elif provider_max_tokens is None and source_text is None:
+            # Fallback: используем estimate_max_tokens (уже вычислено выше)
+            provider_max_tokens = max_tokens
+
+        # Если provider_max_tokens всё ещё None (защита)
+        if provider_max_tokens is None:
+            provider_max_tokens = estimate_max_tokens(prompt)
+
         try:
             logger.info(
-                "call_with_fallback: trying provider=%s model=%s max_tokens=%s",
+                "call_with_fallback: trying provider=%s model=%s max_tokens=%s prompt_length=%d source_length=%d",
                 provider_name,
                 model_for_this,
-                max_tokens,
+                provider_max_tokens,
+                len(prompt),
+                len(source_text) if source_text else 0,
             )
             async with create_llm_client(
                 provider=provider_enum,
                 model=model_for_this,
                 temperature=temperature,
                 max_retries=max_retries_per_provider,
-                max_tokens=max_tokens,
+                max_tokens=provider_max_tokens,
             ) as client:
                 response = await client.generate(prompt)
             logger.info(
@@ -726,20 +832,22 @@ if __name__ == "__main__":
         )
 
         test_prompt = "Напиши короткий дружелюбный абзац о пользе хорошей редактуры."
+        test_source = "Короткий текст для теста."
 
         try:
-            async with create_llm_client(
-                provider=LLMProvider.OPENROUTER,
-                model="openrouter/auto",
+            response = await call_with_fallback(
+                prompt=test_prompt,
+                providers=["openrouter"],
+                source_text=test_source,
                 temperature=0.3,
-            ) as client:
-                response = await client.generate(test_prompt)
-                print()
-                print(response.content)
-                print(f"\nModel: {response.model}")
-                print(f"Provider: {response.provider}")
-                print(f"Tokens used: {response.tokens_used}")
-                print(f"Finish reason: {response.finish_reason}")
+                max_retries_per_provider=1,
+            )
+            print()
+            print(response.content)
+            print(f"\nModel: {response.model}")
+            print(f"Provider: {response.provider}")
+            print(f"Tokens used: {response.tokens_used}")
+            print(f"Finish reason: {response.finish_reason}")
         except Exception as error:
             print(f"LLM error: {error}")
 

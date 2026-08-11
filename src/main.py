@@ -451,6 +451,7 @@ async def _generate_clean_edit(
         model=body.model,
         temperature=body.temperature,
         max_retries_per_provider=2,
+        source_text=body.text,  # добавлено для контекстного бюджета
     )
     edited_text, report = _split_edit_output(response.content, body.output_mode)
 
@@ -483,6 +484,7 @@ async def _generate_clean_edit(
         model=body.model,
         temperature=min(body.temperature, 0.2),
         max_retries_per_provider=2,
+        source_text=body.text,  # добавлено для контекстного бюджета
     )
     edited_text, report = _split_edit_output(response.content, body.output_mode)
 
