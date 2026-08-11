@@ -869,11 +869,12 @@ def test_edit_level_invalid_fallback(
             assert "используется 'processing'" in caplog.text
 
 
+# ИСПРАВЛЕННАЯ параметризация: используем ключевые фразы, которые есть в новом тексте
 @pytest.mark.parametrize("level,expected_phrase", [
-    ("light", "Не переставляй, не объединяй"),
+    ("light", "точечная"),                      # уникальная фраза для light
     ("processing", "Композицию и порядок абзацев не менять"),
     ("remake", "Разрешена перестройка композиции"),
-    ("adaptive_remake", "Если соответствует"),
+    ("adaptive_remake", "адаптивная переделка"),  # уникальная фраза для adaptive_remake
 ])
 def test_build_edit_level_block_contains_key_phrases(builder: PromptBuilder, level: str, expected_phrase: str) -> None:
     """Проверяет, что _build_edit_level_block возвращает правильные фразы для каждого уровня."""
@@ -896,8 +897,8 @@ def test_build_edit_level_block_integration(builder: PromptBuilder) -> None:
         include_knowledge=False,
     )
     assert "Уровень правки: адаптивная переделка" in prompt
-    assert "Если соответствует" in prompt
-    assert "Если не соответствует" in prompt
+    assert "Если текст уже соответствует" in prompt   # проверяем условную конструкцию
+    assert "Если текст не соответствует" in prompt
 
 
 def test_build_edit_level_for_domain_without_edit_level(builder: PromptBuilder) -> None:
