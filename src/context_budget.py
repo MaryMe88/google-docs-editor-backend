@@ -34,7 +34,7 @@ CHARS_PER_OUTPUT_TOKEN: float = 3.5
 
 # Лимиты для выходного бюджета
 MIN_EDIT_OUTPUT_TOKENS: int = 1500
-MAX_EDIT_OUTPUT_TOKENS: int = 4096
+MAX_EDIT_OUTPUT_TOKENS: int = 8192
 EDIT_OUTPUT_MULTIPLIER: float = 1.35
 
 # Режимы работы
