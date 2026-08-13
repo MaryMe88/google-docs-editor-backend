@@ -69,9 +69,17 @@ def test_estimate_edit_output_tokens_long_text() -> None:
 
 
 def test_estimate_edit_output_tokens_very_long_text() -> None:
-    # 20000 символов / 3.5 = 5714.3 → * 1.35 = 7714.3 → но MAX = 4096
+    # 20000 символов / 3.5 * 1.35 ≈ 7714.3, округление вверх даёт 7715
+    # Этот результат должен быть меньше или равен MAX_EDIT_OUTPUT_TOKENS (8192)
     result = estimate_edit_output_tokens("а" * 20000)
-    assert result == MAX_EDIT_OUTPUT_TOKENS
+    assert MIN_EDIT_OUTPUT_TOKENS <= result <= MAX_EDIT_OUTPUT_TOKENS
+    # Проверяем, что результат соответствует расчёту (не просто потолок)
+    expected = int((20000 / 3.5) * 1.35)
+    # Округление вверх: если дробная часть > 0, то +1
+    if (20000 / 3.5 * 1.35) % 1 > 0:
+        expected += 1
+    # Учитываем, что результат может быть ограничен максимумом, но здесь 7715 < 8192
+    assert result == expected
 
 
 # ---------------------------------------------------------------------------
@@ -89,7 +97,7 @@ def test_resolve_budget_normal() -> None:
         source_text=source,
         context_window=8192,
         safety_margin=512,
-        mode="observe",  # явно указываем режим, но он не влияет на результат
+        mode="observe",
     )
 
     assert budget.input_tokens_estimate == estimate_input_tokens(prompt)
@@ -102,7 +110,7 @@ def test_resolve_budget_normal() -> None:
 def test_resolve_budget_capped() -> None:
     """Случай, когда запрошенный output больше доступного."""
     prompt = "а" * 20000  # ~5714 токенов
-    source = "б" * 20000  # ~5714 токенов → requested ~7714, но MAX=4096
+    source = "б" * 20000  # ~5714 токенов → requested ~7715, но доступно меньше
     context_window = 8192
     safety_margin = 512
 
@@ -117,7 +125,7 @@ def test_resolve_budget_capped() -> None:
     )
 
     # input_tokens ~5714, доступно: 8192 - 5714 - 512 = 1966
-    # requested ~4096, effective = 1966
+    # requested ~7715, effective = 1966
     assert budget.was_capped is True
     assert budget.effective_output_tokens <= budget.available_output_tokens
     assert budget.effective_output_tokens < budget.requested_output_tokens
@@ -138,7 +146,7 @@ def test_resolve_budget_insufficient_output_raises() -> None:
             source_text=source,
             context_window=context_window,
             safety_margin=safety_margin,
-            mode="enforce",  # <-- явно включаем enforce
+            mode="enforce",
         )
 
     error = exc_info.value
@@ -162,7 +170,7 @@ def test_resolve_budget_input_too_large_raises() -> None:
             source_text=source,
             context_window=context_window,
             safety_margin=safety_margin,
-            mode="enforce",  # <-- явно включаем enforce
+            mode="enforce",
         )
 
     error = exc_info.value
@@ -221,7 +229,7 @@ def test_resolve_budget_does_not_log_sensitive_data() -> None:
             source_text=source,
             context_window=100,
             safety_margin=10,
-            mode="enforce",  # <-- явно включаем enforce
+            mode="enforce",
         )
 
     error = exc_info.value
@@ -255,7 +263,7 @@ def test_resolve_budget_provider_model_fields() -> None:
             source_text="б" * 100,
             context_window=8192,
             safety_margin=512,
-            mode="enforce",  # <-- явно включаем enforce
+            mode="enforce",
         )
 
     error = exc_info.value
