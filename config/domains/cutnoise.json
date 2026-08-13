@@ -1,6 +1,6 @@
 {
   "name": "cutnoise",
-  "edit_level": "reduction",
+  "edit_level": "light",
   "edit_level_note": "Правка-сокращение: удаление словесного мусора, без изменения структуры.",
   "hard_limits": [
     "Не удалять переходные связки и логические коннекторы — они обеспечивают связность текста.",
@@ -32,6 +32,5 @@
     "rhetoric": 0,
     "storytelling": 0,
     "marketing": 0,
-    "rhythm": 4
   }
 }
