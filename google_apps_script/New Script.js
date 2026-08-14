@@ -348,7 +348,7 @@ const MODE_CONFIG = {
     group: 'genre',          // было 'blog' — теперь режим показывается в подменю «Жанры»
     order: 60,               // чтобы идти после coldemail/pressrelease/landing/workdoc/casestudy
     domain: 'statya',        // реальный файл config/domains/statya.json
-    intent: 'analytical',    // файл config/intents/analytical.json
+    intent: 'engagement',    // файл config/intents/analytical.json
     overlays: ['infostyle', 'audiencesegment'],
     temperature: 0.35,
     audience: {
@@ -575,9 +575,9 @@ const MODE_CONFIG = {
     group: 'genre',
     order: 50,
     domain: 'genre',         // реальный файл config/domains/genre.json
-    intent: 'analytical',    // файл config/intents/analytical.json; жанр усилен overlay casestudy
-    overlays: ['infostyle', 'casestudy'],
-    temperature: 0.3,
+    intent: 'marketingpush',    // файл config/intents/analytical.json; жанр усилен overlay casestudy
+    overlays: ['base', 'casestudy'],
+    temperature: 0.4,
     handler: 'editSelection_genre_casestudy'
   },
 
