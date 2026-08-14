@@ -111,9 +111,15 @@ _CORS_ORIGINS: list[str] = (
 # Вспомогательные функции для семантического индекса
 # ---------------------------------------------------------------------------
 def _collect_semantic_entries(app: FastAPI) -> list[dict]:
-    kb = getattr(app.state, "kb", None)
+    """Собирает все записи из KB для семантического индекса."""
+    pb = getattr(app.state, "prompt_builder", None)
+    if pb is None:
+        logger.warning("SemanticIndex: PromptBuilder не инициализирован")
+        return []
+
+    kb = getattr(pb, "kb", None)
     if kb is None:
-        logger.warning("SemanticIndex: kb не загружен, пропускаем сбор записей")
+        logger.warning("SemanticIndex: KB не загружена в PromptBuilder")
         return []
 
     all_entries = []
@@ -181,14 +187,13 @@ async def lifespan(app: FastAPI):
     logger.info("PromptBuilder initialized successfully")
     app.state.prompt_builder = prompt_builder
 
+    # Сразу загружаем KB в prompt_builder, если ещё не загружена
     try:
-        app.state.kb = prompt_builder.kb
-        logger.info("SemanticIndex: kb загружен")
-    except AttributeError:
-        logger.warning(
-            "PromptBuilder не содержит атрибут kb, семантический индекс не будет построен"
-        )
-        app.state.kb = None
+        # Принудительно вызываем метод, который заполняет self.kb
+        prompt_builder.get_knowledge_base(set(), None)
+        logger.info("KB загружена и доступна в prompt_builder.kb")
+    except Exception as e:
+        logger.warning("Не удалось загрузить KB: %s", e)
 
     app.state.semantic_index_status = "not_started"
     app.state.semantic_index_task = None
@@ -451,7 +456,7 @@ async def _generate_clean_edit(
         model=body.model,
         temperature=body.temperature,
         max_retries_per_provider=2,
-        source_text=body.text,  # добавлено для контекстного бюджета
+        source_text=body.text,
     )
     edited_text, report = _split_edit_output(response.content, body.output_mode)
 
@@ -484,7 +489,7 @@ async def _generate_clean_edit(
         model=body.model,
         temperature=min(body.temperature, 0.2),
         max_retries_per_provider=2,
-        source_text=body.text,  # добавлено для контекстного бюджета
+        source_text=body.text,
     )
     edited_text, report = _split_edit_output(response.content, body.output_mode)
 

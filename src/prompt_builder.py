@@ -143,6 +143,13 @@ def _is_incompatible_overlay(overlay: str, incompatible_overlays: tuple) -> bool
     return False
 
 
+def _normalize_overlay_ref(ref: str) -> str:
+    """Убирает префикс 'overlay:' из ссылки, если он есть."""
+    if ref.startswith("overlay:"):
+        return ref[8:]
+    return ref
+
+
 # ---------------------------------------------------------------------------
 # Дефолтные конфиги
 # ---------------------------------------------------------------------------
@@ -953,20 +960,21 @@ def resolve_prompt_features(
         if not cfg or not cfg.suppresses:
             continue
         for target in cfg.suppresses:
-            if target in effective_overlays and target != ov:
-                suppressed_by_overlay.add(target)
+            target_name = _normalize_overlay_ref(target)
+            if target_name in effective_overlays and target_name != ov:
+                suppressed_by_overlay.add(target_name)
                 suppressed_layers.append(
-                    f"overlay '{target}' suppressed by overlay '{ov}' (explicit suppress)"
+                    f"overlay '{target_name}' suppressed by overlay '{ov}' (explicit suppress)"
                 )
                 warnings.append(
-                    f"Overlay '{target}' explicitly suppressed by '{ov}'."
+                    f"Overlay '{target_name}' explicitly suppressed by '{ov}'."
                 )
                 _add_suppression_reason(
                     result,
-                    f"overlay:{target}",
+                    f"overlay:{target_name}",
                     ReasonCode.SUPPRESSED_BY_OVERLAY_RULE,
                 )
-                tags = [t for t in tags if t != target]
+                tags = [t for t in tags if t != target_name]
 
     if suppressed_by_overlay:
         effective_overlays = [
@@ -978,14 +986,15 @@ def resolve_prompt_features(
     # 6. Конфликты между оверлеями (с учётом priority и явных suppresses)
     # ======================================================================
     overlay_map = _build_overlay_slug_map(effective_overlays, overlay_configs)
-    # Сначала собираем все конфликты, чтобы не удалять элементы во время итерации
+    # Сначала собираем все конфликты, нормализуя имена
     conflicts_to_resolve = []
     for ov in effective_overlays:
         cfg = overlay_map.get(ov)
         if cfg and cfg.conflicts_with:
             for conflict in cfg.conflicts_with:
-                if conflict in effective_overlays and conflict != ov:
-                    conflicts_to_resolve.append((ov, conflict))
+                conflict_name = _normalize_overlay_ref(conflict)
+                if conflict_name in effective_overlays and conflict_name != ov:
+                    conflicts_to_resolve.append((ov, conflict_name))
 
     # Разрешаем каждый конфликт, выбирая победителя по priority и явным suppresses
     for ov, conflict in conflicts_to_resolve:
@@ -1000,7 +1009,7 @@ def resolve_prompt_features(
             continue
 
         # Проверяем явное suppresses: если один подавляет другой, то он побеждает
-        if conflict in cfg_ov.suppresses:
+        if any(_normalize_overlay_ref(s) == conflict for s in cfg_ov.suppresses):
             # ov подавляет conflict -> удаляем conflict
             effective_overlays.remove(conflict)
             suppressed_layers.append(f"overlay '{conflict}' suppressed by overlay '{ov}' (explicit suppress)")
@@ -1008,7 +1017,7 @@ def resolve_prompt_features(
             _add_suppression_reason(result, f"overlay:{conflict}", ReasonCode.SUPPRESSED_BY_OVERLAY_RULE)
             tags = [t for t in tags if t != conflict]
             continue
-        if ov in cfg_conflict.suppresses:
+        if any(_normalize_overlay_ref(s) == ov for s in cfg_conflict.suppresses):
             # conflict подавляет ov -> удаляем ov
             effective_overlays.remove(ov)
             suppressed_layers.append(f"overlay '{ov}' suppressed by overlay '{conflict}' (explicit suppress)")

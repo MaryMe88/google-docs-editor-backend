@@ -528,8 +528,17 @@ def _check_registry_consistency() -> None:
 
 
 # ============================================================================
-# НОВОЕ: Проверка конфликтных правил (Итерация 6)
+# НОВОЕ: Проверка конфликтных правил (Итерация 6) с поддержкой префиксов
 # ============================================================================
+
+def _normalize_ref_name(ref: str) -> str:
+    """Убирает префиксы overlay: и intent: из ссылки."""
+    if ref.startswith("overlay:"):
+        return ref[8:]
+    if ref.startswith("intent:"):
+        return ref[7:]
+    return ref
+
 
 def _normalize_reference(ref: str) -> Tuple[Optional[str], str]:
     """
@@ -599,7 +608,6 @@ def _check_conflict_rules(config_path: Path) -> None:
         else:
             # Без префикса: пробуем определить по наличию
             if name in ALLOWED_OVERLAYS:
-                # Это overlay, допустимо, но предупредим
                 logger.warning(
                     f"Unprefixed overlay reference '{name}' in {source}.{field} – "
                     "consider using 'overlay:{name}' for clarity."
@@ -689,10 +697,13 @@ def _check_conflict_rules(config_path: Path) -> None:
             # Проверяем, что конфликт взаимный? (не обязательно, но в наших конфигах он взаимный)
             # Проверяем, есть ли явное подавление
             if cfg.priority == conflict_cfg.priority:
-                # Проверяем, что один подавляет другого
+                # Нормализуем имена для сравнения с учётом префиксов
+                norm_conflict = _normalize_ref_name(conflict_name)
+                norm_overlay = _normalize_ref_name(overlay_name)
+
                 has_suppress = (
-                    (conflict_name in cfg.suppresses) or
-                    (overlay_name in conflict_cfg.suppresses)
+                    any(_normalize_ref_name(s) == norm_conflict for s in cfg.suppresses) or
+                    any(_normalize_ref_name(s) == norm_overlay for s in conflict_cfg.suppresses)
                 )
                 if not has_suppress:
                     raise ValueError(
