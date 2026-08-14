@@ -457,3 +457,85 @@ def test_real_genre_overlays_conflict_with_suppress() -> None:
         ReasonCode.SUPPRESSED_BY_OVERLAY_RULE in reasons
         for reasons in suppression_reasons.values()
     )
+
+
+# ============================================================================
+# НОВЫЕ ТЕСТЫ: префиксованный формат incompatible_* (Итерация 5)
+# ============================================================================
+
+def test_domain_incompatible_overlay_with_prefix() -> None:
+    """
+    Проверяет, что домен с incompatible_overlays: ["overlay:infostyle"]
+    корректно подавляет оверлей infostyle.
+    """
+    builder = PromptBuilder(config_path=Path("config"), kb_path=Path("knowledge_base"))
+    domain_config = builder.get_domain_config("deai")  # deai.json содержит "overlay:infostyle"
+    overlay_configs = [builder.get_overlay_config("infostyle")]
+
+    result = resolve_prompt_features(
+        domain="deai",
+        intent=None,
+        overlays=["infostyle"],
+        domain_config=domain_config,
+        intent_config=None,
+        overlay_configs=overlay_configs,
+    )
+
+    assert "infostyle" not in result["effective_overlays"]
+    suppression_reasons = result["suppression_reasons"]
+    assert any(
+        ReasonCode.SUPPRESSED_BY_DOMAIN_INCOMPATIBLE_OVERLAY in reasons
+        for reasons in suppression_reasons.values()
+    )
+
+
+def test_domain_incompatible_intent_with_prefix() -> None:
+    """
+    Проверяет, что домен с incompatible_intents: ["intent:analytical"]
+    корректно подавляет интент analytical.
+    """
+    builder = PromptBuilder(config_path=Path("config"), kb_path=Path("knowledge_base"))
+    domain_config = builder.get_domain_config("fiction")  # fiction.json содержит "intent:analytical"
+    overlay_configs = [builder.get_overlay_config("base")]
+
+    result = resolve_prompt_features(
+        domain="fiction",
+        intent="analytical",
+        overlays=["base"],
+        domain_config=domain_config,
+        intent_config=None,
+        overlay_configs=overlay_configs,
+    )
+
+    assert result["effective_intent"] is None
+    suppression_reasons = result["suppression_reasons"]
+    assert any(
+        ReasonCode.SUPPRESSED_BY_DOMAIN_INCOMPATIBLE_INTENT in reasons
+        for reasons in suppression_reasons.values()
+    )
+
+
+def test_domain_incompatible_overlay_without_prefix_still_works() -> None:
+    """
+    Проверяет обратную совместимость: старый формат без префикса всё ещё работает.
+    Используем домен nora_gal, где incompatible_overlays: ["infostyle"] (без префикса).
+    """
+    builder = PromptBuilder(config_path=Path("config"), kb_path=Path("knowledge_base"))
+    domain_config = builder.get_domain_config("nora_gal")  # в nora_gal.json без префикса
+    overlay_configs = [builder.get_overlay_config("infostyle")]
+
+    result = resolve_prompt_features(
+        domain="nora_gal",
+        intent=None,
+        overlays=["infostyle"],
+        domain_config=domain_config,
+        intent_config=None,
+        overlay_configs=overlay_configs,
+    )
+
+    assert "infostyle" not in result["effective_overlays"]
+    suppression_reasons = result["suppression_reasons"]
+    assert any(
+        ReasonCode.SUPPRESSED_BY_DOMAIN_INCOMPATIBLE_OVERLAY in reasons
+        for reasons in suppression_reasons.values()
+    )
