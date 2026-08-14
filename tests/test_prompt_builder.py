@@ -757,15 +757,21 @@ def test_ip_ceiling_in_prompt(builder: PromptBuilder) -> None:
     assert "≤ 2.5" in prompt_blog  # глобальный
 
 
-def test_conflicting_overlays_raise_error(builder: PromptBuilder) -> None:
-    """Проверяет, что конфликтующие оверлеи вызывают ValueError."""
-    with pytest.raises(ValueError, match="Overlays conflict"):
-        builder.build(
-            text="Тест",
-            domain="blog",
-            overlays=["finalcheck_full", "finalcheck_light"],
-            include_knowledge=False,
-        )
+def test_conflicting_overlays_resolved_not_raised(builder: PromptBuilder) -> None:
+    """
+    Проверяет, что конфликтующие оверлеи с явным suppress разрешаются без ошибки.
+    Ранее тест ожидал ValueError, но теперь конфликт разрешается через suppress.
+    """
+    prompt = builder.build(
+        text="Тест",
+        domain="blog",
+        overlays=["finalcheck_full", "finalcheck_light"],
+        include_knowledge=False,
+    )
+    # Ожидаем, что останется только один из них (finalcheck_full побеждает)
+    # Проверяем, что finalcheck_full есть, а finalcheck_light отсутствует
+    assert "finalcheck_full" in prompt
+    assert "finalcheck_light" not in prompt
 
 
 def test_non_conflicting_overlays_ok(builder: PromptBuilder) -> None:
