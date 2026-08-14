@@ -333,6 +333,20 @@ class BaseLLMClient(ABC):
                 else:
                     raise
 
+            except LLMInvalidResponseError as error:
+                # НОВОЕ: повторная попытка при пустом или некорректном ответе
+                last_error = error
+                delay = self._sleep_delay_for(attempt)
+                if delay is not None:
+                    logger.warning(
+                        "Invalid response (empty or malformed), retrying in %.2f seconds",
+                        delay,
+                        extra={"attempt": attempt + 1, "reason": error.reason_code},
+                    )
+                    await asyncio.sleep(delay)
+                else:
+                    raise
+
             attempt += 1
 
         logger.error(
@@ -542,7 +556,7 @@ def create_llm_client(
     temperature: float = 0.3,
     max_tokens: int = _DEFAULT_MAX_TOKENS,
     timeout: float = 60.0,
-    max_retries: int = 3,
+    max_retries: int = 4,  # увеличено с 3 до 4 для дополнительной устойчивости
 ) -> BaseLLMClient:
     if api_key is None and apikey is not None:
         api_key = apikey
