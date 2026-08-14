@@ -112,6 +112,37 @@ def normalize_overlays(overlays: Sequence[str]) -> List[str]:
 
 # (get_features_from_tags импортируется из registry)
 
+# ============================================================================
+# НОВЫЕ ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ ДЛЯ ПРЕФИКСОВАННЫХ ССЫЛОК
+# ============================================================================
+def _is_incompatible_intent(effective_intent: Optional[str], incompatible_intents: tuple) -> bool:
+    """Проверяет, есть ли effective_intent в списке несовместимых интентов с учётом префикса intent:."""
+    if not effective_intent:
+        return False
+    for item in incompatible_intents:
+        if isinstance(item, str):
+            if item.startswith("intent:"):
+                if effective_intent == item[7:]:
+                    return True
+            else:
+                if effective_intent == item:
+                    return True
+    return False
+
+
+def _is_incompatible_overlay(overlay: str, incompatible_overlays: tuple) -> bool:
+    """Проверяет, есть ли overlay в списке несовместимых оверлеев с учётом префикса overlay:."""
+    for item in incompatible_overlays:
+        if isinstance(item, str):
+            if item.startswith("overlay:"):
+                if overlay == item[8:]:
+                    return True
+            else:
+                if overlay == item:
+                    return True
+    return False
+
+
 # ---------------------------------------------------------------------------
 # Дефолтные конфиги
 # ---------------------------------------------------------------------------
@@ -892,7 +923,8 @@ def resolve_prompt_features(
     tags.extend(effective_overlays)
 
     # 4. Проверка несовместимости интента с доменом
-    if effective_intent and effective_intent in domain_config.incompatible_intents:
+    # ИСПРАВЛЕНИЕ: используем _is_incompatible_intent для поддержки префиксов
+    if _is_incompatible_intent(effective_intent, domain_config.incompatible_intents):
         suppressed_layers.append(f"intent '{effective_intent}' suppressed by domain '{domain}'")
         warnings.append(f"Intent '{effective_intent}' incompatible with domain '{domain}', ignoring.")
         _add_suppression_reason(result, "intent", ReasonCode.SUPPRESSED_BY_DOMAIN_INCOMPATIBLE_INTENT)
@@ -901,8 +933,9 @@ def resolve_prompt_features(
         tags = [t for t in tags if t != suppressed_intent]
 
     # 5. Проверка несовместимости оверлеев с доменом
+    # ИСПРАВЛЕНИЕ: используем _is_incompatible_overlay для поддержки префиксов
     for overlay in list(effective_overlays):
-        if overlay in domain_config.incompatible_overlays:
+        if _is_incompatible_overlay(overlay, domain_config.incompatible_overlays):
             effective_overlays.remove(overlay)
             suppressed_layers.append(f"overlay '{overlay}' suppressed by domain '{domain}'")
             warnings.append(f"Overlay '{overlay}' incompatible with domain '{domain}', removed.")
