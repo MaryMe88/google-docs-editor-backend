@@ -1,7 +1,7 @@
 {
   "name": "Рабочий документ",
-  "conflicts_with": ["landing", "pressrelease", "coldemail"],
-  "suppresses": ["coldemail"],
+  "conflicts_with": ["overlay:landing", "overlay:pressrelease", "overlay:coldemail"],
+  "suppresses": ["overlay:coldemail"],
   "instructions": [
     "Вынеси ключевые выводы и рекомендации в самое начало документа в виде короткого перечня из 3–5 пунктов.",
     "После выводов дай подробности и обоснования, разбитые на блоки с информативными подзаголовками.",

@@ -1,7 +1,7 @@
 {
   "name": "Кейс (Case Study)",
-  "conflicts_with": ["pressrelease", "landing", "coldemail", "workdoc"],
-  "suppresses": ["pressrelease", "landing", "coldemail", "workdoc"],
+  "conflicts_with": ["overlay:pressrelease", "overlay:landing", "overlay:coldemail", "overlay:workdoc"],
+  "suppresses": ["overlay:pressrelease", "overlay:landing", "overlay:coldemail", "overlay:workdoc"],
   "instructions": [
     "Работай в формате кейса: контекст клиента → проблема и ограничения → решение/процесс → подтверждённый результат.",
     "Если исходный текст уже является кейсом, сохрани его композицию и ограничься редактурой. Если это не кейс, выстрой только уместные блоки из этого каркаса.",

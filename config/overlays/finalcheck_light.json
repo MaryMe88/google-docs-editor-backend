@@ -1,7 +1,7 @@
 {
   "name": "finalcheck_light",
-  "conflicts_with": ["finalcheck_full"],
-  "edit_level_compatible": ["proofreading", "reduction", "processing"],
+  "conflicts_with": ["overlay:finalcheck_full"],
+  "edit_level_compatible": ["overlay:proofreading", "overlay:reduction", "overlay:processing"],
   "output_format": "plain_text",
   "format_note": "Все рекомендации выводить только в виде обычного текста. Запрещено использовать символы Markdown: ##, ###, **, *, - как маркер списка. Для перечислений использовать нумерацию (1., 2.) как часть текста.",
   "instructions": [
