@@ -70,5 +70,5 @@
     "storytelling": 10,
     "marketing": 0
   },
-  "incompatible_intents": ["analytical"]
+  "incompatible_intents": ["intent:analytical"]
 }

@@ -21,5 +21,5 @@
     "storytelling": 0,
     "marketing": 0
   },
-  "incompatible_overlays": ["infostyle"]
+  "incompatible_overlays": ["overlay:infostyle"]
 }
