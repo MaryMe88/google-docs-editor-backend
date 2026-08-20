@@ -438,6 +438,19 @@ FILE_RULES: dict[str, dict[str, Any]] = {
         "block_name": "marketing_templates",
     },
 
+    # ── overlays: genre (жанровые базы знаний, по тегам) ─────────────────
+    "case_study.json": {
+        "stage": "overlay_genre",
+        "priority": 9,
+        "load_mode": "by_tags",
+        "budget_weight": "medium",
+        "tags": ["casestudy"],
+        "intents": [],
+        "note": "Жанровое знание по бизнес-кейсам (Case Study)",
+        "block_name": "case_study_templates",
+        "block_type": "list",
+    },
+
     # ── overlays: genre / final check (по интенту) ────────────────────────
     "genre_templates.json": {
         "stage": "overlay_genre",

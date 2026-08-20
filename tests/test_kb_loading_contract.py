@@ -132,10 +132,13 @@ def test_case_study_json_contract():
     entry = entries[0]
     assert entry.load_mode == "by_tags"
     assert "casestudy" in entry.tags
+    assert entry.block_name == "case_study_templates", (
+        "Жанровый файл кейса должен грузиться в собственный блок, а не в storytelling"
+    )
 
     kb = load_knowledge_base(KB_PATH, active_tags={"casestudy"}, load_all=False)
-    block = kb.get("storytelling_frameworks")
-    assert block is not None, "Блок genre_knowledge не загружен"
+    block = kb.get("case_study_templates")
+    assert block is not None, "Блок case_study_templates не загружен"
     ids = [rec.get("id") for rec in block if isinstance(rec, dict)]
     assert "case_study_composition" in ids, "Запись 'case_study_composition' не найдена"
     results_records = [rec for rec in block if "results" in rec.get("tags", [])]

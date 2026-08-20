@@ -560,6 +560,7 @@ def test_build_knowledge_block_order(builder: PromptBuilder) -> None:
             "local_cohesion": [{"name": "coh1"}],
             "storytelling_frameworks": [{"name": "st1"}],
             "marketing_templates": [{"name": "m1"}],
+            "case_study_templates": [{"name": "cs1"}],
             "rhetoric_frameworks": [{"name": "r1"}],
             "editorial_techniques": [{"name": "e1"}],
             "stop_words": {},
@@ -944,6 +945,24 @@ def test_prompt_includes_case_study_knowledge(builder: PromptBuilder) -> None:
     assert "genre_knowledge" not in prompt
     count = prompt.count(expected_phrase)
     assert count == 1, f"Фраза дублируется ({count} раз)"
+
+
+def test_retrieval_meta_selects_case_study_template(builder: PromptBuilder) -> None:
+    """Диагностика: при overlay casestudy retrieval выбирает шаблон по стабильному ID."""
+    _, meta = builder.build(
+        text="Компания столкнулась с проблемой роста затрат на логистику.",
+        domain="genre",
+        intent="marketingpush",
+        overlays=["base", "casestudy"],
+        include_knowledge=True,
+        include_few_shot=False,
+        knowledge_level=KnowledgeLevel.FULL,
+        include_retrieval_meta=True,
+    )
+    block_meta = meta.get("casestudy")
+    assert block_meta is not None, f"Блок casestudy отсутствует в retrieval_meta: {sorted(meta)}"
+    assert "case_study_composition" in block_meta["entry_ids"], \
+        f"Шаблон case_study_composition не выбран: {block_meta}"
 
 
 def test_prompt_without_casestudy_does_not_include_genre_block(builder: PromptBuilder) -> None:
