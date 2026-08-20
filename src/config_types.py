@@ -242,6 +242,7 @@ class LimitsConfig:
     stop_words_category: int = 15
     stop_words_items: int = 5
     nkrj: int = 4  # НОВОЕ: лимит для блока nkrj (глобальный дефолт)
+    casestudy: int = 4  # НОВОЕ: лимит для жанрового блока бизнес-кейса
 
     grammar_candidates: Optional[int] = None
     style_candidates: Optional[int] = None
@@ -308,6 +309,7 @@ _LEVEL_BLOCKS: Dict[KnowledgeLevel, Set[str]] = {
         "marketing",
         "rhetoric",
         "editorial",
+        "casestudy",
     },
 }
 
@@ -386,6 +388,7 @@ class KnowledgeBudget:
         "glossary",
         "stop_words",
         "nkrj",
+        "casestudy",
     )
 
     def __init__(self, budgets: Dict[str, BlockBudget]) -> None:
@@ -497,6 +500,7 @@ class KnowledgeBudgetManager:
                 "stop_words": _blk("stop_words", limits.stop_words_category),
                 # ИСПРАВЛЕНО: используем limits.nkrj вместо 0
                 "nkrj": _blk("nkrj", limits.nkrj),
+                "casestudy": _blk("casestudy", limits.casestudy),
             }
         )
 

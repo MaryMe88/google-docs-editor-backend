@@ -493,8 +493,8 @@ def test_retrieval_with_case_study_overlay():
     from src.prompt_builder import load_knowledge_base
 
     kb = load_knowledge_base(KB_PATH, active_tags={"casestudy"}, load_all=False)
-    block = kb.get("storytelling_frameworks")
-    assert block is not None, "Блок storytelling_frameworks не загружен при теге casestudy"
+    block = kb.get("case_study_templates")
+    assert block is not None, "Блок case_study_templates не загружен при теге casestudy"
     # Проверяем наличие записи о структуре
     comp = next((r for r in block if r.get("id") == "case_study_composition"), None)
     assert comp is not None, "Запись 'case_study_composition' не найдена"
@@ -508,10 +508,14 @@ def test_retrieval_without_case_study_does_not_load():
     from src.prompt_builder import load_knowledge_base
 
     kb = load_knowledge_base(KB_PATH, active_tags={"marketing"}, load_all=False)
-    block = kb.get("storytelling_frameworks")
-    # Проверяем, что среди записей сторителлинга нет нашей записи
-    if block:
+    assert not kb.get("case_study_templates"), \
+        "Блок case_study_templates не должен загружаться без тега casestudy"
+    # Жанровые записи кейса не должны протекать и в чужие блоки
+    for foreign_block in ("storytelling_frameworks", "marketing_templates"):
+        block = kb.get(foreign_block)
+        if not block:
+            continue
         ids = [rec.get("id") for rec in block if isinstance(rec, dict)]
         assert "case_study_composition" not in ids, \
-            "Запись case_study_composition не должна быть в storytelling_frameworks без тега casestudy"
+            f"Запись case_study_composition не должна попадать в {foreign_block}"
     # Если блок отсутствует или пуст, тест также проходит

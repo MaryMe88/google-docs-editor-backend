@@ -70,7 +70,7 @@ logger = logging.getLogger(__name__)
 ALLOWED_KB_LIMIT_KEYS: frozenset = frozenset({
     "grammar", "style", "logic", "composition", "cohesion", "local_cohesion",
     "composition_errors", "storytelling", "marketing", "rhetoric", "editorial",
-    "glossary", "stop_words", "stop_words_items", "nkrj",
+    "glossary", "stop_words", "stop_words_items", "nkrj", "casestudy",
     "grammar_candidates", "style_candidates", "logic_candidates",
     "storytelling_candidates", "marketing_candidates", "rhetoric_candidates",
 })
@@ -612,6 +612,47 @@ def _append_editorial_entries(lines: List[str], title: str, entries: List[Dict[s
         if fragments:
             lines.append("- " + " | ".join(fragments))
 
+def _append_case_study_entries(lines: List[str], title: str, entries: List[Dict[str, Any]]) -> None:
+    """Рендерит жанровые шаблоны бизнес-кейса в читаемые инструкции для модели.
+
+    В промпт попадают только name, description, constraints и разделы
+    (name / goal / hint). Поле example намеренно не выводится: примеры
+    содержат вымышленные цифры и компании и раздувают промпт.
+    """
+    if not entries:
+        return
+    lines.append(title)
+    for entry in entries:
+        name = str(entry.get("name", "")).strip()
+        description = str(entry.get("description", "")).strip()
+        header = f"- {name}" if name else "-"
+        if description:
+            header = f"{header}: {description}" if name else f"- {description}"
+        lines.append(header)
+
+        constraints = entry.get("constraints", [])
+        if isinstance(constraints, list):
+            for constraint in constraints[:4]:
+                text = str(constraint).strip()
+                if text:
+                    lines.append(f"  Ограничение: {text}")
+
+        sections = entry.get("sections", [])
+        if isinstance(sections, list):
+            for index, section in enumerate(sections[:8], start=1):
+                if not isinstance(section, dict):
+                    continue
+                section_name = str(section.get("name", "")).strip()
+                goal = str(section.get("goal", "")).strip()
+                hint = str(section.get("hint", "")).strip()
+                if not (section_name or goal):
+                    continue
+                parts = [p for p in (section_name, goal) if p]
+                lines.append(f"  {index}. " + " — ".join(parts))
+                if hint:
+                    lines.append(f"     Ориентир: {hint}")
+
+
 def _append_glossary(lines: List[str], glossary: Dict[str, Any], limit: int) -> None:
     if not glossary:
         return
@@ -685,6 +726,9 @@ KB_BLOCK_REGISTRY: List[KBBlockConfig] = [
     KBBlockConfig(name="marketing", budget_key="marketing", retrieval_fn=select_structural_by_tags_or_all,
                   append_fn=_append_structural_entries, title="Маркетинговые шаблоны:",
                   kb_attr="marketing_templates", uses_structural_call=True, candidate_attr=None),
+    KBBlockConfig(name="casestudy", budget_key="casestudy", retrieval_fn=select_structural_by_tags_or_all,
+                  append_fn=_append_case_study_entries, title="Жанровые ориентиры бизнес-кейса:",
+                  kb_attr="case_study_templates", uses_structural_call=True, candidate_attr=None),
     KBBlockConfig(name="rhetoric", budget_key="rhetoric", retrieval_fn=select_structural_by_tags_or_all,
                   append_fn=_append_structural_entries, title="Риторические приёмы:",
                   kb_attr="rhetoric_frameworks", uses_structural_call=True, candidate_attr=None),
@@ -1448,6 +1492,7 @@ class PromptBuilder:
             stop_words_category=overrides.get("stop_words", base.stop_words_category),
             stop_words_items=overrides.get("stop_words_items", base.stop_words_items),
             nkrj=overrides.get("nkrj", base.nkrj),
+            casestudy=overrides.get("casestudy", base.casestudy),
             grammar_candidates=overrides.get("grammar_candidates", base.grammar_candidates),
             style_candidates=overrides.get("style_candidates", base.style_candidates),
             logic_candidates=overrides.get("logic_candidates", base.logic_candidates),
