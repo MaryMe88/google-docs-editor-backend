@@ -1053,7 +1053,10 @@ def resolve_prompt_features(
     all_tags = [domain]
     if effective_intent:
         all_tags.append(effective_intent)
-    all_tags.extend(effective_overlays)
+    for overlay in effective_overlays:
+        all_tags.append(overlay)
+        # Добавляем primary теги оверлея для активации фич
+        all_tags.extend(get_primary_tags_for_category("overlays", overlay))
     features = get_features_from_tags(all_tags)
 
     # 8. Базовые флаги с explainability
