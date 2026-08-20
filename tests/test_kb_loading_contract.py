@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 import importlib
+import json
 from pathlib import Path
 
 import pytest
@@ -18,14 +19,13 @@ importlib.reload(src.prompt_builder)
 from src.prompt_builder import load_knowledge_base, PromptBuilder
 from src.config_types import KnowledgeLevel
 from src.knowledge_retrieval import _make_dedupe_key
+from tests.conftest import KB_PATH   # <-- FIX: импорт из conftest
 
-KB_PATH = Path("knowledge_base")
 CONFIG_PATH = Path("config")
 
 
 @pytest.fixture(autouse=True)
 def reload_module():
-    """Перезагружаем модуль перед каждым тестом для защиты от протекающих моков."""
     importlib.reload(src.prompt_builder)
     yield
 
@@ -79,9 +79,6 @@ def test_knowledge_level_changes_prompt_despite_cache():
     pb.startup_check()
     text = "Короткий тестовый текст для проверки состава блоков."
 
-    # ИСПРАВЛЕНИЕ: используем домен nora_gal, где editorial включён (значение > 0),
-    # в отличие от basic_edit, где все расширенные блоки отключены (0).
-    # Это позволяет проверить, что при FULL уровне добавляются новые блоки.
     p_core = pb.build(
         text=text,
         domain="nora_gal",
@@ -104,3 +101,42 @@ def test_dedupe_keeps_distinct_structural():
     a = {"name": "X", "description": "D", "steps": [{"name": "s1", "description": "a"}]}
     b = {"name": "X", "description": "D", "steps": [{"name": "s2", "description": "b"}]}
     assert _make_dedupe_key(a) != _make_dedupe_key(b)
+
+
+# NEW: Тесты для пилотного реорганизации
+def test_case_study_json_contract():
+    """Проверяет структуру и загрузку нового файла case_study.json."""
+    from src.kb_manifest_loader import load_manifest
+
+    # 1. Проверка наличия файла и валидности JSON
+    path = KB_PATH / "genres" / "business" / "case_study.json"
+    assert path.exists(), f"Файл {path} не найден"
+    with open(path, encoding="utf-8") as f:
+        data = json.load(f)
+    assert isinstance(data, dict)
+    assert "tags" in data and "casestudy" in data["tags"]
+    assert "templates" in data
+    assert len(data["templates"]) >= 5, "Должно быть минимум 5 записей"
+
+    for tmpl in data["templates"]:
+        assert "id" in tmpl
+        assert "name" in tmpl
+        assert "sections" in tmpl
+        assert isinstance(tmpl["sections"], list)
+        assert len(tmpl["sections"]) > 0
+
+    # 2. Проверка загрузки через манифест с тегом casestudy
+    manifest = load_manifest(KB_PATH / "kb_manifest.json")
+    entries = [e for e in manifest if e.file == "genres/business/case_study.json"]
+    assert len(entries) == 1, "Манифест должен содержать ровно одну запись для case_study.json"
+    entry = entries[0]
+    assert entry.load_mode == "by_tags"
+    assert "casestudy" in entry.tags
+
+    kb = load_knowledge_base(KB_PATH, active_tags={"casestudy"}, load_all=False)
+    block = kb.get("storytelling_frameworks")
+    assert block is not None, "Блок genre_knowledge не загружен"
+    ids = [rec.get("id") for rec in block if isinstance(rec, dict)]
+    assert "case_study_composition" in ids, "Запись 'case_study_composition' не найдена"
+    results_records = [rec for rec in block if "results" in rec.get("tags", [])]
+    assert len(results_records) >= 1, "Нет записей с тегом 'results'"

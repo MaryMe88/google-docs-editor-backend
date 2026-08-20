@@ -30,6 +30,7 @@ from src.knowledge_retrieval import (
     select_grammar_rules,
     select_structural_by_tags_or_all,
 )
+from tests.conftest import KB_PATH
 
 
 def make_rule_entry(
@@ -481,3 +482,36 @@ class TestReturnTypesAndEdgeCases:
 
         with pytest.raises(TypeError, match="должен возвращать list"):
             _ensure_return_type(([], FallbackStage.EMPTY, 0), return_meta=False)  # type: ignore
+
+
+# ============================================================================
+# NEW: Тесты для пилотного реорганизации (case_study)
+# ============================================================================
+
+def test_retrieval_with_case_study_overlay():
+    """Проверяет, что при теге casestudy извлекаются записи из нового файла."""
+    from src.prompt_builder import load_knowledge_base
+
+    kb = load_knowledge_base(KB_PATH, active_tags={"casestudy"}, load_all=False)
+    block = kb.get("storytelling_frameworks")
+    assert block is not None, "Блок storytelling_frameworks не загружен при теге casestudy"
+    # Проверяем наличие записи о структуре
+    comp = next((r for r in block if r.get("id") == "case_study_composition"), None)
+    assert comp is not None, "Запись 'case_study_composition' не найдена"
+    # Проверяем наличие записи с тегом results
+    results = next((r for r in block if "results" in r.get("tags", [])), None)
+    assert results is not None, "Нет записи с тегом 'results'"
+
+
+def test_retrieval_without_case_study_does_not_load():
+    """Без тега casestudy новый файл не должен загружаться."""
+    from src.prompt_builder import load_knowledge_base
+
+    kb = load_knowledge_base(KB_PATH, active_tags={"marketing"}, load_all=False)
+    block = kb.get("storytelling_frameworks")
+    # Проверяем, что среди записей сторителлинга нет нашей записи
+    if block:
+        ids = [rec.get("id") for rec in block if isinstance(rec, dict)]
+        assert "case_study_composition" not in ids, \
+            "Запись case_study_composition не должна быть в storytelling_frameworks без тега casestudy"
+    # Если блок отсутствует или пуст, тест также проходит

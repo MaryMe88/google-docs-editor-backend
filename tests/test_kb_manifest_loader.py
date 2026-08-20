@@ -114,3 +114,18 @@ def test_select_files_for_request():
     # active_tags = {"tag1", "tag2"}, intent = "intent2"
     selected = select_files_for_request(manifest, {"tag1", "tag2"}, "intent2")
     assert {e.file for e in selected} == {"a.json", "b.json", "c.json", "e.json"}
+
+
+# ============================================================================
+# NEW: Тесты для пилотного реорганизации (case_study)
+# ============================================================================
+
+def test_case_study_entry_in_manifest():
+    """Проверяет, что манифест содержит запись для genres/business/case_study.json."""
+    manifest = load_manifest()
+    entry = next((e for e in manifest if e.file == "genres/business/case_study.json"), None)
+    assert entry is not None, "Запись для case_study.json не найдена в манифесте"
+    assert entry.load_mode == "by_tags"
+    assert "casestudy" in entry.tags
+    assert entry.status == "active"
+    assert entry.block_name == "genre_knowledge" or entry.block_name is not None

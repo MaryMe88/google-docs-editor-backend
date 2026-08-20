@@ -916,3 +916,57 @@ def test_build_edit_level_for_domain_without_edit_level(builder: PromptBuilder) 
     )
     assert "Уровень правки: обработка" in prompt
     assert "Композицию и порядок абзацев не менять" in prompt
+
+
+# ============================================================================
+# NEW: Тесты для пилотного реорганизации (case_study)
+# ============================================================================
+
+def test_prompt_includes_case_study_knowledge(builder: PromptBuilder) -> None:
+    """Проверяет, что при overlay casestudy в промпт добавляется жанровый блок."""
+    prompt = builder.build(
+        text="Компания столкнулась с проблемой роста затрат на логистику.",
+        domain="genre",
+        overlays=["casestudy"],
+        include_knowledge=True,
+        include_few_shot=False,
+        knowledge_level=KnowledgeLevel.FULL,
+        include_retrieval_meta=False,
+    )
+    assert "Базовая композиция бизнес-кейса" in prompt, \
+        "В промпте отсутствует блок 'Базовая композиция бизнес-кейса'"
+    assert "Проблема и исходная точка" in prompt, \
+        "В промпте отсутствует блок 'Проблема и исходная точка'"
+    assert "case_study_composition" not in prompt
+    assert "genre_knowledge" not in prompt
+    count = prompt.count("Базовая композиция бизнес-кейса")
+    assert count == 1, f"Блок дублируется ({count} раз)"
+
+
+def test_prompt_without_casestudy_does_not_include_genre_block(builder: PromptBuilder) -> None:
+    """Проверяет, что без оверлея casestudy жанровый блок не появляется."""
+    prompt = builder.build(
+        text="Обычный маркетинговый текст.",
+        domain="marketing",
+        overlays=["coldemail"],
+        include_knowledge=True,
+        include_few_shot=False,
+        knowledge_level=KnowledgeLevel.FULL,
+    )
+    assert "Базовая композиция бизнес-кейса" not in prompt
+    assert "Проблема и исходная точка" not in prompt
+
+
+def test_existing_marketing_blocks_remain(builder: PromptBuilder) -> None:
+    """Регрессионный тест: старые маркетинговые шаблоны не исчезли после добавления case_study."""
+    prompt = builder.build(
+        text="Текст для email-рассылки о новом продукте.",
+        domain="marketing",
+        overlays=["coldemail"],
+        include_knowledge=True,
+        include_few_shot=False,
+        knowledge_level=KnowledgeLevel.FULL,
+    )
+    assert "Продуктовое письмо" in prompt or "Лендинг" in prompt, \
+        "Старые маркетинговые шаблоны отсутствуют в промпте"
+    assert "Базовая композиция бизнес-кейса" not in prompt

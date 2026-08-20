@@ -20,7 +20,7 @@ from src.startup_checks import _check_tag_map_coverage, run_startup_checks
 from src.tag_registry import normalize_tag
 
 
-def test_canonical_tags_loaded_from_json() -> None:
+def test_canonical_tags_loaded_from_json():
     """Проверяет, что CANONICAL_TAGS загружен из tag_map.json, а не хардкод."""
     assert isinstance(CANONICAL_TAGS, dict)
     assert "domains" in CANONICAL_TAGS
@@ -32,7 +32,7 @@ def test_canonical_tags_loaded_from_json() -> None:
     assert len(CANONICAL_TAGS["overlays"]) > 0
 
 
-def test_get_primary_tags_never_crashes() -> None:
+def test_get_primary_tags_never_crashes():
     """Для всех зарегистрированных доменов/интентов/оверлеев вызов get_primary_tags_for_category не падает."""
     for domain in ALLOWED_DOMAINS:
         result = get_primary_tags_for_category("domains", domain)
@@ -53,7 +53,7 @@ def test_get_primary_tags_never_crashes() -> None:
         assert len(result) >= 1, f"Для оверлея {overlay} результат пуст"
 
 
-def test_tag_map_coverage_warns_on_missing() -> None:
+def test_tag_map_coverage_warns_on_missing():
     """
     Проверяет, что _check_tag_map_coverage логирует предупреждения
     для отсутствующих записей, но не падает.
@@ -71,7 +71,7 @@ def test_tag_map_coverage_warns_on_missing() -> None:
             assert mock_warning.call_count >= 3
 
 
-def test_run_startup_checks_does_not_fail_due_to_tag_map() -> None:
+def test_run_startup_checks_does_not_fail_due_to_tag_map():
     """
     Запуск run_startup_checks не должен падать из-за отсутствия записей в tag_map.json.
     Проверяем только то, что исключение не выбрасывается.
@@ -98,7 +98,7 @@ def test_run_startup_checks_does_not_fail_due_to_tag_map() -> None:
 # НОВЫЕ ТЕСТЫ (CI и коллизии)
 # ============================================================================
 
-def test_known_duplicates_normalize_to_same() -> None:
+def test_known_duplicates_normalize_to_same():
     """
     Проверяет, что известные дублирующиеся пары нормализуются к одному каноническому имени.
     Это гарантирует, что коллизии не приводят к ошибкам, а обрабатываются через нормализацию.
@@ -118,7 +118,7 @@ def test_known_duplicates_normalize_to_same() -> None:
         )
 
 
-def test_overlay_files_exist() -> None:
+def test_overlay_files_exist():
     """
     Проверяет, что для каждого зарегистрированного оверлея существует соответствующий JSON-файл.
     Это предотвращает ситуацию, когда оверлей объявлен в ALLOWED_OVERLAYS,
@@ -134,3 +134,25 @@ def test_overlay_files_exist() -> None:
     assert not missing, (
         f"Следующие оверлеи зарегистрированы, но файлы конфигов отсутствуют: {missing}"
     )
+
+
+# ============================================================================
+# NEW: Тесты для пилотного реорганизации (case_study)
+# ============================================================================
+
+def test_case_study_tags_are_canonical():
+    """Проверяет, что теги, используемые в case_study.json, зарегистрированы в tag_map.json."""
+    # Тег casestudy присутствует в разделе overlays
+    assert "casestudy" in CANONICAL_TAGS.get("overlays", {}), \
+        "Тег 'casestudy' не найден в CANONICAL_TAGS['overlays']"
+    overlay_data = CANONICAL_TAGS["overlays"]["casestudy"]
+    # Проверяем, что expanded содержит results и testimonial
+    expanded = overlay_data.get("expanded", [])
+    assert "results" in expanded, "Тег 'results' отсутствует в expanded для оверлея casestudy"
+    assert "testimonial" in expanded, "Тег 'testimonial' отсутствует в expanded для оверлея casestudy"
+
+    # Также проверяем, что они есть в KNOWN_TAGS
+    from src.config_types import KNOWN_TAGS
+    assert "casestudy" in KNOWN_TAGS
+    assert "results" in KNOWN_TAGS
+    assert "testimonial" in KNOWN_TAGS
