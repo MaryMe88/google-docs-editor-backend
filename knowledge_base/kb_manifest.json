@@ -2,7 +2,7 @@
   "_meta": {
     "description": "Манифест базы знаний. Управляет загрузкой файлов в prompt_builder.",
     "generated_by": "generate_kb_manifest.py",
-    "total_files": 45,
+    "total_files": 46,
     "stages": {
       "deai_cleanup": 5,
       "editorial_core": 7,
@@ -14,7 +14,7 @@
       "specialized": 4,
       "rhetoric": 5,
       "overlay_final": 1,
-      "overlay_genre": 1,
+      "overlay_genre": 2,
       "overlay_marketing": 4,
       "overlay_storytelling": 2,
       "unclassified": 1
@@ -942,6 +942,21 @@
       "intents": [],
       "status": "unclassified",
       "note": "Файл не найден в FILE_RULES — проверь и добавь вручную",
+      "block_type": "list"
+    },
+    {
+      "file": "genres/business/case_study.json",
+      "subfolder": "genres/business",
+      "size_kb": 12.0,
+      "stage": "overlay_genre",
+      "priority": 9,
+      "load_mode": "by_tags",
+      "budget_weight": "medium",
+      "tags": ["casestudy"],
+      "intents": [],
+      "status": "active",
+      "note": "Жанровое знание по бизнес-кейсам (Case Study)",
+      "block_name": "storytelling_frameworks",
       "block_type": "list"
     }
   ]
