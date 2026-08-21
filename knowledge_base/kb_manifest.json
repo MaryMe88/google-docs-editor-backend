@@ -5,7 +5,7 @@
     "total_files": 46,
     "stages": {
       "deai_cleanup": 5,
-      "editorial_core": 7,
+      "editorial_core": 8,
       "stylistic_diagnosis": 4,
       "word_level": 4,
       "composition": 2,
@@ -16,8 +16,7 @@
       "overlay_final": 1,
       "overlay_genre": 2,
       "overlay_marketing": 4,
-      "overlay_storytelling": 2,
-      "unclassified": 1
+      "overlay_storytelling": 2
     },
     "load_modes": {
       "always": "Файл грузится при каждом запросе",
@@ -245,6 +244,29 @@
       "status": "active",
       "note": "",
       "block_type": "list"
+    },
+    {
+      "file": "otsenki.json",
+      "subfolder": "",
+      "size_kb": 12.5,
+      "stage": "editorial_core",
+      "priority": 2,
+      "load_mode": "always",
+      "budget_weight": "medium",
+      "tags": [
+        "editing",
+        "reader_first",
+        "analytical",
+        "fact_based",
+        "anti_advertising",
+        "anti_ai",
+        "infostyle"
+      ],
+      "intents": [],
+      "status": "active",
+      "note": "",
+      "block_name": "evaluation_techniques",
+      "block_type": "dict"
     },
     {
       "file": "stylistic_issues/milchin_techniques.json",
@@ -812,6 +834,23 @@
       "block_type": "list"
     },
     {
+      "file": "genres/business/case_study.json",
+      "subfolder": "genres",
+      "size_kb": 10.8,
+      "stage": "overlay_genre",
+      "priority": 9,
+      "load_mode": "by_tags",
+      "budget_weight": "medium",
+      "tags": [
+        "casestudy"
+      ],
+      "intents": [],
+      "status": "active",
+      "note": "",
+      "block_name": "case_study_templates",
+      "block_type": "list"
+    },
+    {
       "file": "marketing_email.json",
       "subfolder": "",
       "size_kb": 10.0,
@@ -928,35 +967,6 @@
       "status": "active",
       "note": "",
       "block_name": "storytelling_frameworks",
-      "block_type": "list"
-    },
-    {
-      "file": "otsenki.json",
-      "subfolder": "",
-      "size_kb": 12.5,
-      "stage": "unclassified",
-      "priority": 99,
-      "load_mode": "never",
-      "budget_weight": "low",
-      "tags": [],
-      "intents": [],
-      "status": "unclassified",
-      "note": "Файл не найден в FILE_RULES — проверь и добавь вручную",
-      "block_type": "list"
-    },
-    {
-      "file": "genres/business/case_study.json",
-      "subfolder": "genres/business",
-      "size_kb": 12.0,
-      "stage": "overlay_genre",
-      "priority": 9,
-      "load_mode": "by_tags",
-      "budget_weight": "medium",
-      "tags": ["casestudy"],
-      "intents": [],
-      "status": "active",
-      "note": "Жанровое знание по бизнес-кейсам (Case Study)",
-      "block_name": "case_study_templates",
       "block_type": "list"
     }
   ]
