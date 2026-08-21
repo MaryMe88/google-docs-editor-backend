@@ -563,6 +563,7 @@ def test_build_knowledge_block_order(builder: PromptBuilder) -> None:
             "case_study_templates": [{"name": "cs1"}],
             "rhetoric_frameworks": [{"name": "r1"}],
             "editorial_techniques": [{"name": "e1"}],
+            "evaluation_techniques": {"category": "evaluations"},  # добавляем данные для нового блока
             "stop_words": {},
             "domain_glossary": {},
             "nkrj_structure_patterns": {},
@@ -574,7 +575,7 @@ def test_build_knowledge_block_order(builder: PromptBuilder) -> None:
                 for block in KB_BLOCK_REGISTRY
             }
             budget = KnowledgeBudget(budget_dict)
-            # Явно включаем все блоки, чтобы проверить порядок
+            # Явно включаем все блоки, включая evaluation_techniques
             text, _, _ = builder._build_knowledge_block(
                 text="Тест",
                 primary_tags=set(),
@@ -593,10 +594,11 @@ def test_build_knowledge_block_order(builder: PromptBuilder) -> None:
                 editorial_enabled=True,
             )
 
-    expected_titles = [block.title for block in KB_BLOCK_REGISTRY]
+    # Ожидаем заголовки только тех блоков, у которых title не пустой
+    expected_titles = [block.title for block in KB_BLOCK_REGISTRY if block.title]
     titles_in_text = [line.strip() for line in text.splitlines() if line.strip() in expected_titles]
     assert titles_in_text == expected_titles, f"Порядок блоков нарушен: {titles_in_text} != {expected_titles}"
-    assert mock_proc.call_count == len(KB_BLOCK_REGISTRY)
+    assert mock_proc.call_count == len(KB_BLOCK_REGISTRY) - 1  # минус блок evaluation_techniques, т.к. он не через _process
 
 
 # ----------------------------------------------------------------------------
