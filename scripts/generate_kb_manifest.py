@@ -470,6 +470,26 @@ FILE_RULES: dict[str, dict[str, Any]] = {
         "intents": ["final_check", "proofreading", "marketing"],
         "block_name": "editorial_techniques",
     },
+
+    # ── НОВОЕ ПРАВИЛО ДЛЯ otsenki.json (исправление рассинхрона) ─────────
+    "otsenki.json": {
+        "stage": "editorial_core",           # техники редактирования
+        "priority": 2,                       # как у editorial_core
+        "load_mode": "always",               # всегда доступно
+        "budget_weight": "medium",
+        "tags": [
+            "editing",
+            "reader_first",
+            "analytical",
+            "fact_based",
+            "anti_advertising",
+            "anti_ai",
+            "infostyle"
+        ],
+        "intents": [],
+        "block_name": "evaluation_techniques",
+        "block_type": "dict",                # файл имеет корневую структуру словаря
+    },
 }
 
 # ── Подпапки, в которых лежат файлы ──────────────────────────────────────────
