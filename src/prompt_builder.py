@@ -73,6 +73,8 @@ ALLOWED_KB_LIMIT_KEYS: frozenset = frozenset({
     "glossary", "stop_words", "stop_words_items", "nkrj", "casestudy",
     "grammar_candidates", "style_candidates", "logic_candidates",
     "storytelling_candidates", "marketing_candidates", "rhetoric_candidates",
+    # НОВОЕ: блок техник работы с оценками
+    "evaluation_techniques",
 })
 # НОВОЕ: допустимые уровни редактирования (Этап 2)
 ALLOWED_EDIT_LEVELS: frozenset = frozenset(
@@ -652,6 +654,65 @@ def _append_case_study_entries(lines: List[str], title: str, entries: List[Dict[
                 if hint:
                     lines.append(f"     Ориентир: {hint}")
 
+# НОВАЯ ФУНКЦИЯ для рендеринга техник работы с оценками (словарь)
+def _append_evaluation_techniques(lines: List[str], title: str, data: Dict[str, Any]) -> None:
+    """Рендерит словарь с техниками работы с оценками."""
+    if not data:
+        return
+    lines.append(title)
+
+    # Выводим основные поля
+    if "category" in data:
+        lines.append(f"Категория: {data['category']}")
+    if "description" in data:
+        lines.append(f"Описание: {data['description']}")
+
+    # Правила редактора
+    editor_rules = data.get("editor_rules", [])
+    if isinstance(editor_rules, list) and editor_rules:
+        lines.append("Правила редактора:")
+        for rule in editor_rules[:5]:
+            if isinstance(rule, str) and rule.strip():
+                lines.append(f"- {rule}")
+
+    # Стратегии замены (replacement_strategies) — показываем кратко
+    strategies = data.get("replacement_strategies", [])
+    if isinstance(strategies, list) and strategies:
+        lines.append("Стратегии замены оценок:")
+        for strategy in strategies[:3]:
+            if not isinstance(strategy, dict):
+                continue
+            name = strategy.get("name", "")
+            desc = strategy.get("description", "")
+            if name or desc:
+                lines.append(f"- {name}: {desc}" if name and desc else f"- {name or desc}")
+
+    # Диагностики (показываем только названия)
+    diagnostics = data.get("diagnostics", [])
+    if isinstance(diagnostics, list) and diagnostics:
+        lines.append("Чек-листы для обнаружения оценок:")
+        for diag in diagnostics[:3]:
+            if isinstance(diag, dict):
+                dname = diag.get("name", "")
+                if dname:
+                    lines.append(f"- {dname}")
+
+    # Тесты (показываем названия)
+    tests = data.get("tests", [])
+    if isinstance(tests, list) and tests:
+        lines.append("Тесты на замену оценок:")
+        for test in tests[:3]:
+            if isinstance(test, dict):
+                tname = test.get("name", "")
+                if tname:
+                    lines.append(f"- {tname}")
+
+    # Источник (опционально)
+    source = data.get("source")
+    if isinstance(source, dict):
+        title = source.get("title", "")
+        if title:
+            lines.append(f"Источник: {title}")
 
 def _append_glossary(lines: List[str], glossary: Dict[str, Any], limit: int) -> None:
     if not glossary:
@@ -735,6 +796,10 @@ KB_BLOCK_REGISTRY: List[KBBlockConfig] = [
     KBBlockConfig(name="editorial", budget_key="editorial", retrieval_fn=select_structural_by_tags_or_all,
                   append_fn=_append_editorial_entries, title="Редакторские приёмы:",
                   kb_attr="editorial_techniques", uses_structural_call=True, candidate_attr=None),
+    # НОВЫЙ блок для техник работы с оценками (словарная структура)
+    KBBlockConfig(name="evaluation_techniques", budget_key="evaluation_techniques",
+                  retrieval_fn=None, append_fn=None, title="",   # не используется
+                  kb_attr="evaluation_techniques", uses_structural_call=False, candidate_attr=None),
 ]
 
 # ---------------------------------------------------------------------------
@@ -1499,6 +1564,8 @@ class PromptBuilder:
             storytelling_candidates=overrides.get("storytelling_candidates", base.storytelling_candidates),
             marketing_candidates=overrides.get("marketing_candidates", base.marketing_candidates),
             rhetoric_candidates=overrides.get("rhetoric_candidates", base.rhetoric_candidates),
+            # НОВОЕ: поле для техник работы с оценками
+            evaluation_techniques=overrides.get("evaluation_techniques", base.evaluation_techniques),
         )
 
     # ------------------------------------------------------------------
@@ -1605,7 +1672,49 @@ class PromptBuilder:
                     ))
                 continue
 
-            # Проверка наличия KB-данных
+            # Для блока evaluation_techniques используем специальную обработку (словарь)
+            if block_cfg.name == "evaluation_techniques":
+                if not block_cfg.kb_attr:
+                    continue
+                eval_data = kb.get(block_cfg.kb_attr)
+                if not eval_data:
+                    if trace:
+                        trace.add_block(AssemblyBlockDiagnostics(
+                            name=block_cfg.name,
+                            eligible=False,
+                            included=False,
+                            reason_codes=[ReasonCode.BLOCK_INELIGIBLE_KB_UNAVAILABLE],
+                        ))
+                    continue
+                # Проверяем, что это словарь
+                if not isinstance(eval_data, dict):
+                    logger.warning("evaluation_techniques block is not a dict, got %s", type(eval_data).__name__)
+                    if trace:
+                        trace.add_block(AssemblyBlockDiagnostics(
+                            name=block_cfg.name,
+                            eligible=False,
+                            included=False,
+                            reason_codes=[ReasonCode.BLOCK_EMPTY_AFTER_BUILD],
+                            empty=True,
+                        ))
+                    continue
+                before_len = len("".join(lines))
+                _append_evaluation_techniques(lines, "Техники работы с оценками:", eval_data)
+                after_len = len("".join(lines))
+                included = after_len > before_len
+                if trace:
+                    trace.add_block(AssemblyBlockDiagnostics(
+                        name=block_cfg.name,
+                        eligible=True,
+                        included=included,
+                        reason_codes=[ReasonCode.BLOCK_INCLUDED if included else ReasonCode.BLOCK_EMPTY_AFTER_BUILD],
+                        empty=not included,
+                        char_count=after_len - before_len,
+                        entries_count=1,  # один словарь
+                    ))
+                continue
+
+            # Проверка наличия KB-данных для структурных блоков
             if block_cfg.uses_structural_call and block_cfg.kb_attr:
                 if not kb.get(block_cfg.kb_attr):
                     if trace:
