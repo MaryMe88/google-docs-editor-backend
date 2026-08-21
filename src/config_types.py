@@ -243,6 +243,8 @@ class LimitsConfig:
     stop_words_items: int = 5
     nkrj: int = 4  # НОВОЕ: лимит для блока nkrj (глобальный дефолт)
     casestudy: int = 4  # НОВОЕ: лимит для жанрового блока бизнес-кейса
+    # НОВОЕ: лимит для блока техник работы с оценками
+    evaluation_techniques: int = 8
 
     grammar_candidates: Optional[int] = None
     style_candidates: Optional[int] = None
@@ -265,7 +267,7 @@ class KnowledgeLevel(str, Enum):
     STANDARD — CORE + logic, composition, cohesion, composition_errors,
     nkrj, glossary.
     FULL — все доступные блоки, включая storytelling, marketing,
-    rhetoric, editorial.
+    rhetoric, editorial, casestudy, evaluation_techniques.
     """
 
     NONE = "none"
@@ -310,6 +312,7 @@ _LEVEL_BLOCKS: Dict[KnowledgeLevel, Set[str]] = {
         "rhetoric",
         "editorial",
         "casestudy",
+        "evaluation_techniques",   # НОВОЕ
     },
 }
 
@@ -389,6 +392,7 @@ class KnowledgeBudget:
         "stop_words",
         "nkrj",
         "casestudy",
+        "evaluation_techniques",  # НОВОЕ
     )
 
     def __init__(self, budgets: Dict[str, BlockBudget]) -> None:
@@ -498,9 +502,9 @@ class KnowledgeBudgetManager:
                 "editorial": _blk("editorial", limits.editorial),
                 "glossary": _blk("glossary", limits.glossary),
                 "stop_words": _blk("stop_words", limits.stop_words_category),
-                # ИСПРАВЛЕНО: используем limits.nkrj вместо 0
                 "nkrj": _blk("nkrj", limits.nkrj),
                 "casestudy": _blk("casestudy", limits.casestudy),
+                "evaluation_techniques": _blk("evaluation_techniques", limits.evaluation_techniques),
             }
         )
 
