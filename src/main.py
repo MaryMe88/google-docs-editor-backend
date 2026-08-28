@@ -171,6 +171,15 @@ async def lifespan(app: FastAPI):
         logger.critical("Missing required env variables: %s. Refusing to start.", _missing)
         raise RuntimeError(f"Missing required env variables: {_missing}")
 
+    # API_SECRET_KEY обязателен в production (не dev и не тесты)
+    _is_production = not (
+        os.getenv("ENV", "").lower() == "development"
+        or _is_testing
+    )
+    if _is_production and not os.getenv("API_SECRET_KEY"):
+        logger.critical("API_SECRET_KEY is required in production mode. Refusing to start.")
+        raise RuntimeError("API_SECRET_KEY is required in production mode.")
+
     prompt_builder = PromptBuilder()
 
     await asyncio.to_thread(prompt_builder.startup_check)
