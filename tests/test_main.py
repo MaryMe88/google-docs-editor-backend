@@ -1,7 +1,8 @@
 """
 tests/test_main.py
 ==================
-Тесты для main.py, проверяющие изменения из шагов 2, 3, 4 и новые преобразования ошибок.
+Тесты для main.py, проверяющие изменения из шагов 2, 3, 4 и новые преобразования ошибок,
+а также обязательность API_SECRET_KEY в production (шаг 1).
 
 Запуск:
     pytest tests/test_main.py -v
@@ -12,12 +13,22 @@ import os
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-from src.main import app, _PROVIDER_KEY_ENV, _CORS_ORIGINS, invalidate_provider_cache
-from src.contracts import EditResponse
+from src.main import app, _PROVIDER_KEY_ENV, invalidate_provider_cache, lifespan
 from src.main import _llm_error_to_http_exception
 from src.llm_client import LLMFallbackError, LLMError, LLMAPIError
+
+
+# ------------------------------------------------------------------------------
+# Фикстура, обеспечивающая soft-mode для всех тестов (PYTEST_RUNNING=true)
+# Это сохраняет совместимость с существующими тестами, не требуя API_SECRET_KEY.
+# ------------------------------------------------------------------------------
+@pytest.fixture(autouse=True)
+def enable_testing_mode(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Устанавливаем PYTEST_RUNNING=true для всех тестов, чтобы включить soft-mode."""
+    monkeypatch.setenv("PYTEST_RUNNING", "true")
 
 
 client = TestClient(app)
@@ -288,3 +299,68 @@ def test_llm_error_to_http_exception_does_not_leak_details() -> None:
     assert "secret" not in detail
     assert "upstream" not in detail
     assert "provider" not in detail.lower()
+
+
+# ---------- Новые тесты: обязательность API_SECRET_KEY в production ----------
+
+@pytest.mark.asyncio
+async def test_production_startup_requires_api_secret_key(monkeypatch: pytest.MonkeyPatch) -> None:
+    """
+    Приложение НЕ стартует в production режиме без API_SECRET_KEY.
+    Ожидается RuntimeError.
+    """
+    monkeypatch.setenv("ENV", "production")
+    monkeypatch.setenv("OPENROUTER_API_KEY", "dummy")
+    monkeypatch.delenv("API_SECRET_KEY", raising=False)
+    monkeypatch.delenv("PYTEST_RUNNING", raising=False)  # убираем тестовый режим
+
+    app_test = FastAPI()  # не передаём lifespan, будем вызывать напрямую
+    with pytest.raises(RuntimeError, match="API_SECRET_KEY is required in production mode."):
+        async with lifespan(app_test):
+            pass
+
+
+@pytest.mark.asyncio
+async def test_production_startup_succeeds_with_api_secret_key(monkeypatch: pytest.MonkeyPatch) -> None:
+    """
+    Приложение стартует в production режиме, если API_SECRET_KEY задан.
+    """
+    monkeypatch.setenv("ENV", "production")
+    monkeypatch.setenv("OPENROUTER_API_KEY", "dummy")
+    monkeypatch.setenv("API_SECRET_KEY", "secret123")
+    monkeypatch.delenv("PYTEST_RUNNING", raising=False)
+
+    app_test = FastAPI()
+    async with lifespan(app_test):
+        pass  # не должно быть исключения
+
+
+@pytest.mark.asyncio
+async def test_development_startup_soft_mode_without_api_secret_key(monkeypatch: pytest.MonkeyPatch) -> None:
+    """
+    В dev-режиме (ENV=development) приложение стартует без API_SECRET_KEY (soft-mode).
+    """
+    monkeypatch.setenv("ENV", "development")
+    monkeypatch.setenv("OPENROUTER_API_KEY", "dummy")
+    monkeypatch.delenv("API_SECRET_KEY", raising=False)
+    monkeypatch.delenv("PYTEST_RUNNING", raising=False)
+
+    app_test = FastAPI()
+    async with lifespan(app_test):
+        pass
+
+
+@pytest.mark.asyncio
+async def test_testing_startup_soft_mode_without_api_secret_key(monkeypatch: pytest.MonkeyPatch) -> None:
+    """
+    В тестовом режиме (PYTEST_RUNNING=true) приложение стартует без API_SECRET_KEY,
+    даже если ENV=production.
+    """
+    monkeypatch.setenv("ENV", "production")
+    monkeypatch.setenv("OPENROUTER_API_KEY", "dummy")
+    monkeypatch.delenv("API_SECRET_KEY", raising=False)
+    monkeypatch.setenv("PYTEST_RUNNING", "true")  # тестовый режим
+
+    app_test = FastAPI()
+    async with lifespan(app_test):
+        pass
