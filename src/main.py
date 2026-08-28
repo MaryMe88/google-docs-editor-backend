@@ -47,6 +47,8 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+# Вычисляется один раз при импорте; используется только для rate-limit,
+# который должен быть фиксирован для всего процесса.
 _is_testing = os.getenv("PYTEST_RUNNING", "false").lower() == "true"
 _rate_limit = "1000/minute" if _is_testing else "10/minute"
 
@@ -172,11 +174,13 @@ async def lifespan(app: FastAPI):
         raise RuntimeError(f"Missing required env variables: {_missing}")
 
     # API_SECRET_KEY обязателен в production (не dev и не тесты)
-    _is_production = not (
+    # Читаем PYTEST_RUNNING динамически, чтобы тесты могли переопределять его.
+    is_testing_now = os.getenv("PYTEST_RUNNING", "false").lower() == "true"
+    is_production = not (
         os.getenv("ENV", "").lower() == "development"
-        or _is_testing
+        or is_testing_now
     )
-    if _is_production and not os.getenv("API_SECRET_KEY"):
+    if is_production and not os.getenv("API_SECRET_KEY"):
         logger.critical("API_SECRET_KEY is required in production mode. Refusing to start.")
         raise RuntimeError("API_SECRET_KEY is required in production mode.")
 
