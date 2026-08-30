@@ -167,7 +167,8 @@ class SemanticIndex:
                 logger.debug("SemanticIndex: кеш от другой модели, пересчитываю")
                 return False
 
-            self.embeddings = np.load(str(_CACHE_PATH))
+            # SEC-патч 4.1: явный allow_pickle=False
+            self.embeddings = np.load(str(_CACHE_PATH), allow_pickle=False)
             return True
 
         except Exception as exc:

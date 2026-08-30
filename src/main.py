@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 import asyncio
 import json
 import logging
@@ -53,13 +51,11 @@ _is_testing = os.getenv("PYTEST_RUNNING", "false").lower() == "true"
 _rate_limit = "1000/minute" if _is_testing else "10/minute"
 
 
+# ---------------------------------------------------------------------------
+# SEC-патч 3.1: Rate limit по реальному IP клиента (не доверяем X-Forwarded-For)
+# ---------------------------------------------------------------------------
 def _client_ip_key(request: Request) -> str:
-    """Ключ rate-limit по реальному IP клиента за reverse-proxy."""
-    forwarded_for = request.headers.get("X-Forwarded-For")
-    if forwarded_for:
-        first_ip = forwarded_for.split(",")[0].strip()
-        if first_ip:
-            return first_ip
+    """Ключ rate-limit по реальному IP клиента (без доверия к X-Forwarded-For)."""
     return get_remote_address(request)
 
 
@@ -101,12 +97,18 @@ _PROVIDER_KEY_ENV: Dict[str, str] = {
     "openrouter": "OPENROUTER_API_KEY",
 }
 
-_CORS_ORIGINS_RAW = os.getenv("CORS_ALLOWED_ORIGINS", "")
-_CORS_ORIGINS: list[str] = (
-    [origin.strip() for origin in _CORS_ORIGINS_RAW.split(",") if origin.strip()]
-    if _CORS_ORIGINS_RAW
-    else ["https://script.google.com", "https://docs.google.com"]
-)
+# ---------------------------------------------------------------------------
+# SEC-патч 2.1: Строгий allowlist для CORS
+# ---------------------------------------------------------------------------
+_ALLOWED_GOOGLE_ORIGINS: frozenset[str] = frozenset({
+    "https://script.google.com",
+    "https://docs.google.com",
+})
+_extra_origins = {o.strip() for o in os.getenv("CORS_ALLOWED_ORIGINS", "").split(",") if o.strip()}
+_unexpected = _extra_origins - _ALLOWED_GOOGLE_ORIGINS
+if _unexpected:
+    logger.warning("Игнорирую неожиданные CORS origins из ENV: %s", _unexpected)
+_CORS_ORIGINS: list[str] = sorted(_ALLOWED_GOOGLE_ORIGINS)
 
 
 # ---------------------------------------------------------------------------
@@ -251,12 +253,8 @@ async def log_requests(request: Request, call_next):
     start_time = time.perf_counter()
     response = await call_next(request)
     duration_ms = (time.perf_counter() - start_time) * 1000
-    forwarded_for = request.headers.get("X-Forwarded-For")
-    client_ip = (
-        forwarded_for.split(",")[0].strip()
-        if forwarded_for
-        else (request.client.host if request.client else None)
-    )
+    # SEC: больше не логируем X-Forwarded-For, так как он может быть подделан
+    client_ip = request.client.host if request.client else None
     log_entry = {
         "timestamp": time.time(),
         "method": request.method,
@@ -276,6 +274,8 @@ async def add_security_headers(request: Request, call_next):
     response.headers["X-Frame-Options"] = "DENY"
     response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
     response.headers["Permissions-Policy"] = "geolocation=(), microphone=(), camera=()"
+    # SEC-патч 4.2: HSTS
+    response.headers["Strict-Transport-Security"] = "max-age=63072000; includeSubDomains"
     return response
 
 
@@ -355,7 +355,14 @@ async def liveness_check() -> dict:
   Использовать только для диагностики, не в автоматическом мониторинге.
 """,
 )
-async def health_check(deep: bool = False) -> Response:
+async def health_check(request: Request, deep: bool = False) -> Response:
+    # SEC-патч 2.4: глубокий health-check требует наличия API_SECRET_KEY даже в soft-mode.
+    if deep and not os.getenv("API_SECRET_KEY"):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="API_SECRET_KEY is required for deep health check.",
+        )
+
     builder = get_prompt_builder()
     any_available, provider_status = await _check_providers_availability(deep=deep)
 
@@ -533,7 +540,7 @@ def _llm_error_to_http_exception(error: LLMError) -> HTTPException:
             )
         if kind == "context_limit":
             return HTTPException(
-                status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
                 detail="The text or editing instructions are too large. Please shorten them.",
             )
         if kind in ("timeout", "upstream_error"):
@@ -673,7 +680,7 @@ async def edit_text(request: Request, body: EditRequest) -> EditResponse:
     except ValidationError as error:
         logger.error("Validation error: %s", error, exc_info=True)
         raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail=error.errors(),
         ) from error
     except Exception as error:

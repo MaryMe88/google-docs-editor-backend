@@ -369,6 +369,11 @@ class BlockBudget:
     char_budget: Optional[int]
     enabled: bool = True
 
+    @property
+    def charbudget(self) -> int:
+        """Совместимость со старым legacy-кодом, использующим charbudget."""
+        return self.char_budget
+
 
 class KnowledgeBudget:
     """

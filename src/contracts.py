@@ -1,5 +1,5 @@
-from __future__ import annotations
 
+import re
 from typing import Any, Dict, List, Optional
 
 from pydantic import BaseModel, Field, field_validator
@@ -21,6 +21,9 @@ from src.tag_registry import normalize_tag
 # 1.1.0 — добавлено поле report в EditResponse;
 #          HealthResponse приведён в соответствие с реальным ответом /health.
 CONTRACT_VERSION: str = "1.1.0"
+
+# SEC-патч 3.3: строгий allowlist для поля model.
+_MODEL_NAME_RE = re.compile(r"^[\w./:-]{1,200}$")
 
 
 class AudienceRequest(BaseModel):
@@ -144,6 +147,18 @@ class EditRequest(BaseModel):
                 f"provider must be one of {sorted(ALLOWED_PROVIDERS)}"
             )
         return normalized
+
+    # SEC-патч 3.3: Allowlist для поля model.
+    @field_validator("model")
+    @classmethod
+    def validate_model(cls, v: Optional[str]) -> Optional[str]:
+        if v is None:
+            return v
+        # Убираем лишние пробелы? Обычно модель не должна содержать пробелы.
+        v = v.strip()
+        if not _MODEL_NAME_RE.match(v):
+            raise ValueError("model contains disallowed characters")
+        return v
 
 
 class EditResponse(BaseModel):
