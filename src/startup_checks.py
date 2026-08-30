@@ -16,7 +16,7 @@ from src.config_types import (
     OverlayConfig,
 )
 from src.reason_codes import ReasonCode, ACTIVATION_REASONS, SUPPRESSION_REASONS
-from src.tag_registry import normalize_tag
+from src.tag_registry import normalize_tag, get_canonical_tag_names  # ИЗМЕНЕНИЕ: добавлен импорт get_canonical_tag_names
 from src.registry import check_alias_consistency, CANONICAL_FEATURE_ALIASES
 from src.prompt_builder import (
     load_domain_config,
@@ -287,21 +287,14 @@ def _collect_kb_tags(kb_path: Path) -> Set[str]:
     return kb_tags
 
 
+# ============================================================================
+# ИЗМЕНЕНИЕ: _check_tags_vs_kb теперь использует get_canonical_tag_names()
+# ============================================================================
 def _check_tags_vs_kb(kb_path: Path) -> None:
-    expected_tags: Set[str] = set()
-    for category_data in CANONICAL_TAGS.values():
-        for tag_data in category_data.values():
-            if isinstance(tag_data, dict):
-                for key in ("primary", "expanded"):
-                    tags_list = tag_data.get(key, [])
-                    if isinstance(tags_list, list):
-                        for tag in tags_list:
-                            if isinstance(tag, str):
-                                expected_tags.add(normalize_tag(tag))
-            elif isinstance(tag_data, list):
-                for tag in tag_data:
-                    if isinstance(tag, str):
-                        expected_tags.add(normalize_tag(tag))
+    """Проверяет, что все канонические теги присутствуют в KB (без учёта алиасов)."""
+    expected_tags = get_canonical_tag_names()
+    # Нормализуем (на случай, если канонические имена уже нормализованы, но для страховки)
+    expected_tags = {normalize_tag(tag) for tag in expected_tags}
 
     if not expected_tags:
         logger.warning("No expected tags found in CANONICAL_TAGS")

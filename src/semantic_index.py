@@ -11,7 +11,6 @@ from __future__ import annotations
 
 import json
 import logging
-import os
 import time
 from pathlib import Path
 from typing import Any
@@ -23,6 +22,10 @@ logger = logging.getLogger(__name__)
 # Путь к кешу embeddings рядом с папкой knowledge_base
 _CACHE_PATH = Path(__file__).parent.parent / "knowledge_base" / "kb_embeddings.npy"
 _CACHE_META_PATH = Path(__file__).parent.parent / "knowledge_base" / "kb_embeddings_meta.json"
+
+# Type aliases
+SemanticEntry = dict[str, Any]
+SearchResult = tuple[SemanticEntry, float]
 
 
 class SemanticIndex:
@@ -38,7 +41,7 @@ class SemanticIndex:
     def __init__(self, model_name: str = "cointegrated/rubert-tiny2") -> None:
         self.model_name = model_name
         self._model = None          # ленивая загрузка
-        self.entries: list[dict[str, Any]] = []
+        self.entries: list[SemanticEntry] = []
         self.embeddings: np.ndarray | None = None
         self._is_built = False
 
@@ -46,67 +49,116 @@ class SemanticIndex:
     # Публичный API
     # ------------------------------------------------------------------
 
-    def build(self, all_entries: list[dict[str, Any]], force_rebuild: bool = False) -> None:
-        """
-        Строит индекс из списка записей базы знаний.
-        Если кеш актуален — загружает из файла, иначе пересчитывает.
+    def build(
+        self,
+        all_entries: list[SemanticEntry],
+        force_rebuild: bool = False,
+    ) -> None:
+        """Строит индекс из записей KB или загружает валидный кэш."""
+        self.entries = list(all_entries)
+        self.embeddings = None
+        self._is_built = False
 
-        :param all_entries: все записи из всех JSON-файлов knowledge_base
-        :param force_rebuild: пересчитать embeddings даже если кеш есть
-        """
-        self.entries = all_entries
+        if not self.entries:
+            logger.warning(
+                "SemanticIndex: нет записей для индексации, индекс не строится"
+            )
+            return
 
-        if not force_rebuild and self._load_cache(len(all_entries)):
+        if not force_rebuild and self._load_cache(len(self.entries)):
+            self._validate_embeddings()
             logger.info(
-                "SemanticIndex: загружен кеш embeddings (%d записей)", len(all_entries)
+                "SemanticIndex: загружен кеш embeddings (%d записей)",
+                len(self.entries),
             )
             self._is_built = True
             return
 
         logger.info(
             "SemanticIndex: строю embeddings для %d записей (модель: %s)…",
-            len(all_entries),
+            len(self.entries),
             self.model_name,
         )
-        t0 = time.monotonic()
-        texts = [self._entry_to_text(e) for e in all_entries]
+
+        started_at = time.monotonic()
+        texts = [self._entry_to_text(entry) for entry in self.entries]
         model = self._get_model()
-        self.embeddings = model.encode(
+
+        raw_embeddings = model.encode(
             texts,
             normalize_embeddings=True,
             show_progress_bar=False,
             batch_size=64,
         )
-        elapsed = time.monotonic() - t0
+        embeddings = np.asarray(raw_embeddings, dtype=np.float32)
+
+        if embeddings.ndim == 1:
+            if len(self.entries) != 1:
+                raise ValueError(
+                    "SemanticIndex received a 1D embedding array for multiple "
+                    "knowledge-base entries."
+                )
+            embeddings = embeddings.reshape(1, -1)
+
+        self.embeddings = embeddings
+        self._validate_embeddings()
+
+        elapsed = time.monotonic() - started_at
         logger.info("SemanticIndex: embeddings готовы за %.1f сек", elapsed)
 
-        self._save_cache(len(all_entries))
+        self._save_cache(len(self.entries))
         self._is_built = True
 
     def search(
-        self, query: str, top_k: int = 10
-    ) -> list[tuple[dict[str, Any], float]]:
-        """
-        Ищет top_k наиболее семантически близких записей.
+        self,
+        query: str,
+        top_k: int = 10,
+    ) -> list[SearchResult]:
+        """Возвращает наиболее семантически близкие записи KB."""
+        if top_k <= 0 or not query or not query.strip():
+            return []
 
-        :returns: список пар (entry, score), отсортированных по убыванию score
-        """
         if not self._is_built or self.embeddings is None:
-            logger.warning("SemanticIndex.search вызван до build() — возвращаю пустой список")
+            logger.warning(
+                "SemanticIndex.search вызван до build() — возвращаю пустой список"
+            )
             return []
 
-        if not query or not query.strip():
-            return []
+        self._validate_embeddings()
 
         model = self._get_model()
-        query_emb = model.encode(
+        raw_query_embedding = model.encode(
             [query.strip()],
             normalize_embeddings=True,
             show_progress_bar=False,
         )
-        scores: np.ndarray = (self.embeddings @ query_emb.T).flatten()
+        query_embedding = np.asarray(
+            raw_query_embedding,
+            dtype=np.float32,
+        )
+
+        if query_embedding.ndim == 1:
+            query_embedding = query_embedding.reshape(1, -1)
+
+        if query_embedding.ndim != 2 or query_embedding.shape[0] != 1:
+            raise ValueError(
+                "SemanticIndex query embedding must have shape "
+                "(1, embedding_dimension)."
+            )
+
+        if query_embedding.shape[1] != self.embeddings.shape[1]:
+            raise ValueError(
+                "SemanticIndex query embedding dimension does not match "
+                "indexed embeddings."
+            )
+
+        scores = (self.embeddings @ query_embedding.T).ravel()
         top_indices = np.argsort(scores)[::-1][:top_k]
-        return [(self.entries[i], float(scores[i])) for i in top_indices]
+
+        return [
+            (self.entries[index], float(scores[index]))
+            for index in top_indices
+        ]
 
     def is_ready(self) -> bool:
         """Возвращает True, если индекс построен и готов к поиску."""
@@ -115,6 +167,31 @@ class SemanticIndex:
     # ------------------------------------------------------------------
     # Вспомогательные методы
     # ------------------------------------------------------------------
+
+    def _validate_embeddings(self) -> None:
+        """Проверяет согласованность embeddings и индексируемых записей."""
+        if not isinstance(self.embeddings, np.ndarray):
+            raise ValueError("SemanticIndex embeddings must be a numpy.ndarray.")
+
+        if self.embeddings.dtype != np.float32:
+            self.embeddings = self.embeddings.astype(np.float32, copy=False)
+
+        if self.embeddings.ndim != 2:
+            raise ValueError(
+                "SemanticIndex embeddings must have shape "
+                "(entry_count, embedding_dimension)."
+            )
+
+        if self.embeddings.shape[0] != len(self.entries):
+            raise ValueError(
+                "SemanticIndex embeddings count does not match entries count: "
+                f"{self.embeddings.shape[0]} != {len(self.entries)}."
+            )
+
+        if self.embeddings.shape[1] == 0:
+            raise ValueError(
+                "SemanticIndex embedding dimension must be greater than zero."
+            )
 
     def _get_model(self):
         """Ленивая загрузка модели — загружается один раз при первом обращении."""
@@ -132,7 +209,7 @@ class SemanticIndex:
         return self._model
 
     @staticmethod
-    def _entry_to_text(entry: dict[str, Any]) -> str:
+    def _entry_to_text(entry: SemanticEntry) -> str:
         """
         Превращает запись базы знаний в одну строку для индексации.
         Берёт самые информативные поля.
@@ -168,7 +245,36 @@ class SemanticIndex:
                 return False
 
             # SEC-патч 4.1: явный allow_pickle=False
-            self.embeddings = np.load(str(_CACHE_PATH), allow_pickle=False)
+            loaded_embeddings = np.load(
+                str(_CACHE_PATH),
+                allow_pickle=False,
+            )
+
+            if not isinstance(loaded_embeddings, np.ndarray):
+                return False
+
+            self.embeddings = np.asarray(
+                loaded_embeddings,
+                dtype=np.float32,
+            )
+
+            if self.embeddings.ndim != 2:
+                logger.warning(
+                    "SemanticIndex: кеш embeddings имеет неверную размерность: %d",
+                    self.embeddings.ndim,
+                )
+                self.embeddings = None
+                return False
+
+            if self.embeddings.shape[0] != expected_count:
+                logger.warning(
+                    "SemanticIndex: кеш embeddings содержит %d строк, ожидалось %d",
+                    self.embeddings.shape[0],
+                    expected_count,
+                )
+                self.embeddings = None
+                return False
+
             return True
 
         except Exception as exc:
@@ -206,11 +312,6 @@ def init_semantic_index(
     """
     Инициализирует и строит глобальный семантический индекс.
     Вызывать один раз при старте приложения (например, в lifespan FastAPI).
-
-    Пример в main.py:
-        from src.semantic_index import init_semantic_index
-        all_entries = kb.grammar_errors + kb.stylistic_issues + kb.logic_issues
-        init_semantic_index(all_entries)
     """
     global _global_index
     index = SemanticIndex(model_name=model_name)

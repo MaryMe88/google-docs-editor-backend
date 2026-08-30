@@ -106,3 +106,19 @@ def build_known_tags(mapping: Dict[str, Any]) -> Set[str]:
 
     _visit(mapping)
     return known
+
+
+# ============================================================================
+# ИЗМЕНЕНИЕ: добавлена функция для получения канонических тегов (без алиасов)
+# ============================================================================
+def get_canonical_tag_names() -> Set[str]:
+    """
+    Возвращает множество канонических имён тегов (без алиасов) из CANONICAL_TAGS.
+    Используется в startup-проверках для сравнения с тегами в KB.
+    """
+    from src.config_types import CANONICAL_TAGS
+    tags: Set[str] = set()
+    for category_data in CANONICAL_TAGS.values():
+        if isinstance(category_data, dict):
+            tags.update(category_data.keys())
+    return tags

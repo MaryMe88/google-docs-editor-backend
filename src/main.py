@@ -45,17 +45,14 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-# Вычисляется один раз при импорте; используется только для rate-limit,
-# который должен быть фиксирован для всего процесса.
 _is_testing = os.getenv("PYTEST_RUNNING", "false").lower() == "true"
 _rate_limit = "1000/minute" if _is_testing else "10/minute"
 
 
 # ---------------------------------------------------------------------------
-# SEC-патч 3.1: Rate limit по реальному IP клиента (не доверяем X-Forwarded-For)
+# SEC-патч 3.1: Rate limit по реальному IP клиента
 # ---------------------------------------------------------------------------
 def _client_ip_key(request: Request) -> str:
-    """Ключ rate-limit по реальному IP клиента (без доверия к X-Forwarded-For)."""
     return get_remote_address(request)
 
 
@@ -114,23 +111,30 @@ _CORS_ORIGINS: list[str] = sorted(_ALLOWED_GOOGLE_ORIGINS)
 # ---------------------------------------------------------------------------
 # Вспомогательные функции для семантического индекса
 # ---------------------------------------------------------------------------
-def _collect_semantic_entries(app: FastAPI) -> list[dict]:
-    """Собирает все записи из KB для семантического индекса."""
-    pb = getattr(app.state, "prompt_builder", None)
-    if pb is None:
+def _collect_semantic_entries(app: FastAPI) -> list[dict[str, Any]]:
+    """Собирает индексируемые записи из заранее загруженной полной KB."""
+    prompt_builder = getattr(app.state, "prompt_builder", None)
+    if prompt_builder is None:
         logger.warning("SemanticIndex: PromptBuilder не инициализирован")
         return []
 
-    kb = getattr(pb, "kb", None)
-    if kb is None:
+    knowledge_base = getattr(prompt_builder, "_loaded_kb", None)
+    if knowledge_base is None:
         logger.warning("SemanticIndex: KB не загружена в PromptBuilder")
         return []
 
-    all_entries = []
-    for attr in ("grammar_errors", "stylistic_issues", "logic_issues"):
-        entries = getattr(kb, attr, [])
+    all_entries: list[dict[str, Any]] = []
+    for attribute_name in (
+        "grammar_errors",
+        "stylistic_issues",
+        "logic_issues",
+    ):
+        entries = getattr(knowledge_base, attribute_name, [])
         if isinstance(entries, list):
-            all_entries.extend(entries)
+            all_entries.extend(
+                entry for entry in entries if isinstance(entry, dict)
+            )
+
     return all_entries
 
 
@@ -175,8 +179,6 @@ async def lifespan(app: FastAPI):
         logger.critical("Missing required env variables: %s. Refusing to start.", _missing)
         raise RuntimeError(f"Missing required env variables: {_missing}")
 
-    # API_SECRET_KEY обязателен в production (не dev и не тесты)
-    # Читаем PYTEST_RUNNING динамически, чтобы тесты могли переопределять его.
     is_testing_now = os.getenv("PYTEST_RUNNING", "false").lower() == "true"
     is_production = not (
         os.getenv("ENV", "").lower() == "development"
@@ -202,13 +204,20 @@ async def lifespan(app: FastAPI):
     logger.info("PromptBuilder initialized successfully")
     app.state.prompt_builder = prompt_builder
 
-    # Сразу загружаем KB в prompt_builder, если ещё не загружена
+    # Полная KB нужна один раз для построения SemanticIndex.
+    # PromptBuilder сам кеширует результат в _loaded_kb.
     try:
-        # Принудительно вызываем метод, который заполняет self.kb
-        prompt_builder.get_knowledge_base(set(), None)
-        logger.info("KB загружена и доступна в prompt_builder.kb")
-    except Exception as e:
-        logger.warning("Не удалось загрузить KB: %s", e)
+        prompt_builder.load_full_kb()
+        logger.info("Полная KB загружена для SemanticIndex")
+    except (OSError, ValueError, json.JSONDecodeError) as error:
+        logger.error(
+            "Не удалось загрузить полную KB для SemanticIndex: %s",
+            error,
+            exc_info=True,
+        )
+        raise RuntimeError(
+            "Failed to load knowledge base required for SemanticIndex."
+        ) from error
 
     app.state.semantic_index_status = "not_started"
     app.state.semantic_index_task = None
@@ -253,7 +262,6 @@ async def log_requests(request: Request, call_next):
     start_time = time.perf_counter()
     response = await call_next(request)
     duration_ms = (time.perf_counter() - start_time) * 1000
-    # SEC: больше не логируем X-Forwarded-For, так как он может быть подделан
     client_ip = request.client.host if request.client else None
     log_entry = {
         "timestamp": time.time(),
@@ -274,7 +282,6 @@ async def add_security_headers(request: Request, call_next):
     response.headers["X-Frame-Options"] = "DENY"
     response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
     response.headers["Permissions-Policy"] = "geolocation=(), microphone=(), camera=()"
-    # SEC-патч 4.2: HSTS
     response.headers["Strict-Transport-Security"] = "max-age=63072000; includeSubDomains"
     return response
 
@@ -315,7 +322,6 @@ async def _check_providers_availability(deep: bool = False) -> Tuple[bool, Dict[
             if cached is not None:
                 results[provider] = cached
                 continue
-
             env_var = _PROVIDER_KEY_ENV.get(provider.lower())
             available = bool(os.getenv(env_var)) if env_var else False
             _set_cached_availability(provider, available)
@@ -356,7 +362,6 @@ async def liveness_check() -> dict:
 """,
 )
 async def health_check(request: Request, deep: bool = False) -> Response:
-    # SEC-патч 2.4: глубокий health-check требует наличия API_SECRET_KEY даже в soft-mode.
     if deep and not os.getenv("API_SECRET_KEY"):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
@@ -530,7 +535,6 @@ async def _generate_clean_edit(
 
 
 def _llm_error_to_http_exception(error: LLMError) -> HTTPException:
-    """Преобразует LLMError в HTTPException с безопасным сообщением."""
     if isinstance(error, LLMFallbackError):
         kind = error.kind
         if kind == "rate_limit":
@@ -558,12 +562,10 @@ def _llm_error_to_http_exception(error: LLMError) -> HTTPException:
                 status_code=status.HTTP_502_BAD_GATEWAY,
                 detail="LLM service returned an empty or invalid response. Please try again later.",
             )
-        # unknown
         return HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
             detail="LLM service returned an invalid response. Please try again later.",
         )
-    # Обычный LLMError (не LLMFallbackError)
     return HTTPException(
         status_code=status.HTTP_502_BAD_GATEWAY,
         detail="LLM service returned an invalid response. Please try again later.",
