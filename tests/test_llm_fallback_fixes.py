@@ -4,7 +4,8 @@
         (create_llm_client бросает ValueError), и переходит к следующему.
 Фикс 2: _OpenAICompatibleClient.parse_response фейлит LLMError при content=null
         или пустом content, вместо того чтобы вернуть None и упасть позже.
-Фикс 3: ключ rate-limit берётся из X-Forwarded-For (реальный IP клиента).
+Фикс 3 (обновлён): ключ rate-limit берётся из реального IP клиента (request.client.host),
+        а не из заголовка X-Forwarded-For (который может быть подделан).
 """
 
 from __future__ import annotations
@@ -115,7 +116,7 @@ def test_parse_response_valid_content_ok() -> None:
 
 
 # ===========================================================================
-# Фикс 3: rate-limit key_func читает X-Forwarded-For
+# Фикс 3: rate-limit key_func использует реальный IP клиента (без X-Forwarded-For)
 # ===========================================================================
 def _fake_request(headers: dict, client_host: str | None):
     req = MagicMock()
@@ -128,26 +129,29 @@ def _fake_request(headers: dict, client_host: str | None):
     return req
 
 
-def test_client_ip_key_prefers_forwarded_for() -> None:
+def test_client_ip_key_uses_remote_address() -> None:
+    """Ключ rate-limit должен быть реальным IP клиента (request.client.host)."""
     from src.main import _client_ip_key
 
     req = _fake_request(
         {"X-Forwarded-For": "203.0.113.7, 10.0.0.1"}, client_host="10.0.0.1"
     )
-    assert _client_ip_key(req) == "203.0.113.7"
+    assert _client_ip_key(req) == "10.0.0.1"
 
 
-def test_client_ip_key_falls_back_to_remote_address() -> None:
+def test_client_ip_key_without_client() -> None:
+    """Если request.client отсутствует, возвращается адрес get_remote_address (обычно '127.0.0.1')."""
     from src.main import _client_ip_key
 
-    req = _fake_request({}, client_host="198.51.100.5")
-    assert _client_ip_key(req) == "198.51.100.5"
+    req = _fake_request({}, client_host=None)
+    # get_remote_address вернёт '127.0.0.1' для пустого client
+    assert _client_ip_key(req) == "127.0.0.1"
 
 
-def test_client_ip_key_distinguishes_clients_behind_proxy() -> None:
-    """Ключевой смысл фикса: разные клиенты за одним прокси имеют разные ключи."""
+def test_client_ip_key_ignores_forwarded_for() -> None:
+    """Проверяем, что подделанный X-Forwarded-For не влияет на ключ."""
     from src.main import _client_ip_key
 
     req_a = _fake_request({"X-Forwarded-For": "1.1.1.1"}, client_host="10.0.0.1")
     req_b = _fake_request({"X-Forwarded-For": "2.2.2.2"}, client_host="10.0.0.1")
-    assert _client_ip_key(req_a) != _client_ip_key(req_b)
+    assert _client_ip_key(req_a) == _client_ip_key(req_b)

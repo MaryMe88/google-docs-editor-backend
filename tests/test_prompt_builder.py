@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import warnings
+import re
 import pytest
 from types import SimpleNamespace
 from unittest.mock import patch, MagicMock
@@ -26,6 +27,25 @@ from src.prompt_builder import (
     load_intent_config,
 )
 from src.knowledge_retrieval import FallbackStage, _collect_with_budget
+
+
+# ============================================================================
+# Вспомогательная функция нормализации nonce для тестов
+# ============================================================================
+
+def _normalize_user_text_markers(text: str) -> str:
+    """
+    Заменяет случайный nonce в USER_TEXT-маркерах на фиксированную строку.
+
+    Маркеры имеют вид <<<USER_TEXT_<hex8>_START>>> и <<<USER_TEXT_<hex8>_END>>>,
+    где <hex8> генерируется secrets.token_hex(4) при каждом вызове build().
+    Эта функция делает их детерминированными для сравнения в тестах.
+    """
+    return re.sub(
+        r"<<<USER_TEXT_[0-9a-f]+_(START|END)>>>",
+        r"<<<USER_TEXT_NONCE_\1>>>",
+        text,
+    )
 
 
 # ============================================================================
@@ -191,7 +211,8 @@ def test_include_few_shot_without_knowledge_does_nothing(builder: PromptBuilder)
         include_knowledge=False,
         include_few_shot=False,
     )
-    assert result == result2
+    # Нормализуем случайные nonce перед сравнением
+    assert _normalize_user_text_markers(result) == _normalize_user_text_markers(result2)
 
 
 # ---------------------------------------------------------------------------
@@ -663,7 +684,8 @@ def test_few_shot_seed_determinism(builder: PromptBuilder) -> None:
         few_shot_seed=42,
         token_budget=5000,
     )
-    assert result1 == result2, "Промпты должны быть идентичны при одинаковом seed"
+    # Нормализуем случайные nonce перед сравнением
+    assert _normalize_user_text_markers(result1) == _normalize_user_text_markers(result2), "Промпты должны быть идентичны при одинаковом seed"
 
 
 # ----------------------------------------------------------------------------

@@ -5,7 +5,7 @@ from pathlib import Path
 from typing import Optional, Set, Tuple
 
 
-PROMPT_BUILDER_PATH = Path("src/prompt_builder.py")
+PROMPT_BUILDER_PATH = Path("src/prompt_builder/builder.py")
 
 
 def _read_source() -> str:

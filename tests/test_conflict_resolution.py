@@ -18,7 +18,7 @@ def builder() -> PromptBuilder:
 
 @pytest.fixture
 def builder_with_mock(monkeypatch: pytest.MonkeyPatch) -> PromptBuilder:
-    def mock_normalize_overlays(overlays):
+    def mock_normalize_overlays(overlays, **kwargs):
         return list(overlays)
     monkeypatch.setattr("src.prompt_builder.normalize_overlays", mock_normalize_overlays)
     return PromptBuilder(config_path=Path("config"), kb_path=Path("knowledge_base"))
@@ -334,8 +334,8 @@ def test_overlay_conflict_resolution_independent_of_input_order(builder_with_moc
     assert "low_priority" not in result2["effective_overlays"]
 
 
-def test_overlay_conflict_equal_priority_raises_error(builder_with_mock: PromptBuilder) -> None:
-    """При конфликте с равными приоритетами и без явного победителя — ошибка конфигурации."""
+def test_overlay_conflict_equal_priority_uses_deterministic_fallback(builder_with_mock: PromptBuilder) -> None:
+    """При конфликте с равными приоритетами и без явного победителя — детерминированный fallback."""
     overlay_a = OverlayConfig(
         name="overlay_a",
         instructions=(),
@@ -351,15 +351,19 @@ def test_overlay_conflict_equal_priority_raises_error(builder_with_mock: PromptB
         conflicts_with=("overlay_a",),
     )
     domain_config = builder_with_mock.get_domain_config("blog")
-    with pytest.raises(ValueError, match="equal priority"):
-        resolve_prompt_features(
-            domain="blog",
-            intent=None,
-            overlays=["overlay_a", "overlay_b"],
-            domain_config=domain_config,
-            intent_config=None,
-            overlay_configs=[overlay_a, overlay_b],
-        )
+    result = resolve_prompt_features(
+        domain="blog",
+        intent=None,
+        overlays=["overlay_a", "overlay_b"],
+        domain_config=domain_config,
+        intent_config=None,
+        overlay_configs=[overlay_a, overlay_b],
+    )
+    # Детерминированный fallback: побеждает первый в списке (overlay_a)
+    assert "overlay_a" in result["effective_overlays"]
+    assert "overlay_b" not in result["effective_overlays"]
+    # Проверяем наличие предупреждения о равных приоритетах
+    assert any("equal priority" in w for w in result["warnings"])
 
 
 def test_explicit_suppression_wins_over_priority(builder_with_mock: PromptBuilder) -> None:
@@ -392,8 +396,8 @@ def test_explicit_suppression_wins_over_priority(builder_with_mock: PromptBuilde
     assert any("low_priority" in layer and "suppressed" in layer for layer in result["suppressed_layers"])
 
 
-def test_equal_priority_conflict_raises_error_with_mock_overlays(builder_with_mock: PromptBuilder) -> None:
-    """Искусственные оверлеи с равными приоритетами (70) должны вызывать ошибку."""
+def test_equal_priority_conflict_uses_deterministic_fallback_with_mock_overlays(builder_with_mock: PromptBuilder) -> None:
+    """Искусственные оверлеи с равными приоритетами (70) — детерминированный fallback."""
     overlay_a = OverlayConfig(
         name="overlay_a",
         instructions=(),
@@ -409,15 +413,19 @@ def test_equal_priority_conflict_raises_error_with_mock_overlays(builder_with_mo
         conflicts_with=("overlay_a",),
     )
     domain_config = builder_with_mock.get_domain_config("blog")
-    with pytest.raises(ValueError, match="equal priority"):
-        resolve_prompt_features(
-            domain="blog",
-            intent=None,
-            overlays=["overlay_a", "overlay_b"],
-            domain_config=domain_config,
-            intent_config=None,
-            overlay_configs=[overlay_a, overlay_b],
-        )
+    result = resolve_prompt_features(
+        domain="blog",
+        intent=None,
+        overlays=["overlay_a", "overlay_b"],
+        domain_config=domain_config,
+        intent_config=None,
+        overlay_configs=[overlay_a, overlay_b],
+    )
+    # Детерминированный fallback: побеждает первый в списке (overlay_a)
+    assert "overlay_a" in result["effective_overlays"]
+    assert "overlay_b" not in result["effective_overlays"]
+    # Проверяем наличие предупреждения о равных приоритетах
+    assert any("equal priority" in w for w in result["warnings"])
 
 
 # ============================================================================
