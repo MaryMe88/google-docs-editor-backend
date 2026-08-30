@@ -1016,3 +1016,55 @@ def test_existing_marketing_blocks_remain(builder: PromptBuilder) -> None:
     assert "Продуктовое письмо" in prompt or "Лендинг" in prompt, \
         "Старые маркетинговые шаблоны отсутствуют в промпте"
     assert "Базовая композиция бизнес-кейса" not in prompt
+
+
+# ============================================================================
+# НОВЫЕ ТЕСТЫ: load_full_kb
+# ============================================================================
+
+def test_load_full_kb(builder: PromptBuilder) -> None:
+    """Проверяет, что load_full_kb загружает KB и сохраняет в _loaded_kb."""
+    # Сначала убедимся, что _loaded_kb = None
+    assert builder._loaded_kb is None
+
+    kb = builder.load_full_kb()
+    assert kb is not None
+    # Проверяем, что загружена настоящая KB (есть атрибуты)
+    assert hasattr(kb, "grammar_errors")
+    # Проверяем, что _loaded_kb установлен
+    assert builder._loaded_kb is kb
+
+    # Повторный вызов возвращает тот же объект
+    kb2 = builder.load_full_kb()
+    assert kb2 is kb
+
+
+def test_load_full_kb_uses_load_all(builder: PromptBuilder) -> None:
+    """Проверяет, что load_full_kb вызывает load_knowledge_base с load_all=True."""
+    with patch("src.prompt_builder.load_knowledge_base") as mock_load:
+        mock_load.return_value = MagicMock()
+        builder.load_full_kb()
+        mock_load.assert_called_once_with(
+            builder.kb_path,
+            active_tags=None,
+            intent=None,
+            load_all=True,
+        )
+
+
+def test_reload_configs_clears_loaded_kb(builder: PromptBuilder) -> None:
+    """Проверяет, что reload_configs сбрасывает _loaded_kb."""
+    builder.load_full_kb()
+    assert builder._loaded_kb is not None
+
+    builder.reload_configs()
+    assert builder._loaded_kb is None
+
+
+def test_invalidate_caches_clears_loaded_kb(builder: PromptBuilder) -> None:
+    """Проверяет, что _invalidate_caches сбрасывает _loaded_kb."""
+    builder.load_full_kb()
+    assert builder._loaded_kb is not None
+
+    builder._invalidate_caches()
+    assert builder._loaded_kb is None

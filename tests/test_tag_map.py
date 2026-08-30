@@ -17,7 +17,7 @@ import pytest
 from src.config_types import CANONICAL_TAGS, get_primary_tags_for_category
 from src.shared_contracts import ALLOWED_DOMAINS, ALLOWED_INTENTS, ALLOWED_OVERLAYS
 from src.startup_checks import _check_tag_map_coverage, run_startup_checks
-from src.tag_registry import normalize_tag
+from src.tag_registry import normalize_tag, get_canonical_tag_names
 
 
 def test_canonical_tags_loaded_from_json():
@@ -156,3 +156,27 @@ def test_case_study_tags_are_canonical():
     assert "casestudy" in KNOWN_TAGS
     assert "results" in KNOWN_TAGS
     assert "testimonial" in KNOWN_TAGS
+
+
+# ============================================================================
+# НОВЫЕ ТЕСТЫ: get_canonical_tag_names и проверка алиасов
+# ============================================================================
+
+def test_get_canonical_tag_names_returns_only_canonical():
+    """
+    Проверяет, что функция get_canonical_tag_names возвращает только канонические имена,
+    а не алиасы из полей primary/expanded.
+    """
+    canonical = get_canonical_tag_names()
+    # Проверяем, что алиасы не включены
+    aliases = {"antillm", "antiplastic", "taiga", "socialnorms", "basicedit", "cleanup", "story"}
+    # Если какие-то из этих алиасов присутствуют в CANONICAL_TAGS как канонические имена, то они не должны быть алиасами.
+    # Но мы ожидаем, что они не являются ключами второго уровня.
+    # Проверим, что они не входят в множество канонических имён.
+    assert not (aliases & canonical), f"Алиасы попали в канонический список: {aliases & canonical}"
+    # Проверяем, что основные канонические имена присутствуют (если они есть в CANONICAL_TAGS)
+    expected = {"antiai", "nkrj", "editorial", "storytelling"}  # пример, могут быть и другие
+    # Не обязательно все присутствуют, но если присутствуют, они должны быть в canonical
+    for tag in expected:
+        if tag in CANONICAL_TAGS.get("overlays", {}):
+            assert tag in canonical, f"Канонический тег {tag} отсутствует в списке"
