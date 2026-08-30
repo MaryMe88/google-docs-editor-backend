@@ -68,6 +68,9 @@ class PromptBuilder:
         self._output_format_cache: Dict[str, str] = {}
         self._kb_cache = FileCache(policy=CachePolicy(check_mtime=True))
 
+        # ИЗМЕНЕНИЕ: добавлен атрибут для хранения полной KB
+        self._loaded_kb: Optional[KnowledgeBase] = None
+
         self._load_core_config()
 
     def _load_core_config(self) -> CoreConfig:
@@ -114,6 +117,24 @@ class PromptBuilder:
             self.kb_path, primary_tags, intent,
         )
 
+    # ИЗМЕНЕНИЕ: добавлен метод load_full_kb()
+    def load_full_kb(self) -> KnowledgeBase:
+        """
+        Загружает ВСЮ базу знаний (все блоки) и сохраняет в _loaded_kb.
+        Используется для семантического индекса.
+        """
+        if self._loaded_kb is not None:
+            return self._loaded_kb
+
+        self._loaded_kb = pb.load_knowledge_base(
+            self.kb_path,
+            active_tags=None,
+            intent=None,
+            load_all=True,
+        )
+        logger.info("Full KB loaded with %d blocks", len(self._loaded_kb._blocks))
+        return self._loaded_kb
+
     def _invalidate_caches(self) -> None:
         self._core_cache = None
         self._domain_cache.clear()
@@ -121,6 +142,8 @@ class PromptBuilder:
         self._overlay_cache.clear()
         self._output_format_cache.clear()
         self._kb_cache.clear()
+        # ИЗМЕНЕНИЕ: сбрасываем загруженную KB
+        self._loaded_kb = None
 
     def reload_configs(self) -> None:
         self._invalidate_caches()
