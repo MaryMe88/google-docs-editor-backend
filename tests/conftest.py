@@ -11,7 +11,9 @@ import os
 from pathlib import Path
 from typing import Any, Dict, List
 
+import numpy as np
 import pytest
+from unittest.mock import patch, MagicMock
 
 from src.prompt_builder import AudienceProfile, PromptBuilder, load_knowledge_base
 from src.knowledge_retrieval import FallbackStage
@@ -123,3 +125,42 @@ def pytest_collection_modifyitems(config, items):
     for item in items:
         if item.get_closest_marker("integration") and not enabled:
             item.add_marker(skip_integration)
+
+
+# ============================================================================
+# Фикстура для мока SentenceTransformer (избегаем загрузки модели и сети)
+# ============================================================================
+
+@pytest.fixture(autouse=True, scope="session")
+def mock_sentence_transformer():
+    """
+    Мокает SentenceTransformer для всех тестов, чтобы избежать загрузки модели
+    и обращений в интернет. Фикстура применяется автоматически ко всем тестам.
+    """
+    # Мокаем импорт из библиотеки sentence_transformers
+    with patch("sentence_transformers.SentenceTransformer") as mock_st:
+        mock_model = MagicMock()
+
+        def encode(texts, **kwargs):
+            # Возвращаем нулевой массив размерности (len(texts), 384)
+            # 384 — размерность эмбеддингов для rubert-tiny2
+            return np.zeros((len(texts), 384), dtype=np.float32)
+
+        mock_model.encode = MagicMock(side_effect=encode)
+        mock_st.return_value = mock_model
+        yield
+
+
+# ============================================================================
+# Фикстура для отключения семантического реранкинга в тестах
+# ============================================================================
+
+@pytest.fixture(autouse=True, scope="session")
+def mock_semantic_rerank():
+    """
+    Мокает _semantic_rerank, чтобы он не выполнял реальный поиск по индексу,
+    а возвращал исходный список записей без изменений. Это предотвращает ошибки
+    размерности эмбеддингов в юнит-тестах.
+    """
+    with patch("src.knowledge_retrieval._semantic_rerank", side_effect=lambda entries, query, *args, **kwargs: entries):
+        yield
