@@ -1,5 +1,6 @@
 {
-  "category": "Алгоритм редакторского анализа",
+"inherit_tags": ["editorial"],  
+"category": "Алгоритм редакторского анализа",
   "description": "Комплексный пошаговый метод оценки и редактирования текста от определения стиля до финальной правки.",
   "tags": ["process", "methodology", "editing", "analysis"],
   "techniques": [
