@@ -22,10 +22,11 @@ from src.main import (
     invalidate_provider_cache,
     lifespan,
     _llm_error_to_http_exception,
-    _check_providers_availability,  # добавлен импорт
+    _check_providers_availability,
 )
 from src.llm_client import LLMFallbackError, LLMError, LLMAPIError
 from src.prompt_builder import PromptBuilder
+from src.semantic_index import set_semantic_entries
 
 
 # ------------------------------------------------------------------------------
@@ -36,9 +37,6 @@ from src.prompt_builder import PromptBuilder
 def enable_testing_mode(monkeypatch: pytest.MonkeyPatch) -> None:
     """Устанавливаем PYTEST_RUNNING=true для всех тестов, чтобы включить soft-mode."""
     monkeypatch.setenv("PYTEST_RUNNING", "true")
-
-
-# Глобальный клиент УДАЛЁН — теперь каждый тест создаёт свой внутри with TestClient(app)
 
 
 # ---------- Шаг 2: health check ----------
@@ -158,32 +156,30 @@ def test_edit_response_does_not_contain_prompt_or_content(
         "domain": "marketing",
     }
 
-    with patch(
-        "src.main._build_semantic_index_background",
-        new_callable=AsyncMock,
-    ):
-        with TestClient(app) as client:
-            response = client.post("/api/edit", json=payload)
+    # Мок для set_semantic_entries не нужен, так как он вызывается в lifespan
+    # и не влияет на этот тест. Убираем мок на удалённую функцию.
+    with TestClient(app) as client:
+        response = client.post("/api/edit", json=payload)
 
-            assert response.status_code == 200, f"Response body: {response.text}"
-            data = response.json()
+        assert response.status_code == 200, f"Response body: {response.text}"
+        data = response.json()
 
-            assert "prompt" not in data
-            assert "content" not in data.get("raw_response", {})
-            assert "edited_text" in data
-            assert data["edited_text"] == "This is the full LLM response with text."
+        assert "prompt" not in data
+        assert "content" not in data.get("raw_response", {})
+        assert "edited_text" in data
+        assert data["edited_text"] == "This is the full LLM response with text."
 
-            payload_dry = payload.copy()
-            payload_dry["dry_run"] = True
+        payload_dry = payload.copy()
+        payload_dry["dry_run"] = True
 
-            response_dry = client.post("/api/edit", json=payload_dry)
+        response_dry = client.post("/api/edit", json=payload_dry)
 
-            assert response_dry.status_code == 200
-            data_dry = response_dry.json()
+        assert response_dry.status_code == 200
+        data_dry = response_dry.json()
 
-            assert "prompt" not in data_dry
-            assert data_dry["dry_run"] is True
-            assert data_dry["raw_response"] == {}
+        assert "prompt" not in data_dry
+        assert data_dry["dry_run"] is True
+        assert data_dry["raw_response"] == {}
 
 
 @patch("src.main.call_with_fallback")
@@ -213,18 +209,15 @@ def test_edit_response_does_not_log_prompt_entirely(
 
     payload = {"text": "test", "domain": "marketing"}
 
-    with patch(
-        "src.main._build_semantic_index_background",
-        new_callable=AsyncMock,
-    ):
-        with TestClient(app) as client:
-            client.post("/api/edit", json=payload)
+    # Мок на удалённую функцию не нужен
+    with TestClient(app) as client:
+        client.post("/api/edit", json=payload)
 
-            log_messages = [rec.message for rec in caplog.records]
-            for msg in log_messages:
-                assert "super secret system prompt" not in msg
-            assert any("edit_request" in msg for msg in log_messages)
-            assert any("text_length" in msg for msg in log_messages)
+        log_messages = [rec.message for rec in caplog.records]
+        for msg in log_messages:
+            assert "super secret system prompt" not in msg
+        assert any("edit_request" in msg for msg in log_messages)
+        assert any("text_length" in msg for msg in log_messages)
 
 
 # ---------- Тесты для _llm_error_to_http_exception ----------
@@ -331,7 +324,7 @@ async def test_production_startup_requires_api_secret_key(monkeypatch: pytest.Mo
     monkeypatch.delenv("API_SECRET_KEY", raising=False)
     monkeypatch.delenv("PYTEST_RUNNING", raising=False)  # убираем тестовый режим
 
-    app_test = FastAPI()  # не передаём lifespan, будем вызывать напрямую
+    app_test = FastAPI()
     with pytest.raises(RuntimeError, match="API_SECRET_KEY is required in production mode."):
         async with lifespan(app_test):
             pass
@@ -399,20 +392,27 @@ async def test_lifespan_calls_load_full_kb() -> None:
     mock_builder.get_available_intents = MagicMock(return_value=set())
     mock_builder.get_available_overlays = MagicMock(return_value=set())
 
-    # Мокаем создание PromptBuilder в lifespan
-    with patch("src.main.PromptBuilder", return_value=mock_builder):
-        # Мокаем остальные зависимости
-        with patch("src.main.run_startup_checks"):
-            with patch("src.main.load_scoring_weights"):
-                with patch("src.main._build_semantic_index_background", new_callable=AsyncMock):
-                    # Убедимся, что OPENROUTER_API_KEY и API_SECRET_KEY установлены
-                    with patch.dict(os.environ, {"OPENROUTER_API_KEY": "test-key", "API_SECRET_KEY": "test-secret"}):
+    # Мокаем set_semantic_entries, чтобы проверить, что она вызывается с записями
+    with patch("src.main.set_semantic_entries") as mock_set_entries:
+        with patch("src.main.PromptBuilder", return_value=mock_builder):
+            with patch("src.main.run_startup_checks"):
+                with patch("src.main.load_scoring_weights"):
+                    with patch.dict(
+                        os.environ,
+                        {
+                            "OPENROUTER_API_KEY": "test-key",
+                            "API_SECRET_KEY": "test-secret",
+                            "DISABLE_SEMANTIC_INDEX": "false",
+                        },
+                    ):
                         app_test = FastAPI()
                         async with lifespan(app_test):
                             pass
 
     # Проверяем, что load_full_kb был вызван
     mock_builder.load_full_kb.assert_called_once()
+    # Проверяем, что set_semantic_entries вызван (хотя бы один раз)
+    mock_set_entries.assert_called_once()
 
 
 def test_collect_semantic_entries_uses_loaded_kb() -> None:
@@ -422,9 +422,7 @@ def test_collect_semantic_entries_uses_loaded_kb() -> None:
     # Создаём мок-объект приложения с PromptBuilder
     mock_pb = MagicMock(spec=PromptBuilder)
     mock_kb = MagicMock()
-    # Убеждаемся, что _loaded_kb есть
     mock_pb._loaded_kb = mock_kb
-    # Настраиваем атрибуты KB
     mock_kb.grammar_errors = [{"id": "g1"}]
     mock_kb.stylistic_issues = []
     mock_kb.logic_issues = []
@@ -439,63 +437,3 @@ def test_collect_semantic_entries_uses_loaded_kb() -> None:
     # Проверяем, что записи собраны
     assert len(entries) == 1
     assert entries[0]["id"] == "g1"
-
-
-@pytest.mark.asyncio
-@patch("src.main.init_semantic_index")
-@patch("src.main._collect_semantic_entries")
-async def test_build_semantic_index_background_no_warning_when_kb_loaded(
-    mock_collect: MagicMock,
-    mock_init: MagicMock,
-    caplog: pytest.LogCaptureFixture,
-) -> None:
-    """
-    Проверяет, что при загруженной KB индекс строится без предупреждения.
-    """
-    import logging
-    caplog.set_level(logging.WARNING)
-
-    # Мокаем _collect_semantic_entries, чтобы он возвращал непустой список
-    mock_collect.return_value = [{"id": "test"}]
-
-    app = FastAPI()
-    app.state.semantic_index_status = "not_started"
-
-    from src.main import _build_semantic_index_background
-    await _build_semantic_index_background(app)
-
-    # Проверяем, что init_semantic_index вызван
-    mock_init.assert_called_once_with([{"id": "test"}])
-    # Проверяем, что нет предупреждения о KB не загружена
-    assert "KB не загружена" not in caplog.text
-    assert "нет записей для индексации" not in caplog.text
-
-
-@pytest.mark.asyncio
-@patch("src.main.init_semantic_index")
-@patch("src.main._collect_semantic_entries")
-async def test_build_semantic_index_background_warns_when_kb_not_loaded(
-    mock_collect: MagicMock,
-    mock_init: MagicMock,
-    caplog: pytest.LogCaptureFixture,
-) -> None:
-    """
-    Проверяет, что при незагруженной KB выводится предупреждение и индекс не строится.
-    """
-    import logging
-    caplog.set_level(logging.WARNING)
-
-    # Мокаем _collect_semantic_entries, чтобы он возвращал пустой список
-    mock_collect.return_value = []
-
-    app = FastAPI()
-    app.state.semantic_index_status = "not_started"
-
-    from src.main import _build_semantic_index_background
-    await _build_semantic_index_background(app)
-
-    # Проверяем, что init_semantic_index НЕ вызван
-    mock_init.assert_not_called()
-    # Проверяем, что предупреждение есть
-    assert "нет записей для индексации" in caplog.text
-    assert "SemanticIndex" in caplog.text

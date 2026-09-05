@@ -15,6 +15,7 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 from typing import Any, Dict, List
+from unittest.mock import MagicMock
 
 import pytest
 
@@ -519,3 +520,202 @@ def test_retrieval_without_case_study_does_not_load():
         assert "case_study_composition" not in ids, \
             f"Запись case_study_composition не должна попадать в {foreign_block}"
     # Если блок отсутствует или пуст, тест также проходит
+
+
+# ============================================================================
+# NEW: Тесты для опционального семантического re-ranking (deep_semantic_search)
+# ============================================================================
+
+class TestSemanticRerankOption:
+    """Проверяем, что параметр semantic_rerank управляет весом в _semantic_rerank."""
+
+    def test_semantic_rerank_false_passes_weight_zero(self, monkeypatch):
+        """При semantic_rerank=False вес должен быть 0.0."""
+        kb = SimpleNamespace(
+            grammar_errors=[
+                make_rule_entry(
+                    wrong="ихний",
+                    correct="их",
+                    rule="просторечие",
+                    tags=["grammar"],
+                    entry_id="test1",
+                )
+            ]
+        )
+        mock_rerank = MagicMock(return_value=[{"id": "test1", "wrong": "ихний"}])
+        monkeypatch.setattr("src.knowledge_retrieval._semantic_rerank", mock_rerank)
+
+        select_grammar_rules(
+            kb=kb,
+            text="ихний",
+            tags=["grammar"],
+            limit=1,
+            semantic_rerank=False,
+        )
+
+        mock_rerank.assert_called_once()
+        args, kwargs = mock_rerank.call_args
+        # Проверяем, что передан именованный параметр semantic_weight
+        assert kwargs.get('semantic_weight') == 0.0, "semantic_weight должен быть 0.0 при semantic_rerank=False"
+
+    def test_semantic_rerank_true_passes_weight_default(self, monkeypatch):
+        """При semantic_rerank=True вес должен быть 0.35."""
+        kb = SimpleNamespace(
+            grammar_errors=[
+                make_rule_entry(
+                    wrong="ихний",
+                    correct="их",
+                    rule="просторечие",
+                    tags=["grammar"],
+                    entry_id="test2",
+                )
+            ]
+        )
+        mock_rerank = MagicMock(return_value=[{"id": "test2", "wrong": "ихний"}])
+        monkeypatch.setattr("src.knowledge_retrieval._semantic_rerank", mock_rerank)
+
+        select_grammar_rules(
+            kb=kb,
+            text="ихний",
+            tags=["grammar"],
+            limit=1,
+            semantic_rerank=True,
+        )
+
+        mock_rerank.assert_called_once()
+        args, kwargs = mock_rerank.call_args
+        assert kwargs.get('semantic_weight') == 0.35, "semantic_weight должен быть 0.35 при semantic_rerank=True"
+
+    def test_semantic_rerank_false_with_return_meta(self, monkeypatch):
+        """То же самое, но с return_meta=True."""
+        kb = SimpleNamespace(
+            grammar_errors=[
+                make_rule_entry(
+                    wrong="ихний",
+                    correct="их",
+                    rule="просторечие",
+                    tags=["grammar"],
+                    entry_id="test3",
+                )
+            ]
+        )
+        mock_rerank = MagicMock(return_value=[{"id": "test3", "wrong": "ихний"}])
+        monkeypatch.setattr("src.knowledge_retrieval._semantic_rerank", mock_rerank)
+
+        select_grammar_rules(
+            kb=kb,
+            text="ихний",
+            tags=["grammar"],
+            limit=1,
+            return_meta=True,
+            semantic_rerank=False,
+        )
+
+        mock_rerank.assert_called_once()
+        args, kwargs = mock_rerank.call_args
+        assert kwargs.get('semantic_weight') == 0.0
+
+    def test_semantic_rerank_true_with_return_meta(self, monkeypatch):
+        kb = SimpleNamespace(
+            grammar_errors=[
+                make_rule_entry(
+                    wrong="ихний",
+                    correct="их",
+                    rule="просторечие",
+                    tags=["grammar"],
+                    entry_id="test4",
+                )
+            ]
+        )
+        mock_rerank = MagicMock(return_value=[{"id": "test4", "wrong": "ихний"}])
+        monkeypatch.setattr("src.knowledge_retrieval._semantic_rerank", mock_rerank)
+
+        select_grammar_rules(
+            kb=kb,
+            text="ихний",
+            tags=["grammar"],
+            limit=1,
+            return_meta=True,
+            semantic_rerank=True,
+        )
+
+        mock_rerank.assert_called_once()
+        args, kwargs = mock_rerank.call_args
+        assert kwargs.get('semantic_weight') == 0.35
+
+    def test_semantic_rerank_works_with_style_issues(self, monkeypatch):
+        """Проверяем, что параметр работает и для select_style_issues."""
+        from src.knowledge_retrieval import select_style_issues
+
+        kb = SimpleNamespace(
+            stylistic_issues=[
+                make_rule_entry(
+                    wrong="очень очень",
+                    correct="весьма",
+                    rule="избегайте повторов",
+                    tags=["style"],
+                    entry_id="style_test",
+                )
+            ]
+        )
+        mock_rerank = MagicMock(return_value=[{"id": "style_test"}])
+        monkeypatch.setattr("src.knowledge_retrieval._semantic_rerank", mock_rerank)
+
+        select_style_issues(
+            kb=kb,
+            text="очень очень интересно",
+            tags=["style"],
+            limit=1,
+            semantic_rerank=False,
+        )
+
+        mock_rerank.assert_called_once()
+        args, kwargs = mock_rerank.call_args
+        assert kwargs.get('semantic_weight') == 0.0
+
+    def test_semantic_rerank_works_with_logic_issues(self, monkeypatch):
+        """Проверяем, что параметр работает и для select_logic_issues."""
+        from src.knowledge_retrieval import select_logic_issues
+
+        kb = SimpleNamespace(
+            logic_issues=[
+                make_rule_entry(
+                    wrong="это утверждение неверно",
+                    correct="это утверждение может быть ошибочным",
+                    rule="избегайте категоричности",
+                    tags=["logic"],
+                    entry_id="logic_test",
+                )
+            ]
+        )
+        mock_rerank = MagicMock(return_value=[{"id": "logic_test"}])
+        monkeypatch.setattr("src.knowledge_retrieval._semantic_rerank", mock_rerank)
+
+        select_logic_issues(
+            kb=kb,
+            text="это утверждение неверно",
+            tags=["logic"],
+            limit=1,
+            semantic_rerank=True,
+        )
+
+        mock_rerank.assert_called_once()
+        args, kwargs = mock_rerank.call_args
+        assert kwargs.get('semantic_weight') == 0.35
+
+    def test_semantic_rerank_not_passed_to_structural(self):
+        """Структурные вызовы не принимают semantic_rerank, поэтому проверяем, что ошибки нет."""
+        entries = [
+            make_structural_entry(
+                name="Тестовая структура",
+                description="Описание",
+                tags=["test"],
+                entry_id="struct",
+            )
+        ]
+        result = select_structural_by_tags_or_all(
+            entries=entries,
+            tags=["test"],
+            limit=1,
+        )
+        assert len(result) == 1
