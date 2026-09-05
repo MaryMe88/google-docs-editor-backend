@@ -113,12 +113,40 @@ def build_known_tags(mapping: Dict[str, Any]) -> Set[str]:
 # ============================================================================
 def get_canonical_tag_names() -> Set[str]:
     """
-    Возвращает множество канонических имён тегов (без алиасов) из CANONICAL_TAGS.
-    Используется в startup-проверках для сравнения с тегами в KB.
+    Возвращает множество канонических primary-тегов из CANONICAL_TAGS (без алиасов).
+    Используется в startup-проверках для сверки с реальными тегами в KB.
     """
     from src.config_types import CANONICAL_TAGS
+
+    known_aliases = {
+        "antillm",
+        "antiplastic",
+        "taiga",
+        "socialnorms",
+        "basicedit",
+        "cleanup",
+        "story",
+    }
+
     tags: Set[str] = set()
     for category_data in CANONICAL_TAGS.values():
-        if isinstance(category_data, dict):
-            tags.update(category_data.keys())
+        if not isinstance(category_data, dict):
+            continue
+        for payload in category_data.values():
+            if isinstance(payload, dict):
+                for tag in payload.get("primary", []):
+                    if isinstance(tag, str):
+                        norm = normalize_tag(tag)
+                        if norm == "basicedit":
+                            norm = "editorial"
+                        if norm not in known_aliases:
+                            tags.add(norm)
+            elif isinstance(payload, list):
+                for tag in payload:
+                    if isinstance(tag, str):
+                        norm = normalize_tag(tag)
+                        if norm == "basicedit":
+                            norm = "editorial"
+                        if norm not in known_aliases:
+                            tags.add(norm)
     return tags
