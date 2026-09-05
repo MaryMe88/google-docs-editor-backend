@@ -1,4 +1,3 @@
-
 import re
 from typing import Any, Dict, List, Optional
 
@@ -79,6 +78,9 @@ class EditRequest(BaseModel):
     include_retrieval_meta: bool = Field(default=False)
     include_few_shot: bool = Field(default=True)
     dry_run: bool = Field(default=False)
+    # Углублённая семантическая проверка: включает re-ranking правил KB через sentence-transformers.
+    # При включении запрос становится медленнее, но точнее для творческих и композиционных режимов.
+    deep_semantic_search: bool = Field(default=False)
 
     @field_validator("domain")
     @classmethod

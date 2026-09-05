@@ -496,9 +496,18 @@ def _semantic_rerank(
     if not entries or not query or not query.strip() or semantic_weight <= 0:
         return entries
 
+    # Ленивая инициализация индекса при первом запросе с включённым реранкингом
     try:
-        from src.semantic_index import get_semantic_index
+        from src.semantic_index import get_semantic_index, init_semantic_index, _entries_for_index
         index = get_semantic_index()
+        if index is None:
+            if _entries_for_index:
+                logger.info("SemanticIndex: ленивая инициализация индекса по первому запросу")
+                init_semantic_index(_entries_for_index)
+                index = get_semantic_index()
+            else:
+                logger.warning("SemanticIndex не инициализирован: нет записей для индексации")
+                return entries
         if index is None or not index.is_ready():
             return entries
     except ImportError:
@@ -791,7 +800,7 @@ def _select_by_tags_or_all(
 
 
 # ---------------------------------------------------------------------------
-# Публичный API — сигнатуры не изменяются
+# Публичный API — добавлен параметр semantic_rerank
 # ---------------------------------------------------------------------------
 
 @overload
@@ -804,6 +813,7 @@ def select_grammar_rules(
     min_score: int = 1,
     char_budget: Optional[int] = None,
     return_meta: bool = False,
+    semantic_rerank: bool = False,
 ) -> List[Dict[str, Any]]:
     ...
 
@@ -818,6 +828,7 @@ def select_grammar_rules(
     min_score: int = 1,
     char_budget: Optional[int] = None,
     return_meta: bool = True,
+    semantic_rerank: bool = False,
 ) -> Tuple[List[Dict[str, Any]], FallbackStage, int]:
     ...
 
@@ -831,10 +842,11 @@ def select_grammar_rules(
     min_score: int = 1,
     char_budget: Optional[int] = None,
     return_meta: bool = False,
+    semantic_rerank: bool = False,
 ) -> Union[List[Dict[str, Any]], Tuple[List[Dict[str, Any]], FallbackStage, int]]:
     normalized_text = normalize_text_for_match(text)
     effective_tags = list(tags) or ["grammar"]
-    grammar_entries = getattr(kb, 'grammar_errors', [])   # исправлено
+    grammar_entries = getattr(kb, 'grammar_errors', [])
     raw = _select_ranked_entries(
         entries=grammar_entries,
         normalized_text=normalized_text,
@@ -850,8 +862,8 @@ def select_grammar_rules(
     )
     if return_meta:
         entries, stage, dropped = raw  # type: ignore[misc]
-        return _semantic_rerank(entries, text), stage, dropped
-    return _semantic_rerank(raw, text)  # type: ignore[arg-type]
+        return _semantic_rerank(entries, text, semantic_weight=0.35 if semantic_rerank else 0.0), stage, dropped
+    return _semantic_rerank(raw, text, semantic_weight=0.35 if semantic_rerank else 0.0)  # type: ignore[arg-type]
 
 
 @overload
@@ -864,6 +876,7 @@ def select_style_issues(
     min_score: int = 1,
     char_budget: Optional[int] = None,
     return_meta: bool = False,
+    semantic_rerank: bool = False,
 ) -> List[Dict[str, Any]]:
     ...
 
@@ -878,6 +891,7 @@ def select_style_issues(
     min_score: int = 1,
     char_budget: Optional[int] = None,
     return_meta: bool = True,
+    semantic_rerank: bool = False,
 ) -> Tuple[List[Dict[str, Any]], FallbackStage, int]:
     ...
 
@@ -891,10 +905,11 @@ def select_style_issues(
     min_score: int = 1,
     char_budget: Optional[int] = None,
     return_meta: bool = False,
+    semantic_rerank: bool = False,
 ) -> Union[List[Dict[str, Any]], Tuple[List[Dict[str, Any]], FallbackStage, int]]:
     normalized_text = normalize_text_for_match(text)
     effective_tags = list(tags) or ["style"]
-    stylistic_entries = getattr(kb, 'stylistic_issues', [])   # исправлено
+    stylistic_entries = getattr(kb, 'stylistic_issues', [])
     raw = _select_ranked_entries(
         entries=stylistic_entries,
         normalized_text=normalized_text,
@@ -910,8 +925,8 @@ def select_style_issues(
     )
     if return_meta:
         entries, stage, dropped = raw  # type: ignore[misc]
-        return _semantic_rerank(entries, text), stage, dropped
-    return _semantic_rerank(raw, text)  # type: ignore[arg-type]
+        return _semantic_rerank(entries, text, semantic_weight=0.35 if semantic_rerank else 0.0), stage, dropped
+    return _semantic_rerank(raw, text, semantic_weight=0.35 if semantic_rerank else 0.0)  # type: ignore[arg-type]
 
 
 @overload
@@ -924,6 +939,7 @@ def select_logic_issues(
     min_score: int = 1,
     char_budget: Optional[int] = None,
     return_meta: bool = False,
+    semantic_rerank: bool = False,
 ) -> List[Dict[str, Any]]:
     ...
 
@@ -938,6 +954,7 @@ def select_logic_issues(
     min_score: int = 1,
     char_budget: Optional[int] = None,
     return_meta: bool = True,
+    semantic_rerank: bool = False,
 ) -> Tuple[List[Dict[str, Any]], FallbackStage, int]:
     ...
 
@@ -951,8 +968,9 @@ def select_logic_issues(
     min_score: int = 1,
     char_budget: Optional[int] = None,
     return_meta: bool = False,
+    semantic_rerank: bool = False,
 ) -> Union[List[Dict[str, Any]], Tuple[List[Dict[str, Any]], FallbackStage, int]]:
-    logic_entries = getattr(kb, 'logic_issues', [])   # исправлено
+    logic_entries = getattr(kb, 'logic_issues', [])
     if not logic_entries:
         logger.warning(
             "select_logic_issues: kb.logic_issues пустой. "
@@ -980,8 +998,8 @@ def select_logic_issues(
     )
     if return_meta:
         entries, stage, dropped = raw  # type: ignore[misc]
-        return _semantic_rerank(entries, text), stage, dropped
-    return _semantic_rerank(raw, text)  # type: ignore[arg-type]
+        return _semantic_rerank(entries, text, semantic_weight=0.35 if semantic_rerank else 0.0), stage, dropped
+    return _semantic_rerank(raw, text, semantic_weight=0.35 if semantic_rerank else 0.0)  # type: ignore[arg-type]
 
 
 @overload

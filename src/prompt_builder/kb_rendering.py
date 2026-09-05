@@ -385,6 +385,7 @@ def _process_kb_block(
     total_few_shot_used: int,
     limits: LimitsConfig,
     few_shot_seed: Optional[int] = None,
+    semantic_rerank: bool = False,
 ) -> int:
     if not config.uses_structural_call:
         candidate_limit = getattr(limits, config.candidate_attr) if config.candidate_attr else None
@@ -398,6 +399,7 @@ def _process_kb_block(
             candidate_limit=candidate_limit,
             char_budget=getattr(budget, 'char_budget', None),
             return_meta=True,
+            semantic_rerank=semantic_rerank,
         )
     else:
         if not config.kb_attr:
@@ -412,6 +414,11 @@ def _process_kb_block(
             expanded_tags=expanded_tags,
             char_budget=getattr(budget, 'char_budget', None),
             return_meta=True,
+            # structural функция не принимает semantic_rerank, но мы не передаём,
+            # потому что она не вызывает _semantic_rerank внутри (только обёртка _select_by_tags_or_all,
+            # которая не имеет semantic_rerank). Но мы можем передать, если добавим параметр.
+            # Однако structural retrieval не использует _semantic_rerank, поэтому неважно.
+            # Но для единообразия можно добавить, но сейчас не будем, т.к. параметр не нужен.
         )
     entries, stage, dropped = _unpack_retrieval_result(result)
     pair_entries = [e for e in entries if _has_few_shot_pair(e)]

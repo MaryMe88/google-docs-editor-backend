@@ -30,7 +30,7 @@ from src.output_guard import (
 from src.prompt_builder import PromptBuilder
 from src.provider_registry import LLMProvider
 from src.scoring_weights import load_scoring_weights
-from src.semantic_index import init_semantic_index
+from src.semantic_index import set_semantic_entries  # вместо init_semantic_index
 from src.shared_contracts import (
     ALLOWED_DOMAINS,
     ALLOWED_INTENTS,
@@ -138,36 +138,8 @@ def _collect_semantic_entries(app: FastAPI) -> list[dict[str, Any]]:
     return all_entries
 
 
-async def _build_semantic_index_background(app: FastAPI) -> None:
-    if app.state.semantic_index_status != "not_started":
-        logger.info("SemanticIndex: уже запущен или завершён, пропускаем")
-        return
-
-    app.state.semantic_index_status = "building"
-    logger.info("SemanticIndex: фоновое построение индекса начато")
-
-    try:
-        all_entries = _collect_semantic_entries(app)
-        if not all_entries:
-            logger.warning("SemanticIndex: нет записей для индексации, индекс не строится")
-            app.state.semantic_index_status = "ready"
-            return
-
-        await asyncio.to_thread(init_semantic_index, all_entries)
-        app.state.semantic_index_status = "ready"
-        logger.info("SemanticIndex: фоновое построение индекса завершено успешно")
-    except Exception as error:
-        logger.error(
-            "SemanticIndex: ошибка при построении индекса: %s",
-            error,
-            exc_info=True,
-        )
-        app.state.semantic_index_status = "failed"
-        app.state.semantic_index_error = str(error)
-
-
 # ---------------------------------------------------------------------------
-# Lifespan
+# Lifespan (фоновое построение индекса УДАЛЕНО)
 # ---------------------------------------------------------------------------
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -204,11 +176,15 @@ async def lifespan(app: FastAPI):
     logger.info("PromptBuilder initialized successfully")
     app.state.prompt_builder = prompt_builder
 
-    # Полная KB нужна один раз для построения SemanticIndex.
-    # PromptBuilder сам кеширует результат в _loaded_kb.
+    # Полная KB нужна для ленивого построения SemanticIndex.
+    # Загружаем её и сохраняем записи для индекса.
     try:
         prompt_builder.load_full_kb()
         logger.info("Полная KB загружена для SemanticIndex")
+        # Сохраняем записи в глобальную переменную semantic_index для ленивой инициализации
+        all_entries = _collect_semantic_entries(app)
+        set_semantic_entries(all_entries)
+        logger.info("SemanticIndex: записи сохранены, индекс будет построен при первом запросе с deep_semantic_search=True")
     except (OSError, ValueError, json.JSONDecodeError) as error:
         logger.error(
             "Не удалось загрузить полную KB для SemanticIndex: %s",
@@ -219,22 +195,9 @@ async def lifespan(app: FastAPI):
             "Failed to load knowledge base required for SemanticIndex."
         ) from error
 
-    app.state.semantic_index_status = "not_started"
-    app.state.semantic_index_task = None
-    app.state.semantic_index_error = None
-
-    task = asyncio.create_task(_build_semantic_index_background(app))
-    app.state.semantic_index_task = task
-
     yield
 
     logger.info("Shutting down text editor service...")
-    if app.state.semantic_index_task:
-        app.state.semantic_index_task.cancel()
-        try:
-            await app.state.semantic_index_task
-        except asyncio.CancelledError:
-            pass
 
 
 app = FastAPI(
@@ -598,6 +561,7 @@ async def edit_text(request: Request, body: EditRequest) -> EditResponse:
                 include_knowledge=body.include_knowledge,
                 include_few_shot=body.include_few_shot,
                 include_retrieval_meta=True,
+                deep_semantic_search=body.deep_semantic_search,  # добавлено
             )
             _log_edit_request_meta(body, retrieval_meta)
             return EditResponse(
@@ -621,6 +585,7 @@ async def edit_text(request: Request, body: EditRequest) -> EditResponse:
             include_knowledge=body.include_knowledge,
             include_few_shot=body.include_few_shot,
             include_retrieval_meta=True,
+            deep_semantic_search=body.deep_semantic_search,  # добавлено
         )
 
         providers_to_try = [body.provider] + [

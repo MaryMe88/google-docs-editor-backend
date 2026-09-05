@@ -319,6 +319,7 @@ class PromptBuilder:
         nkrj_enabled: bool = False,
         editorial_enabled: bool = False,
         return_trace: bool = False,
+        semantic_rerank: bool = False,  # НОВЫЙ ПАРАМЕТР
     ) -> Union[Tuple[str, Dict[str, Any], int], Tuple[str, Dict[str, Any], int, AssemblyTrace]]:
         if not primary_tags:
             primary_tags = {"grammar", "style", "editing", "clarity"}
@@ -474,6 +475,7 @@ class PromptBuilder:
                 total_few_shot_used=current_total,
                 limits=effective_limits,
                 few_shot_seed=few_shot_seed,
+                semantic_rerank=semantic_rerank,  # ПЕРЕДАЁМ ПАРАМЕТР
             )
             after_len = len("".join(lines))
             included = (after_len > before_len) and (block_cfg.title in "\n".join(lines))
@@ -601,6 +603,7 @@ class PromptBuilder:
         token_budget: Optional[int] = None,
         include_retrieval_meta: Literal[False] = False,
         few_shot_seed: Optional[int] = None,
+        deep_semantic_search: bool = False,  # НОВЫЙ ПАРАМЕТР
         **legacy_kwargs: Any,
     ) -> str: ...
 
@@ -619,6 +622,7 @@ class PromptBuilder:
         token_budget: Optional[int] = None,
         include_retrieval_meta: Literal[True] = True,
         few_shot_seed: Optional[int] = None,
+        deep_semantic_search: bool = False,  # НОВЫЙ ПАРАМЕТР
         **legacy_kwargs: Any,
     ) -> Tuple[str, Dict[str, Any]]: ...
 
@@ -636,6 +640,7 @@ class PromptBuilder:
         token_budget: Optional[int] = None,
         include_retrieval_meta: bool = False,
         few_shot_seed: Optional[int] = None,
+        deep_semantic_search: bool = False,  # НОВЫЙ ПАРАМЕТР
         **legacy_kwargs: Any,
     ) -> Union[str, Tuple[str, Dict[str, Any]]]:
         legacy_output_mode = legacy_kwargs.pop("outputmode", None)
@@ -775,6 +780,7 @@ class PromptBuilder:
                 nkrj_enabled=nkrj_enabled,
                 editorial_enabled=editorial_enabled,
                 return_trace=True,
+                semantic_rerank=deep_semantic_search,  # ПЕРЕДАЁМ ПАРАМЕТР
             )
             retrieval_meta_total = block_meta
             if knowledge_block:

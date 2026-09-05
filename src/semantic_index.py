@@ -297,11 +297,22 @@ class SemanticIndex:
 # Глобальный экземпляр (singleton) — инициализируется в main.py
 # ------------------------------------------------------------------
 _global_index: SemanticIndex | None = None
+_entries_for_index: list[dict[str, Any]] | None = None  # для ленивой инициализации
 
 
 def get_semantic_index() -> SemanticIndex | None:
     """Возвращает глобальный индекс, если он инициализирован."""
     return _global_index
+
+
+def set_semantic_entries(entries: list[dict[str, Any]]) -> None:
+    """
+    Сохраняет записи для ленивого построения индекса.
+    Вызывается один раз при старте приложения после загрузки полной KB.
+    """
+    global _entries_for_index
+    _entries_for_index = entries
+    logger.info("SemanticIndex: сохранено %d записей для ленивой инициализации", len(entries))
 
 
 def init_semantic_index(
@@ -311,7 +322,7 @@ def init_semantic_index(
 ) -> SemanticIndex:
     """
     Инициализирует и строит глобальный семантический индекс.
-    Вызывать один раз при старте приложения (например, в lifespan FastAPI).
+    Вызывается один раз при старте приложения (например, в lifespan FastAPI).
     """
     global _global_index
     index = SemanticIndex(model_name=model_name)
