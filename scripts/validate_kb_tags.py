@@ -22,7 +22,7 @@ try:
         ALLOWED_INTENTS,
         ALLOWED_OVERLAYS,
     )
-    from src.startup_checks import run_startup_checks
+    from src.startup_checks import run_startup_checks, StartupCheckParams
 except ImportError as exc:
     print(f"❌ Import error — make sure dependencies are installed: {exc}")
     sys.exit(1)
@@ -37,14 +37,16 @@ def main() -> None:
     print(f" kb     : {kb_path}")
     print()
 
+    params = StartupCheckParams(
+        allowed_domains=ALLOWED_DOMAINS,
+        allowed_intents=ALLOWED_INTENTS,
+        allowed_overlays=ALLOWED_OVERLAYS,
+        config_path=config_path,
+        kb_path=kb_path,
+    )
+
     try:
-        run_startup_checks(
-            allowed_domains=ALLOWED_DOMAINS,
-            allowed_intents=ALLOWED_INTENTS,
-            allowed_overlays=ALLOWED_OVERLAYS,
-            config_path=config_path,
-            kb_path=kb_path,
-        )
+        run_startup_checks(params)
     except RuntimeError as exc:
         print(f"❌ KB validation failed:\n\n{exc}")
         print(
