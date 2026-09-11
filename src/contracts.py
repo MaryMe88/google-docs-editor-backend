@@ -30,7 +30,8 @@ class AudienceRequest(BaseModel):
     expertise: str = Field(default="pro")
     formality: str = Field(default="neutral")
     # SEC: ограничение длины предотвращает prompt injection через свободное текстовое поле,
-    # которое попадает в LLM-промпт через _build_audience_block без санитизации.
+    # которое попадает в LLM-промпт через _build_audience_block без
+    # санитизации.
     description: str = Field(default="", max_length=500)
 
     @field_validator("kind")
@@ -38,7 +39,9 @@ class AudienceRequest(BaseModel):
     def validate_kind(cls, value: str) -> str:
         normalized = value.strip().lower()
         if normalized not in ALLOWED_KIND:
-            raise ValueError(f"kind must be one of {sorted(ALLOWED_KIND)}")
+            raise ValueError(
+                f"kind must be one of {sorted(ALLOWED_KIND)}"
+            )
         return normalized
 
     @field_validator("expertise")
@@ -79,7 +82,8 @@ class EditRequest(BaseModel):
     include_few_shot: bool = Field(default=True)
     dry_run: bool = Field(default=False)
     # Углублённая семантическая проверка: включает re-ranking правил KB через sentence-transformers.
-    # При включении запрос становится медленнее, но точнее для творческих и композиционных режимов.
+    # При включении запрос становится медленнее, но точнее для творческих и
+    # композиционных режимов.
     deep_semantic_search: bool = Field(default=False)
 
     @field_validator("domain")
@@ -93,7 +97,9 @@ class EditRequest(BaseModel):
         """
         normalized = v.strip().lower()
         if normalized not in ALLOWED_DOMAINS:
-            raise ValueError(f"Unknown domain: {v!r}. Allowed: {sorted(ALLOWED_DOMAINS)}")
+            raise ValueError(
+                f"Unknown domain: {v!r}. Allowed: {sorted(ALLOWED_DOMAINS)}"
+            )
         return normalized
 
     @field_validator("intent")
@@ -108,7 +114,9 @@ class EditRequest(BaseModel):
             return None
         normalized = v.strip().lower()
         if normalized not in ALLOWED_INTENTS:
-            raise ValueError(f"Unknown intent: {v!r}. Allowed: {sorted(ALLOWED_INTENTS)}")
+            raise ValueError(
+                f"Unknown intent: {v!r}. Allowed: {sorted(ALLOWED_INTENTS)}"
+            )
         return normalized
 
     @field_validator("overlays", mode="before")
@@ -124,7 +132,10 @@ class EditRequest(BaseModel):
         for item in v:
             normalized = normalize_tag(str(item))
             if normalized not in ALLOWED_OVERLAYS:
-                raise ValueError(f"Unknown overlay: {item!r}. Allowed: {sorted(ALLOWED_OVERLAYS)}")
+                raise ValueError(
+                    f"Unknown overlay: {item!r}. "
+                    f"Allowed: {sorted(ALLOWED_OVERLAYS)}"
+                )
             if normalized not in seen:
                 seen.add(normalized)
                 result.append(normalized)
@@ -173,7 +184,9 @@ class EditResponse(BaseModel):
     """
 
     edited_text: str
-    report: Optional[str] = None  # PR-2 (НП-2): добавлено для режима text_and_report
+    report: Optional[str] = (
+        None  # PR-2 (НП-2): добавлено для режима text_and_report
+    )
     # prompt: str  # УДАЛЕНО: не возвращаем промпт клиенту
     provider: Optional[str] = None
     model: Optional[str] = None

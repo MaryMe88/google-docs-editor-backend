@@ -14,7 +14,9 @@ logger = logging.getLogger(__name__)
 _soft_auth_warned = False
 
 
-def verify_api_key(x_api_key: Optional[str] = Header(None, alias="X-API-Key")) -> None:
+def verify_api_key(
+    x_api_key: Optional[str] = Header(None, alias="X-API-Key")
+) -> None:
     """
     Проверяет X-API-Key header.
 

@@ -20,8 +20,18 @@ from slowapi.util import get_remote_address
 
 from src.auth import verify_api_key
 from src.config_types import AudienceProfile
-from src.contracts import CONTRACT_VERSION, EditRequest, EditResponse, HealthResponse
-from src.llm_client import LLMError, call_with_fallback, create_llm_client, LLMFallbackError
+from src.contracts import (
+    CONTRACT_VERSION,
+    EditRequest,
+    EditResponse,
+    HealthResponse,
+)
+from src.llm_client import (
+    LLMError,
+    call_with_fallback,
+    create_llm_client,
+    LLMFallbackError,
+)
 from src.output_guard import (
     find_placeholder_leaks,
     harden_prompt_against_placeholders,
@@ -30,14 +40,14 @@ from src.output_guard import (
 from src.prompt_builder import PromptBuilder
 from src.provider_registry import LLMProvider
 from src.scoring_weights import load_scoring_weights
-from src.semantic_index import set_semantic_entries  # вместо init_semantic_index
+from src.semantic_index import set_semantic_entries
 from src.shared_contracts import (
     ALLOWED_DOMAINS,
     ALLOWED_INTENTS,
     ALLOWED_OVERLAYS,
     ALLOWED_PROVIDERS,
 )
-from src.startup_checks import run_startup_checks
+from src.startup_checks import run_startup_checks, StartupCheckParams
 
 logging.basicConfig(
     level=logging.INFO,
@@ -97,14 +107,22 @@ _PROVIDER_KEY_ENV: Dict[str, str] = {
 # ---------------------------------------------------------------------------
 # SEC-патч 2.1: Строгий allowlist для CORS
 # ---------------------------------------------------------------------------
-_ALLOWED_GOOGLE_ORIGINS: frozenset[str] = frozenset({
-    "https://script.google.com",
-    "https://docs.google.com",
-})
-_extra_origins = {o.strip() for o in os.getenv("CORS_ALLOWED_ORIGINS", "").split(",") if o.strip()}
+_ALLOWED_GOOGLE_ORIGINS: frozenset[str] = frozenset(
+    {
+        "https://script.google.com",
+        "https://docs.google.com",
+    }
+)
+_extra_origins = {
+    o.strip()
+    for o in os.getenv("CORS_ALLOWED_ORIGINS", "").split(",")
+    if o.strip()
+}
 _unexpected = _extra_origins - _ALLOWED_GOOGLE_ORIGINS
 if _unexpected:
-    logger.warning("Игнорирую неожиданные CORS origins из ENV: %s", _unexpected)
+    logger.warning(
+        "Игнорирую неожиданные CORS origins из ENV: %s", _unexpected
+    )
 _CORS_ORIGINS: list[str] = sorted(_ALLOWED_GOOGLE_ORIGINS)
 
 
@@ -148,43 +166,47 @@ async def lifespan(app: FastAPI):
     _required_env = ["OPENROUTER_API_KEY"]
     _missing = [key for key in _required_env if not os.getenv(key)]
     if _missing:
-        logger.critical("Missing required env variables: %s. Refusing to start.", _missing)
+        logger.critical(
+            "Missing required env variables: %s. Refusing to start.", _missing
+        )
         raise RuntimeError(f"Missing required env variables: {_missing}")
 
     is_testing_now = os.getenv("PYTEST_RUNNING", "false").lower() == "true"
     is_production = not (
-        os.getenv("ENV", "").lower() == "development"
-        or is_testing_now
+        os.getenv("ENV", "").lower() == "development" or is_testing_now
     )
     if is_production and not os.getenv("API_SECRET_KEY"):
-        logger.critical("API_SECRET_KEY is required in production mode. Refusing to start.")
+        logger.critical(
+            "API_SECRET_KEY is required in production mode. Refusing to start."
+        )
         raise RuntimeError("API_SECRET_KEY is required in production mode.")
 
     prompt_builder = PromptBuilder()
 
     await asyncio.to_thread(prompt_builder.startup_check)
-    await asyncio.to_thread(
-        run_startup_checks,
-        ALLOWED_DOMAINS,
-        ALLOWED_INTENTS,
-        ALLOWED_OVERLAYS,
-        Path("config"),
-        Path("knowledge_base"),
+
+    startup_params = StartupCheckParams(
+        allowed_domains=ALLOWED_DOMAINS,
+        allowed_intents=ALLOWED_INTENTS,
+        allowed_overlays=ALLOWED_OVERLAYS,
+        config_path=Path("config"),
+        kb_path=Path("knowledge_base"),
     )
+    await asyncio.to_thread(run_startup_checks, startup_params)
     await asyncio.to_thread(load_scoring_weights)
 
     logger.info("PromptBuilder initialized successfully")
     app.state.prompt_builder = prompt_builder
 
-    # Полная KB нужна для ленивого построения SemanticIndex.
-    # Загружаем её и сохраняем записи для индекса.
     try:
         prompt_builder.load_full_kb()
         logger.info("Полная KB загружена для SemanticIndex")
-        # Сохраняем записи в глобальную переменную semantic_index для ленивой инициализации
         all_entries = _collect_semantic_entries(app)
         set_semantic_entries(all_entries)
-        logger.info("SemanticIndex: записи сохранены, индекс будет построен при первом запросе с deep_semantic_search=True")
+        logger.info(
+            "SemanticIndex: записи сохранены, индекс будет построен при "
+            "первом запросе с deep_semantic_search=True"
+        )
     except (OSError, ValueError, json.JSONDecodeError) as error:
         logger.error(
             "Не удалось загрузить полную KB для SemanticIndex: %s",
@@ -244,8 +266,12 @@ async def add_security_headers(request: Request, call_next):
     response.headers["X-Content-Type-Options"] = "nosniff"
     response.headers["X-Frame-Options"] = "DENY"
     response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
-    response.headers["Permissions-Policy"] = "geolocation=(), microphone=(), camera=()"
-    response.headers["Strict-Transport-Security"] = "max-age=63072000; includeSubDomains"
+    response.headers["Permissions-Policy"] = (
+        "geolocation=(), microphone=(), camera=()"
+    )
+    response.headers["Strict-Transport-Security"] = (
+        "max-age=63072000; includeSubDomains"
+    )
     return response
 
 
@@ -277,7 +303,9 @@ async def _check_provider_deep(provider_name: str) -> bool:
         return False
 
 
-async def _check_providers_availability(deep: bool = False) -> Tuple[bool, Dict[str, bool]]:
+async def _check_providers_availability(
+    deep: bool = False,
+) -> Tuple[bool, Dict[str, bool]]:
     results: Dict[str, bool] = {}
     for provider in ALLOWED_PROVIDERS:
         if not deep:
@@ -332,7 +360,9 @@ async def health_check(request: Request, deep: bool = False) -> Response:
         )
 
     builder = get_prompt_builder()
-    any_available, provider_status = await _check_providers_availability(deep=deep)
+    any_available, provider_status = await _check_providers_availability(
+        deep=deep
+    )
 
     health = HealthResponse(
         status="ok" if any_available else "degraded",
@@ -340,7 +370,9 @@ async def health_check(request: Request, deep: bool = False) -> Response:
         available_domains=sorted(ALLOWED_DOMAINS),
         available_intents=list(builder.get_available_intents()),
         available_overlays=list(builder.get_available_overlays()),
-        available_providers=[provider for provider, ok in provider_status.items() if ok],
+        available_providers=[
+            provider for provider, ok in provider_status.items() if ok
+        ],
         provider_status=provider_status,
         deep_check=deep,
         contract_version=CONTRACT_VERSION,
@@ -357,7 +389,9 @@ async def health_check(request: Request, deep: bool = False) -> Response:
     )
 
 
-def _log_edit_request_meta(body: EditRequest, retrieval_meta: Optional[Dict] = None) -> None:
+def _log_edit_request_meta(
+    body: EditRequest, retrieval_meta: Optional[Dict] = None
+) -> None:
     log_data = {
         "event": "edit_request",
         "domain": body.domain,
@@ -381,7 +415,9 @@ class InvalidLLMOutputError(Exception):
         super().__init__(f"Invalid LLM output: {reasons}")
 
 
-def _split_edit_output(raw: str, output_mode: str) -> Tuple[str, Optional[str]]:
+def _split_edit_output(
+    raw: str, output_mode: str
+) -> Tuple[str, Optional[str]]:
     if output_mode == "text_and_report":
         return _parse_text_and_report(raw)
     return raw, None
@@ -424,7 +460,9 @@ def _validate_edit_output(
         if has_text_marker and not edited_text.strip():
             reasons.append("EMPTY_TEXT_BLOCK")
 
-        if not has_text_marker and _looks_like_report_instead_of_text(edited_text):
+        if not has_text_marker and _looks_like_report_instead_of_text(
+            edited_text
+        ):
             reasons.append("REPORT_INSTEAD_OF_TEXT")
 
         if has_placeholder_leak(report or ""):
@@ -446,7 +484,9 @@ async def _generate_clean_edit(
         max_retries_per_provider=2,
         source_text=body.text,
     )
-    edited_text, report = _split_edit_output(response.content, body.output_mode)
+    edited_text, report = _split_edit_output(
+        response.content, body.output_mode
+    )
 
     reasons = _validate_edit_output(
         raw_content=response.content,
@@ -479,7 +519,9 @@ async def _generate_clean_edit(
         max_retries_per_provider=2,
         source_text=body.text,
     )
-    edited_text, report = _split_edit_output(response.content, body.output_mode)
+    edited_text, report = _split_edit_output(
+        response.content, body.output_mode
+    )
 
     reasons = _validate_edit_output(
         raw_content=response.content,
@@ -508,12 +550,14 @@ def _llm_error_to_http_exception(error: LLMError) -> HTTPException:
         if kind == "context_limit":
             return HTTPException(
                 status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-                detail="The text or editing instructions are too large. Please shorten them.",
+                detail="The text or editing instructions are too large. "
+                "Please shorten them.",
             )
         if kind in ("timeout", "upstream_error"):
             return HTTPException(
                 status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-                detail="LLM service is temporarily unavailable. Please try again later.",
+                detail="LLM service is temporarily unavailable. "
+                       "Please try again later.",
             )
         if kind in ("authentication", "configuration"):
             return HTTPException(
@@ -523,57 +567,70 @@ def _llm_error_to_http_exception(error: LLMError) -> HTTPException:
         if kind == "invalid_response":
             return HTTPException(
                 status_code=status.HTTP_502_BAD_GATEWAY,
-                detail="LLM service returned an empty or invalid response. Please try again later.",
+                detail="LLM service returned an empty or invalid response. "
+                       "Please try again later.",
             )
         return HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
-            detail="LLM service returned an invalid response. Please try again later.",
+            detail="LLM service returned an invalid response. "
+                   "Please try again later.",
         )
     return HTTPException(
         status_code=status.HTTP_502_BAD_GATEWAY,
-        detail="LLM service returned an invalid response. Please try again later.",
+        detail="LLM service returned an invalid response. "
+               "Please try again later.",
     )
 
 
-@app.post("/api/edit", response_model=EditResponse, dependencies=[Depends(verify_api_key)])
+# ============================================================================
+# ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ ДЛЯ edit_text (выделены)
+# ============================================================================
+
+def _build_audience_from_request(body: EditRequest) -> Optional[AudienceProfile]:
+    """Строит AudienceProfile из тела запроса, если он передан."""
+    if body.audience is None:
+        return None
+    return AudienceProfile(
+        kind=body.audience.kind,
+        expertise=body.audience.expertise,
+        formality=body.audience.formality,
+        description=body.audience.description,
+    )
+
+
+def _build_dry_run_response(
+    body: EditRequest,
+    prompt: str,
+    retrieval_meta: Dict[str, Any],
+) -> EditResponse:
+    """Формирует ответ для dry_run."""
+    _log_edit_request_meta(body, retrieval_meta)
+    return EditResponse(
+        edited_text=body.text,
+        report=None,
+        provider=body.provider,
+        model=body.model,
+        dry_run=True,
+        usage={},
+        raw_response={},
+        retrieval_meta=retrieval_meta,
+    )
+
+
+# ============================================================================
+# ОСНОВНОЙ ЭНДПОИНТ (теперь компактный)
+# ============================================================================
+
+@app.post(
+    "/api/edit",
+    response_model=EditResponse,
+    dependencies=[Depends(verify_api_key)],
+)
 @limiter.limit(_rate_limit)
 async def edit_text(request: Request, body: EditRequest) -> EditResponse:
     try:
-        audience: Optional[AudienceProfile] = None
-        if body.audience is not None:
-            audience = AudienceProfile(
-                kind=body.audience.kind,
-                expertise=body.audience.expertise,
-                formality=body.audience.formality,
-                description=body.audience.description,
-            )
-
+        audience = _build_audience_from_request(body)
         prompt_builder = get_prompt_builder()
-
-        if body.dry_run:
-            prompt, retrieval_meta = prompt_builder.build(
-                text=body.text,
-                domain=body.domain,
-                intent=body.intent,
-                audience=audience,
-                overlays=body.overlays,
-                output_mode=body.output_mode,
-                include_knowledge=body.include_knowledge,
-                include_few_shot=body.include_few_shot,
-                include_retrieval_meta=True,
-                deep_semantic_search=body.deep_semantic_search,  # добавлено
-            )
-            _log_edit_request_meta(body, retrieval_meta)
-            return EditResponse(
-                edited_text=body.text,
-                report=None,
-                provider=body.provider,
-                model=body.model,
-                dry_run=True,
-                usage={},
-                raw_response={},
-                retrieval_meta=retrieval_meta,
-            )
 
         prompt, retrieval_meta = prompt_builder.build(
             text=body.text,
@@ -585,11 +642,15 @@ async def edit_text(request: Request, body: EditRequest) -> EditResponse:
             include_knowledge=body.include_knowledge,
             include_few_shot=body.include_few_shot,
             include_retrieval_meta=True,
-            deep_semantic_search=body.deep_semantic_search,  # добавлено
+            deep_semantic_search=body.deep_semantic_search,
         )
 
+        if body.dry_run:
+            return _build_dry_run_response(body, prompt, retrieval_meta)
+
         providers_to_try = [body.provider] + [
-            provider for provider in sorted(ALLOWED_PROVIDERS)
+            provider
+            for provider in sorted(ALLOWED_PROVIDERS)
             if provider != body.provider
         ]
 
@@ -610,7 +671,9 @@ async def edit_text(request: Request, body: EditRequest) -> EditResponse:
             raw_response={
                 "finish_reason": response.finish_reason,
             },
-            retrieval_meta=retrieval_meta if body.include_retrieval_meta else None,
+            retrieval_meta=(
+                retrieval_meta if body.include_retrieval_meta else None
+            ),
         )
 
     except InvalidLLMOutputError as error:
@@ -625,7 +688,8 @@ async def edit_text(request: Request, body: EditRequest) -> EditResponse:
     except LLMError as error:
         if isinstance(error, LLMFallbackError):
             logger.warning(
-                "LLMFallbackError: provider=%s kind=%s upstream_status=%s skipped=%s unknown=%s prompt_length=%d",
+                "LLMFallbackError: provider=%s kind=%s upstream_status=%s "
+                "skipped=%s unknown=%s prompt_length=%d",
                 error.provider,
                 error.kind,
                 error.upstream_status,

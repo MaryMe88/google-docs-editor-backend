@@ -51,20 +51,29 @@ def load_scoring_weights() -> Dict[str, int]:
         # Проверяем, что все ключи присутствуют и значения — int
         for key in _DEFAULT_WEIGHTS:
             if key not in data:
-                raise ValueError(f"Missing key '{key}' in scoring_weights.json")
+                raise ValueError(
+                    f"Missing key '{key}' in scoring_weights.json"
+                )
             if not isinstance(data[key], int):
-                raise ValueError(f"Key '{key}' must be integer, got {type(data[key]).__name__}")
+                raise ValueError(
+                    f"Key '{key}' must be integer, got "
+                    f"{type(data[key]).__name__}"
+                )
         # Дополнительные ключи в файле разрешены, но не используются
         _WEIGHTS_CACHE = {key: data[key] for key in _DEFAULT_WEIGHTS}
         logger.info("Loaded scoring weights from %s", _CONFIG_PATH)
-    except Exception as e:
-        logger.error("Failed to load scoring weights: %s. Using defaults.", e)
+    except (json.JSONDecodeError, OSError, ValueError, TypeError) as e:
+        # Файл есть, но повреждён, недоступен для чтения или содержит
+        # данные неверного формата — не критично, используем дефолты.
+        logger.error(
+            "Failed to load scoring weights: %s. Using defaults.",
+            e,
+        )
         _WEIGHTS_CACHE = _DEFAULT_WEIGHTS.copy()
 
     return _WEIGHTS_CACHE
 
 
-# D-7: добавлено предупреждение при запросе неизвестного ключа
 def get_scoring_weight(name: str) -> int:
     """Возвращает значение веса по имени."""
     weights = load_scoring_weights()
@@ -72,7 +81,8 @@ def get_scoring_weight(name: str) -> int:
         logger.warning(
             "Ключ %r не найден в scoring_weights.json. "
             "Правило получит вес 0 и не будет отобрано. "
-            "Добавь ключ в конфиг.", name
+            "Добавь ключ в конфиг.",
+            name,
         )
         return 0
     return weights[name]

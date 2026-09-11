@@ -24,16 +24,21 @@ DEFAULT_MANIFEST_PATH = Path("knowledge_base/kb_manifest.json")
 @dataclass(frozen=True)
 class ManifestEntry:
     """Одна запись манифеста, описывающая файл базы знаний."""
-    file: str                # путь относительно knowledge_base/
-    stage: str               # например "deai_cleanup", "editorial_core"
-    load_mode: str           # "always" | "by_tags" | "by_intent" | "never"
-    tags: List[str]          # теги для загрузки по совпадению
-    intents: List[str]       # интенты для загрузки по совпадению
-    budget_weight: str       # "high" | "medium" | "low"
-    status: str              # "active" | "disabled"
-    priority: int            # порядок загрузки (меньше — раньше)
-    block_name: Optional[str] = None  # имя блока для объединения нескольких файлов
-    block_type: str = "list"          # "list" | "dict" — структура данных блока (BUG-7)
+
+    file: str  # путь относительно knowledge_base/
+    stage: str  # например "deai_cleanup", "editorial_core"
+    load_mode: str  # "always" | "by_tags" | "by_intent" | "never"
+    tags: List[str]  # теги для загрузки по совпадению
+    intents: List[str]  # интенты для загрузки по совпадению
+    budget_weight: str  # "high" | "medium" | "low"
+    status: str  # "active" | "disabled"
+    priority: int  # порядок загрузки (меньше — раньше)
+    block_name: Optional[str] = (
+        None  # имя блока для объединения нескольких файлов
+    )
+    block_type: str = (
+        "list"  # "list" | "dict" — структура данных блока (BUG-7)
+    )
 
 
 def load_manifest(path: Path = DEFAULT_MANIFEST_PATH) -> List[ManifestEntry]:
@@ -59,19 +64,22 @@ def load_manifest(path: Path = DEFAULT_MANIFEST_PATH) -> List[ManifestEntry]:
         if item.get("status", "active") == "disabled":
             continue
 
-        # Все поля должны присутствовать, но для устойчивости используем .get с дефолтами
-        entries.append(ManifestEntry(
-            file=item.get("file", ""),
-            stage=item.get("stage", ""),
-            load_mode=item.get("load_mode", "never"),
-            tags=item.get("tags", []),
-            intents=item.get("intents", []),
-            budget_weight=item.get("budget_weight", "medium"),
-            status=item.get("status", "active"),
-            priority=item.get("priority", 99),
-            block_name=item.get("block_name"),          # новое поле
-            block_type=item.get("block_type", "list"),  # BUG-7
-        ))
+        # Все поля должны присутствовать, но для устойчивости используем .get с
+        # дефолтами
+        entries.append(
+            ManifestEntry(
+                file=item.get("file", ""),
+                stage=item.get("stage", ""),
+                load_mode=item.get("load_mode", "never"),
+                tags=item.get("tags", []),
+                intents=item.get("intents", []),
+                budget_weight=item.get("budget_weight", "medium"),
+                status=item.get("status", "active"),
+                priority=item.get("priority", 99),
+                block_name=item.get("block_name"),  # новое поле
+                block_type=item.get("block_type", "list"),  # BUG-7
+            )
+        )
 
     entries.sort(key=lambda e: e.priority)
     logger.info("Loaded %d active entries from kb_manifest.json", len(entries))
@@ -111,6 +119,8 @@ def select_files_for_request(
 
     logger.debug(
         "Selected %d files for request (intent=%s, tags=%s)",
-        len(selected), intent, active_tags
+        len(selected),
+        intent,
+        active_tags,
     )
     return selected

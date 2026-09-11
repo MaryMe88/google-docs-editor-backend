@@ -46,6 +46,7 @@ DEFAULT_MODE: ContextBudgetMode = "observe"
 # Контракты
 # ---------------------------------------------------------------------------
 
+
 @dataclass(frozen=True)
 class ModelContextProfile:
     """
@@ -58,6 +59,7 @@ class ModelContextProfile:
         safety_margin: Запас, который резервируется для безопасности
         mode: Режим работы (observe, cap, enforce)
     """
+
     provider: str
     model: Optional[str]
     context_window: int
@@ -80,6 +82,7 @@ class ContextBudget:
         available_output_tokens: Доступное место под ответ
         mode: Режим работы
     """
+
     input_tokens_estimate: int
     requested_output_tokens: int
     effective_output_tokens: int
@@ -98,6 +101,7 @@ class LLMContextLimitError(Exception):
     Содержит все необходимые поля для диагностики и логирования,
     без раскрытия пользовательского контента.
     """
+
     def __init__(
         self,
         provider: str,
@@ -119,7 +123,8 @@ class LLMContextLimitError(Exception):
         self.mode = mode
 
         message = (
-            f"Request exceeds context window for {provider}/{model or 'default'}. "
+            f"Request exceeds context window for {provider}/"
+            f"{model or 'default'}. "
             f"Input: {input_tokens_estimate} tokens, "
             f"available output: {available_output_tokens} tokens, "
             f"requested: {requested_output_tokens} tokens. "
@@ -132,13 +137,17 @@ class LLMContextLimitError(Exception):
 # Функции оценки токенов
 # ---------------------------------------------------------------------------
 
-def estimate_input_tokens(prompt: str, chars_per_token: float = CHARS_PER_INPUT_TOKEN) -> int:
+
+def estimate_input_tokens(
+    prompt: str, chars_per_token: float = CHARS_PER_INPUT_TOKEN
+) -> int:
     """
     Консервативно оценивает размер промпта в токенах.
 
     Args:
         prompt: Полный промпт
-        chars_per_token: Количество символов на один токен (по умолчанию 3.5 для русского текста)
+        chars_per_token: Количество символов на один токен
+            (по умолчанию 3.5 для русского текста)
 
     Returns:
         Оценка количества токенов (округление вверх)
@@ -183,6 +192,7 @@ def estimate_edit_output_tokens(
 # ---------------------------------------------------------------------------
 # Загрузка профиля из переменных окружения
 # ---------------------------------------------------------------------------
+
 
 def _normalize_model_name_for_env(model: Optional[str]) -> str:
     """Нормализует имя модели для использования в имени переменной окружения."""
@@ -236,7 +246,9 @@ def get_context_profile_from_env(
                     provider=provider,
                     model=model,
                     context_window=int(context_window),
-                    safety_margin=_get_safety_margin(provider_upper, model_norm),
+                    safety_margin=_get_safety_margin(
+                        provider_upper, model_norm
+                    ),
                     mode=_get_mode(provider_upper),
                 )
             except ValueError:
@@ -317,6 +329,7 @@ def _get_mode(provider_upper: str) -> ContextBudgetMode:
 # Основная функция расчёта бюджета
 # ---------------------------------------------------------------------------
 
+
 def resolve_context_budget(
     *,
     provider: str,
@@ -331,14 +344,16 @@ def resolve_context_budget(
     Рассчитывает итоговый контекстный бюджет.
 
     Алгоритм:
-    1. Если context_window или safety_margin не переданы, загружаем из env (через get_context_profile_from_env).
+    1. Если context_window или safety_margin не переданы, загружаем из env
+       (через get_context_profile_from_env).
     2. Оцениваем входные токены.
     3. Оцениваем запрошенный выходной бюджет (на основе source_text).
     4. Вычисляем доступное место под ответ:
          available = context_window - input_tokens_estimate - safety_margin
     5. Если available < MIN_USEFUL_OUTPUT_TOKENS:
          - в режиме enforce — выбрасываем LLMContextLimitError
-         - в режиме observe/cap — логируем предупреждение, но не выбрасываем (будет обработано выше)
+         - в режиме observe/cap — логируем предупреждение, но не выбрасываем
+           (будет обработано выше)
     6. Иначе effective = min(requested_output_tokens, available).
 
     Args:
@@ -354,7 +369,8 @@ def resolve_context_budget(
         ContextBudget с результатами расчёта
 
     Raises:
-        LLMContextLimitError: Если запрос не помещается в контекстное окно и режим == "enforce"
+        LLMContextLimitError: Если запрос не помещается в контекстное окно
+                              и режим == "enforce"
     """
     # Загружаем профиль из env, если не переданы параметры
     if context_window is None or safety_margin is None or mode is None:
@@ -400,8 +416,8 @@ def resolve_context_budget(
                 reason="insufficient_output_budget",
                 mode=mode,
             )
-        # В режимах observe/cap — продолжаем, но effective_output будет = available (если доступно > 0)
-        # или 0, если available отрицательный.
+        # В режимах observe/cap — продолжаем, но effective_output будет = available
+        # (если доступно > 0) или 0, если available отрицательный.
 
     # Определяем эффективный выходной бюджет
     if available < 0:

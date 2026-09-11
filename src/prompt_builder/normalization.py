@@ -37,7 +37,11 @@ def normalize_overlays(
     используется внутри resolve_prompt_features, где overlay_configs
     уже переданы явно и являются доверенным источником.
     """
-    effective_allowed = ALLOWED_OVERLAYS if allowed_overlays is None else allowed_overlays
+    effective_allowed = (
+        ALLOWED_OVERLAYS
+        if allowed_overlays is None
+        else allowed_overlays
+    )
     result: List[str] = []
     for ov in overlays:
         norm = ov.lower().strip()
@@ -66,7 +70,10 @@ def _is_incompatible_intent(
     effective_intent: Optional[str],
     incompatible_intents: tuple,
 ) -> bool:
-    """Проверяет, есть ли effective_intent в списке несовместимых интентов с учётом префикса intent:."""
+    """
+    Проверяет, есть ли effective_intent в списке несовместимых интентов
+    с учётом префикса intent:.
+    """
     if not effective_intent:
         return False
     for item in incompatible_intents:
@@ -80,8 +87,13 @@ def _is_incompatible_intent(
     return False
 
 
-def _is_incompatible_overlay(overlay: str, incompatible_overlays: tuple) -> bool:
-    """Проверяет, есть ли overlay в списке несовместимых оверлеев с учётом префикса overlay:."""
+def _is_incompatible_overlay(
+    overlay: str, incompatible_overlays: tuple
+) -> bool:
+    """
+    Проверяет, есть ли overlay в списке несовместимых оверлеев
+    с учётом префикса overlay:.
+    """
     for item in incompatible_overlays:
         if isinstance(item, str):
             if item.startswith("overlay:"):

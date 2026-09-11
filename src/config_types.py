@@ -5,17 +5,18 @@ Dataclasses, enum'ы и инфраструктурные типы для кон�
 
 Содержит:
 - Domain types — RuleEntry, KnowledgeBase, CoreConfig и т.д.
-- LimitsConfig — лимиты выдачи и кандидатов (ТП-3)
-- KnowledgeLevel — режим включения блоков знаний (ТП-1)
-- KnowledgeBlockPlan — описание блока для budget-aware сборки (ТП-1)
-- BlockBudget — бюджет одного блока KB (ТП-1)
-- KnowledgeBudget — совокупный бюджет всех блоков (ТП-1)
-- KnowledgeBudgetManager — вычисляет бюджет (ТП-1)
-- CachePolicy — политика инвалидации кэша (ФП-1)
-- FileCache — кэш-менеджер с поддержкой TTL/mtime (ФП-1)
+- LimitsConfig — лимиты выдачи и кандидатов
+- KnowledgeLevel — режим включения блоков знаний
+- KnowledgeBlockPlan — описание блока для budget-aware сборки
+- BlockBudget — бюджет одного блока KB
+- KnowledgeBudget — совокупный бюджет всех блоков
+- KnowledgeBudgetManager — вычисляет бюджет
+- CachePolicy — политика инвалидации кэша
+- FileCache — кэш-менеджер с поддержкой TTL/mtime
 - Tag constants — CANONICAL_TAGS, KNOWN_TAGS, get_*_tags_for_category
 - Explainability structures — FeatureResolutionResult, AssemblyBlockDiagnostics, AssemblyTrace
 """
+
 from __future__ import annotations
 
 import json
@@ -41,8 +42,10 @@ try:
 except ImportError:
     from typing_extensions import TypedDict
 
-# NEW: импорт reason codes для explainability
-from src.reason_codes import ReasonCode
+# Импорт для обратной совместимости: код проекта исторически ожидает,
+# что ReasonCode доступен через config_types (используется в тестах и
+# в модулях, импортирующих ReasonCode через config_types).
+from src.reason_codes import ReasonCode  # noqa: F401
 
 logger = logging.getLogger(__name__)
 V = TypeVar("V")
@@ -51,6 +54,7 @@ V = TypeVar("V")
 # ============================================================================
 # Domain types — TypedDict и dataclass'ы для конфигов и базы знаний
 # ============================================================================
+
 
 class RuleEntry(TypedDict, total=False):
     """Запись с правилом исправления (грамматика, стиль, логика)."""
@@ -95,48 +99,48 @@ FlatEntry = Dict[str, Any]
 
 
 # ============================================================================
-# Исправленные датаклассы для задач 4, 5 и 6
+# Dataclass'ы для конфигов
 # ============================================================================
+
 
 @dataclass(frozen=True)
 class CoreConfig:
     """Базовая конфигурация редактора."""
+
     role: str
     priorities: str
-    basic_audit_instructions: tuple   # заменено с List[str] на tuple
-    forbidden: tuple                  # заменено с List[str] на tuple
-    ip_ceiling: float = 2.5           # добавлено
+    basic_audit_instructions: tuple
+    forbidden: tuple
+    ip_ceiling: float = 2.5
 
 
 @dataclass(frozen=True)
 class DomainConfig:
     """Конфигурация домена."""
+
     name: str
     system_rules: str
     tone: str
     allow_storytelling: bool = True
     allow_marketing: bool = True
-    tasks: tuple = field(default_factory=tuple)          # добавлено
-    constraints: tuple = field(default_factory=tuple)    # добавлено
-    ip_ceiling: Optional[float] = None                   # добавлено
-    # НОВОЕ: переопределения лимитов для KB-блоков
+    tasks: tuple = field(default_factory=tuple)
+    constraints: tuple = field(default_factory=tuple)
+    ip_ceiling: Optional[float] = None
     kb_limits: Dict[str, int] = field(default_factory=dict)
-    # NEW: поля для разрешения конфликтов и приоритетов
     priority: int = 100
     suppresses: tuple = field(default_factory=tuple)
     conflicts_with: tuple = field(default_factory=tuple)
     incompatible_intents: tuple = field(default_factory=tuple)
     incompatible_overlays: tuple = field(default_factory=tuple)
-    # НОВОЕ: уровень глубины структурного редактирования (дорожная карта)
     edit_level: str = "processing"
 
 
 @dataclass(frozen=True)
 class IntentConfig:
     """Конфигурация цели обработки."""
+
     name: str
-    instructions: List[str]    # пока оставляем List[str]
-    # NEW: поля для разрешения конфликтов и приоритетов
+    instructions: List[str]
     priority: int = 50
     suppresses: tuple = field(default_factory=tuple)
     conflicts_with: tuple = field(default_factory=tuple)
@@ -145,10 +149,10 @@ class IntentConfig:
 @dataclass(frozen=True)
 class OverlayConfig:
     """Конфигурация оверлея."""
+
     name: str
-    instructions: tuple                      # заменено с List[str] на tuple
-    conflicts_with: tuple = field(default_factory=tuple)   # добавлено
-    # NEW: поля для разрешения конфликтов и приоритетов
+    instructions: tuple
+    conflicts_with: tuple = field(default_factory=tuple)
     priority: int = 70
     suppresses: tuple = field(default_factory=tuple)
 
@@ -156,6 +160,7 @@ class OverlayConfig:
 @dataclass(frozen=True)
 class AudienceProfile:
     """Профиль аудитории."""
+
     kind: str
     expertise: str
     formality: str
@@ -163,8 +168,9 @@ class AudienceProfile:
 
 
 # ============================================================================
-# ИЗМЕНЕНИЕ: KnowledgeBase теперь динамический контейнер
+# KnowledgeBase — динамический контейнер блоков
 # ============================================================================
+
 
 class KnowledgeBase:
     """
@@ -217,8 +223,9 @@ class KnowledgeBase:
 
 
 # ============================================================================
-# ТП-3: LimitsConfig — лимиты выдачи и кандидатов
+# LimitsConfig — лимиты выдачи и кандидатов
 # ============================================================================
+
 
 @dataclass(frozen=True)
 class LimitsConfig:
@@ -241,9 +248,8 @@ class LimitsConfig:
     glossary: int = 10
     stop_words_category: int = 15
     stop_words_items: int = 5
-    nkrj: int = 4  # НОВОЕ: лимит для блока nkrj (глобальный дефолт)
-    casestudy: int = 4  # НОВОЕ: лимит для жанрового блока бизнес-кейса
-    # НОВОЕ: лимит для блока техник работы с оценками
+    nkrj: int = 4
+    casestudy: int = 4
     evaluation_techniques: int = 8
 
     grammar_candidates: Optional[int] = None
@@ -255,8 +261,9 @@ class LimitsConfig:
 
 
 # ============================================================================
-# ТП-1: KnowledgeLevel — режим включения блоков знаний
+# KnowledgeLevel — режим включения блоков знаний
 # ============================================================================
+
 
 class KnowledgeLevel(str, Enum):
     """
@@ -312,7 +319,7 @@ _LEVEL_BLOCKS: Dict[KnowledgeLevel, Set[str]] = {
         "rhetoric",
         "editorial",
         "casestudy",
-        "evaluation_techniques",   # НОВОЕ
+        "evaluation_techniques",
     },
 }
 
@@ -323,8 +330,9 @@ def blocks_allowed_at_level(level: KnowledgeLevel) -> Set[str]:
 
 
 # ============================================================================
-# ТП-1: KnowledgeBlockPlan
+# KnowledgeBlockPlan
 # ============================================================================
+
 
 @dataclass
 class KnowledgeBlockPlan:
@@ -351,8 +359,9 @@ class KnowledgeBlockPlan:
 
 
 # ============================================================================
-# ТП-1: BlockBudget, KnowledgeBudget, KnowledgeBudgetManager
+# BlockBudget, KnowledgeBudget, KnowledgeBudgetManager
 # ============================================================================
+
 
 @dataclass(frozen=True)
 class BlockBudget:
@@ -397,7 +406,7 @@ class KnowledgeBudget:
         "stop_words",
         "nkrj",
         "casestudy",
-        "evaluation_techniques",  # НОВОЕ
+        "evaluation_techniques",
     )
 
     def __init__(self, budgets: Dict[str, BlockBudget]) -> None:
@@ -479,12 +488,16 @@ class KnowledgeBudgetManager:
 
         n_enabled = len(enabled_set) or 1
         per_block_chars: Optional[int] = (
-            self._char_budget // n_enabled if self._char_budget is not None else None
+            self._char_budget // n_enabled
+            if self._char_budget is not None
+            else None
         )
 
-        # ИЗМЕНЕНИЕ (Итерация 5): блок отключается, если entry_limit == 0
         def _blk(name: str, entry_limit: int) -> BlockBudget:
-            is_enabled = (level == KnowledgeLevel.FULL or name in allowed) and entry_limit > 0
+            # Блок отключается, если его entry_limit равен нулю
+            is_enabled = (
+                level == KnowledgeLevel.FULL or name in allowed
+            ) and entry_limit > 0
             return BlockBudget(
                 entry_limit=entry_limit,
                 char_budget=per_block_chars if is_enabled else None,
@@ -509,14 +522,17 @@ class KnowledgeBudgetManager:
                 "stop_words": _blk("stop_words", limits.stop_words_category),
                 "nkrj": _blk("nkrj", limits.nkrj),
                 "casestudy": _blk("casestudy", limits.casestudy),
-                "evaluation_techniques": _blk("evaluation_techniques", limits.evaluation_techniques),
+                "evaluation_techniques": _blk(
+                    "evaluation_techniques", limits.evaluation_techniques
+                ),
             }
         )
 
 
 # ============================================================================
-# ФП-1: CachePolicy и FileCache
+# CachePolicy и FileCache
 # ============================================================================
+
 
 @dataclass
 class CachePolicy:
@@ -549,7 +565,7 @@ class _CacheEntry(Generic[V]):
 
 class FileCache:
     """
-    Кэш файловых данных с поддержкой TTL и mtime-инвалидации (ФП-1).
+    Кэш файловых данных с поддержкой TTL и mtime-инвалидации.
 
     Использование:
         cache = FileCache(policy=CachePolicy(check_mtime=True))
@@ -633,7 +649,10 @@ class FileCache:
 
         if entry is not None:
             if self._policy.ttl_seconds is not None:
-                if time.monotonic() - entry.loaded_at > self._policy.ttl_seconds:
+                if (
+                    time.monotonic() - entry.loaded_at
+                    > self._policy.ttl_seconds
+                ):
                     entry = None
 
             if (
@@ -643,7 +662,11 @@ class FileCache:
             ):
                 try:
                     current_max = max(
-                        (path.stat().st_mtime for path in paths if path.exists()),
+                        (
+                            path.stat().st_mtime
+                            for path in paths
+                            if path.exists()
+                        ),
                         default=0.0,
                     )
                     if current_max != entry.mtime_at_load:
@@ -685,6 +708,7 @@ class FileCache:
 # Tag constants и helpers
 # ============================================================================
 
+
 def _load_canonical_tags() -> Dict[str, Dict[str, Any]]:
     """
     Загружает CANONICAL_TAGS из config/tag_map.json.
@@ -702,9 +726,12 @@ def _load_canonical_tags() -> Dict[str, Dict[str, Any]]:
     try:
         with open(tag_map_path, encoding="utf-8") as f:
             return json.load(f)
-    except Exception as e:
+    except (json.JSONDecodeError, OSError) as e:
+        # Файл есть, но невалидный JSON или недоступен для чтения.
+        # Это не критично: CANONICAL_TAGS просто останется пустым.
         logger.error("Failed to load tag_map.json: %s", e)
         return {}
+
 
 CANONICAL_TAGS: Dict[str, Dict[str, Any]] = _load_canonical_tags()
 
@@ -753,7 +780,9 @@ def get_canonical_tags_for_category(category: str, value: str) -> List[str]:
     data = CANONICAL_TAGS.get(category, {}).get(norm_value)
 
     if isinstance(data, dict):
-        return normalize_tags(data.get("primary", []) + data.get("expanded", []))
+        return normalize_tags(
+            data.get("primary", []) + data.get("expanded", [])
+        )
     if isinstance(data, list):
         return normalize_tags(data)
     return normalize_tags([norm_value])
@@ -794,8 +823,9 @@ def get_expanded_tags_for_category(category: str, value: str) -> List[str]:
 
 
 # ============================================================================
-# NEW: Explainability structures for third iteration
+# Explainability structures
 # ============================================================================
+
 
 @dataclass
 class FeatureResolutionResult:
@@ -803,6 +833,7 @@ class FeatureResolutionResult:
     Канонический результат разрешения фич с explainability.
     Используется внутри prompt_builder и валидации.
     """
+
     tags: List[str]
     effective_intent: Optional[str]
     effective_overlays: List[str]
@@ -818,12 +849,12 @@ class FeatureResolutionResult:
     editorial_enabled: bool
 
     # Explainability
-    activated_features: List[str] = field(default_factory=list)          # какие фичи активированы (имена: storytelling, marketing, ...)
-    suppressed_features: List[str] = field(default_factory=list)         # какие фичи подавлены
-    activation_reasons: Dict[str, List[str]] = field(default_factory=dict)  # feature -> list of ReasonCode
-    suppression_reasons: Dict[str, List[str]] = field(default_factory=dict) # feature -> list of ReasonCode
-    recognized_aliases: Dict[str, List[str]] = field(default_factory=dict)   # feature -> list of recognized alias strings
-    ignored_unknown_values: List[str] = field(default_factory=list)      # unknown intent/overlay values
+    activated_features: List[str] = field(default_factory=list)
+    suppressed_features: List[str] = field(default_factory=list)
+    activation_reasons: Dict[str, List[str]] = field(default_factory=dict)
+    suppression_reasons: Dict[str, List[str]] = field(default_factory=dict)
+    recognized_aliases: Dict[str, List[str]] = field(default_factory=dict)
+    ignored_unknown_values: List[str] = field(default_factory=list)
 
     def to_dict(self) -> Dict[str, Any]:
         """
@@ -842,7 +873,6 @@ class FeatureResolutionResult:
             "rhetoric_enabled": self.rhetoric_enabled,
             "nkrj_enabled": self.nkrj_enabled,
             "editorial_enabled": self.editorial_enabled,
-            # Новые диагностические поля
             "activated_features": self.activated_features,
             "suppressed_features": self.suppressed_features,
             "activation_reasons": self.activation_reasons,
@@ -857,13 +887,14 @@ class AssemblyBlockDiagnostics:
     """
     Диагностика для одного блока знаний: решение о включении и результат.
     """
-    name: str                     # идентификатор блока (grammar, storytelling, ...)
-    eligible: bool                # может ли блок быть включён (по фичам и бюджету)
-    included: bool                # реально ли включён в итоговый промпт
-    reason_codes: List[str]       # причины решения (ReasonCode)
-    empty: bool = False           # если блок был построен, но дал пустой результат
-    char_count: int = 0           # длина блока в символах (если включён)
-    entries_count: int = 0        # сколько записей из KB использовано (для списочных блоков)
+
+    name: str
+    eligible: bool
+    included: bool
+    reason_codes: List[str]
+    empty: bool = False
+    char_count: int = 0
+    entries_count: int = 0
 
 
 @dataclass
@@ -872,6 +903,7 @@ class AssemblyTrace:
     Полная диагностика сборки knowledge blocks.
     Содержит список диагностик для всех блоков и общую статистику.
     """
+
     blocks: List[AssemblyBlockDiagnostics] = field(default_factory=list)
     total_chars: int = 0
     total_blocks_eligible: int = 0

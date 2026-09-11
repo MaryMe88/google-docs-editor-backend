@@ -51,7 +51,8 @@ ALLOWED_OVERLAYS: Final[Set[str]] = _scan_config_files("overlays")
 ALLOWED_OUTPUT_MODES: Final[Set[str]] = {"text_only", "text_and_report"}
 
 # PR-1 (НП-4): ALLOWED_PROVIDERS выводится из LLMProvider — единственный источник правды.
-# При добавлении нового провайдера достаточно добавить значение в LLMProvider enum.
+# При добавлении нового провайдера достаточно добавить значение в
+# LLMProvider enum.
 ALLOWED_PROVIDERS: Final[Set[str]] = {p.value for p in LLMProvider}
 
 ALLOWED_KIND: Final[Set[str]] = {"b2b", "b2c", "mixed", "custom"}

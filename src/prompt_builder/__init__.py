@@ -1,15 +1,21 @@
-﻿# src/prompt_builder/__init__.py
+# src/prompt_builder/__init__.py
 """
 Публичный API пакета prompt_builder.
+
+Здесь реэкспортируются только публичные имена (без `_`-префикса).
+Приватные вспомогательные функции доступны напрямую из подмодулей,
+например:
+    from src.prompt_builder.kb_rendering import _process_kb_block
+    from src.prompt_builder.normalization import _is_incompatible_intent
+
+Это позволяет тестам и внутреннему коду использовать их, не превращая
+в часть публичного API пакета.
 """
 
 from .normalization import (
     normalize_intent,
     normalize_overlays,
     normalize_string_list,
-    _is_incompatible_intent,
-    _is_incompatible_overlay,
-    _normalize_overlay_ref,
 )
 
 from .defaults import (
@@ -17,8 +23,6 @@ from .defaults import (
     ALLOWED_EDIT_LEVELS,
     KB_LIMIT_MIN,
     KB_LIMIT_MAX,
-    _DEFAULT_DOMAIN_CONFIG,
-    _make_default_overlay_config,
 )
 
 from .config_loaders import (
@@ -31,41 +35,18 @@ from .config_loaders import (
     load_output_format,
 )
 
-from .kb_loading import _load_kb_file, load_knowledge_base
+from .kb_loading import load_knowledge_base
 
 from .kb_rendering import (
     KBBlockConfig,
     KB_BLOCK_REGISTRY,
     DEFAULT_CANDIDATE_LIMIT,
-    _collect_retrieval_tags,
-    _append_rule_entries,
-    _append_structural_entries,
-    _append_editorial_entries,
-    _append_case_study_entries,
-    _append_evaluation_techniques,
-    _append_glossary,
-    _append_nkrj,
-    _warn_if_empty_retrieval,
-    _process_kb_block,
-    _has_few_shot_pair,
-    _format_few_shot_example,
-    _select_few_shot_examples,
-    _derive_seed,
-    _unpack_retrieval_result,
-    _get_confidence_note,
+    ProcessContext,
 )
 
-from .feature_resolution import (
-    resolve_prompt_features,
-    _build_overlay_slug_map,
-    _add_activation_reason,
-    _add_suppression_reason,
-    _add_recognized_alias,
-    _add_ignored_unknown,
-    _TAG_TO_FEATURE,
-)
+from .feature_resolution import resolve_prompt_features
 
-from .builder import PromptBuilder
+from .builder import PromptBuilder, KnowledgeBlockRequest
 
 # Реэкспорт из config_types для обратной совместимости
 from src.config_types import (
@@ -89,7 +70,7 @@ from src.config_types import (
     get_primary_tags_for_category,
 )
 
-# Реэкспорт из shared_contracts (были доступны в старом prompt_builder)
+# Реэкспорт из shared_contracts
 from src.shared_contracts import (
     ALLOWED_DOMAINS,
     ALLOWED_INTENTS,
@@ -100,10 +81,69 @@ from src.shared_contracts import (
 # Реэкспорт из reason_codes
 from src.reason_codes import ReasonCode
 
-# Реэкспорт из registry (если нужен в тестах)
+# Реэкспорт из registry
 from src.registry import (
     CANONICAL_FEATURE_ALIASES,
     KNOWN_FEATURE_ALIASES,
     get_features_from_tags,
     check_alias_consistency,
 )
+
+__all__ = [
+    # Основной класс и dataclass запроса
+    "PromptBuilder",
+    "KnowledgeBlockRequest",
+    # Загрузчики конфигов
+    "load_core_config",
+    "load_domain_config",
+    "load_intent_config",
+    "load_overlay_config",
+    "load_overlay_configs",
+    "load_output_format",
+    # Загрузка KB
+    "load_knowledge_base",
+    "KBBlockConfig",
+    "KB_BLOCK_REGISTRY",
+    "DEFAULT_CANDIDATE_LIMIT",
+    "ProcessContext",
+    # Нормализация
+    "normalize_intent",
+    "normalize_overlays",
+    "normalize_string_list",
+    # Разрешение фич
+    "resolve_prompt_features",
+    "get_features_from_tags",
+    "check_alias_consistency",
+    # Типы из config_types
+    "AudienceProfile",
+    "CoreConfig",
+    "DomainConfig",
+    "IntentConfig",
+    "OverlayConfig",
+    "KnowledgeBase",
+    "KnowledgeBudget",
+    "KnowledgeBudgetManager",
+    "KnowledgeLevel",
+    "LimitsConfig",
+    "BlockBudget",
+    "CachePolicy",
+    "FileCache",
+    "FeatureResolutionResult",
+    "AssemblyBlockDiagnostics",
+    "AssemblyTrace",
+    # Константы
+    "ALLOWED_DOMAINS",
+    "ALLOWED_INTENTS",
+    "ALLOWED_OVERLAYS",
+    "ALLOWED_OUTPUT_MODES",
+    "ReasonCode",
+    "CANONICAL_FEATURE_ALIASES",
+    "KNOWN_FEATURE_ALIASES",
+    "get_canonical_tags_for_category",
+    "get_primary_tags_for_category",
+    # Границы лимитов
+    "ALLOWED_KB_LIMIT_KEYS",
+    "ALLOWED_EDIT_LEVELS",
+    "KB_LIMIT_MIN",
+    "KB_LIMIT_MAX",
+]

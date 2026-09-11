@@ -10,7 +10,12 @@ import logging
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence
 
-from src.config_types import CoreConfig, DomainConfig, IntentConfig, OverlayConfig
+from src.config_types import (
+    CoreConfig,
+    DomainConfig,
+    IntentConfig,
+    OverlayConfig,
+)
 from src.tag_registry import normalize_tag
 from .normalization import normalize_string_list
 from .defaults import (
@@ -48,20 +53,25 @@ def load_core_config(base_path: Path = Path("config")) -> CoreConfig:
     return CoreConfig(
         role=data.get("role", "You are a careful Russian editor."),
         priorities=data.get("priorities", "clarity, accuracy, readability"),
-        basic_audit_instructions=tuple(data.get("basic_audit_instructions", [])),
+        basic_audit_instructions=tuple(
+            data.get("basic_audit_instructions", [])
+        ),
         forbidden=tuple(data.get("forbidden", [])),
         ip_ceiling=ip_ceiling_value,
     )
 
 
-def load_domain_config(domain: str, base_path: Path = Path("config")) -> DomainConfig:
+def load_domain_config(
+    domain: str, base_path: Path = Path("config")
+) -> DomainConfig:
     normalized_domain = domain.strip().lower()
     domain_path = base_path / "domains" / f"{normalized_domain}.json"
     if not domain_path.exists():
         logger.warning(
             "load_domain_config: file not found for domain=%r at %s — "
             "using default domain config.",
-            normalized_domain, domain_path,
+            normalized_domain,
+            domain_path,
         )
         return _DEFAULT_DOMAIN_CONFIG
     data = load_json_file(domain_path)
@@ -80,36 +90,65 @@ def load_domain_config(domain: str, base_path: Path = Path("config")) -> DomainC
         domain_name = data.get("name", normalized_domain)
         for k, v in raw_kb_limits.items():
             if not isinstance(k, str):
-                logger.warning("kb_limits[%r] в домене '%s': ключ не строка — пропущен", k, domain_name)
+                logger.warning(
+                    "kb_limits[%r] в домене '%s': ключ не строка — пропущен",
+                    k,
+                    domain_name,
+                )
                 continue
             if k not in ALLOWED_KB_LIMIT_KEYS:
                 logger.warning(
-                    "kb_limits: неизвестный ключ '%s' в домене '%s' — проигнорирован. "
-                    "Допустимые: %s",
-                    k, domain_name, ", ".join(sorted(ALLOWED_KB_LIMIT_KEYS))
+                    "kb_limits: неизвестный ключ '%s' в домене '%s' — "
+                    "проигнорирован. Допустимые: %s",
+                    k,
+                    domain_name,
+                    ", ".join(sorted(ALLOWED_KB_LIMIT_KEYS)),
                 )
                 continue
             if not isinstance(v, (int, float)) or isinstance(v, bool):
-                logger.warning("kb_limits['%s'] в домене '%s': значение %r не число — пропущено", k, domain_name, v)
+                logger.warning(
+                    "kb_limits['%s'] в домене '%s': значение %r не число — "
+                    "пропущено",
+                    k,
+                    domain_name,
+                    v,
+                )
                 continue
             value = int(v)
             clamped = max(KB_LIMIT_MIN, min(KB_LIMIT_MAX, value))
             if clamped != value:
-                logger.warning("kb_limits['%s']=%d в домене '%s' вне диапазона [%d, %d] — приведено к %d",
-                               k, value, domain_name, KB_LIMIT_MIN, KB_LIMIT_MAX, clamped)
+                logger.warning(
+                    "kb_limits['%s']=%d в домене '%s' вне диапазона [%d, %d] — "
+                    "приведено к %d",
+                    k,
+                    value,
+                    domain_name,
+                    KB_LIMIT_MIN,
+                    KB_LIMIT_MAX,
+                    clamped,
+                )
             kb_limits[k] = clamped
 
     priority = data.get("priority", 100)
     if not isinstance(priority, int):
         priority = 100
     suppresses = tuple(normalize_string_list(data.get("suppresses", [])))
-    conflicts_with = tuple(normalize_string_list(data.get("conflicts_with", [])))
-    incompatible_intents = tuple(normalize_string_list(data.get("incompatible_intents", [])))
-    incompatible_overlays = tuple(normalize_string_list(data.get("incompatible_overlays", [])))
+    conflicts_with = tuple(
+        normalize_string_list(data.get("conflicts_with", []))
+    )
+    incompatible_intents = tuple(
+        normalize_string_list(data.get("incompatible_intents", []))
+    )
+    incompatible_overlays = tuple(
+        normalize_string_list(data.get("incompatible_overlays", []))
+    )
 
     # ---- edit_level (НОВОЕ) ----
     raw_edit_level = data.get("edit_level", "processing")
-    if not isinstance(raw_edit_level, str) or raw_edit_level not in ALLOWED_EDIT_LEVELS:
+    if (
+        not isinstance(raw_edit_level, str)
+        or raw_edit_level not in ALLOWED_EDIT_LEVELS
+    ):
         logger.warning(
             "load_domain_config: недопустимый edit_level=%r в домене '%s' — "
             "используется 'processing'. Допустимые значения: %s",
@@ -138,20 +177,27 @@ def load_domain_config(domain: str, base_path: Path = Path("config")) -> DomainC
     )
 
 
-def load_intent_config(intent: Optional[str], base_path: Path = Path("config")) -> Optional[IntentConfig]:
+def load_intent_config(
+    intent: Optional[str], base_path: Path = Path("config")
+) -> Optional[IntentConfig]:
     if intent is None or intent == "neutral":
         return None
     normalized = normalize_tag(intent)
     intent_path = base_path / "intents" / f"{normalized}.json"
     if not intent_path.exists():
-        logger.warning("load_intent_config: file not found for intent=%r — skipping.", normalized)
+        logger.warning(
+            "load_intent_config: file not found for intent=%r — skipping.",
+            normalized,
+        )
         return None
     data = load_json_file(intent_path)
     priority = data.get("priority", 50)
     if not isinstance(priority, int):
         priority = 50
     suppresses = tuple(normalize_string_list(data.get("suppresses", [])))
-    conflicts_with = tuple(normalize_string_list(data.get("conflicts_with", [])))
+    conflicts_with = tuple(
+        normalize_string_list(data.get("conflicts_with", []))
+    )
     return IntentConfig(
         name=data.get("name", normalized),
         instructions=tuple(data.get("instructions", [])),
@@ -161,17 +207,24 @@ def load_intent_config(intent: Optional[str], base_path: Path = Path("config")) 
     )
 
 
-def load_overlay_config(overlay: str, base_path: Path = Path("config")) -> OverlayConfig:
+def load_overlay_config(
+    overlay: str, base_path: Path = Path("config")
+) -> OverlayConfig:
     overlay_path = base_path / "overlays" / f"{overlay}.json"
     if not overlay_path.exists():
-        logger.warning("load_overlay_config: file not found for overlay=%r — using default.", overlay)
+        logger.warning(
+            "load_overlay_config: file not found for overlay=%r — using default.",
+            overlay,
+        )
         return _make_default_overlay_config(overlay)
     data = load_json_file(overlay_path)
     priority = data.get("priority", 70)
     if not isinstance(priority, int):
         priority = 70
     suppresses = tuple(normalize_string_list(data.get("suppresses", [])))
-    conflicts_with = tuple(normalize_string_list(data.get("conflicts_with", [])))
+    conflicts_with = tuple(
+        normalize_string_list(data.get("conflicts_with", []))
+    )
     return OverlayConfig(
         name=data.get("name", overlay),
         instructions=tuple(data.get("instructions", [])),
@@ -181,18 +234,26 @@ def load_overlay_config(overlay: str, base_path: Path = Path("config")) -> Overl
     )
 
 
-def load_overlay_configs(overlays: Sequence[str], base_path: Path = Path("config")) -> List[OverlayConfig]:
+def load_overlay_configs(
+    overlays: Sequence[str], base_path: Path = Path("config")
+) -> List[OverlayConfig]:
     return [load_overlay_config(ov, base_path) for ov in overlays]
 
 
 def load_output_format(mode: str, base_path: Path = Path("config")) -> str:
     data = load_json_file(base_path / "output_format.json")
-    mode_instruction = data.get(mode, data.get("text_only", "Верни только отредактированный текст."))
+    mode_instruction = data.get(
+        mode, data.get("text_only", "Верни только отредактированный текст.")
+    )
     global_rules = data.get("global_formatting_rules", {})
     known_keys = {"allowed_formatting"}
     unknown_keys = set(global_rules.keys()) - known_keys
     if unknown_keys:
-        logger.warning("load_output_format: ключи %s в 'global_formatting_rules' не используются.", unknown_keys)
+        logger.warning(
+            "load_output_format: ключи %s в 'global_formatting_rules' не "
+            "используются.",
+            unknown_keys,
+        )
     if not global_rules:
         return mode_instruction
     global_parts: List[str] = []

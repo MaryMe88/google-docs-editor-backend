@@ -20,8 +20,12 @@ import numpy as np
 logger = logging.getLogger(__name__)
 
 # Путь к кешу embeddings рядом с папкой knowledge_base
-_CACHE_PATH = Path(__file__).parent.parent / "knowledge_base" / "kb_embeddings.npy"
-_CACHE_META_PATH = Path(__file__).parent.parent / "knowledge_base" / "kb_embeddings_meta.json"
+_CACHE_PATH = (
+    Path(__file__).parent.parent / "knowledge_base" / "kb_embeddings.npy"
+)
+_CACHE_META_PATH = (
+    Path(__file__).parent.parent / "knowledge_base" / "kb_embeddings_meta.json"
+)
 
 # Type aliases
 SemanticEntry = dict[str, Any]
@@ -40,7 +44,7 @@ class SemanticIndex:
 
     def __init__(self, model_name: str = "cointegrated/rubert-tiny2") -> None:
         self.model_name = model_name
-        self._model = None          # ленивая загрузка
+        self._model = None  # ленивая загрузка
         self.entries: list[SemanticEntry] = []
         self.embeddings: np.ndarray | None = None
         self._is_built = False
@@ -171,7 +175,9 @@ class SemanticIndex:
     def _validate_embeddings(self) -> None:
         """Проверяет согласованность embeddings и индексируемых записей."""
         if not isinstance(self.embeddings, np.ndarray):
-            raise ValueError("SemanticIndex embeddings must be a numpy.ndarray.")
+            raise ValueError(
+                "SemanticIndex embeddings must be a numpy.ndarray."
+            )
 
         if self.embeddings.dtype != np.float32:
             self.embeddings = self.embeddings.astype(np.float32, copy=False)
@@ -198,7 +204,10 @@ class SemanticIndex:
         if self._model is None:
             try:
                 from sentence_transformers import SentenceTransformer
-                logger.info("SemanticIndex: загружаю модель %s…", self.model_name)
+
+                logger.info(
+                    "SemanticIndex: загружаю модель %s…", self.model_name
+                )
                 self._model = SentenceTransformer(self.model_name)
                 logger.info("SemanticIndex: модель загружена")
             except ImportError:
@@ -221,7 +230,9 @@ class SemanticIndex:
             if isinstance(value, str) and value.strip():
                 parts.append(value.strip())
             elif isinstance(value, list):
-                parts.extend(v for v in value if isinstance(v, str) and v.strip())
+                parts.extend(
+                    v for v in value if isinstance(v, str) and v.strip()
+                )
         return " ".join(parts)
 
     def _load_cache(self, expected_count: int) -> bool:
@@ -236,15 +247,19 @@ class SemanticIndex:
             if meta.get("count") != expected_count:
                 logger.debug(
                     "SemanticIndex: кеш устарел (count %s != %s)",
-                    meta.get("count"), expected_count,
+                    meta.get("count"),
+                    expected_count,
                 )
                 return False
 
             if meta.get("model") != self.model_name:
-                logger.debug("SemanticIndex: кеш от другой модели, пересчитываю")
+                logger.debug(
+                    "SemanticIndex: кеш от другой модели, пересчитываю"
+                )
                 return False
 
-            # SEC-патч 4.1: явный allow_pickle=False
+            # SEC: явный allow_pickle=False — защита от исполнения
+            # произвольного кода при загрузке .npy из недоверенного источника.
             loaded_embeddings = np.load(
                 str(_CACHE_PATH),
                 allow_pickle=False,
@@ -277,7 +292,9 @@ class SemanticIndex:
 
             return True
 
-        except Exception as exc:
+        except (OSError, json.JSONDecodeError, ValueError, TypeError) as exc:
+            # Файл кеша повреждён, недоступен или имеет неверный формат —
+            # не критично, embeddings будут пересчитаны заново.
             logger.warning("SemanticIndex: не удалось загрузить кеш: %s", exc)
             return False
 
@@ -285,11 +302,17 @@ class SemanticIndex:
         """Сохраняет embeddings и метаданные на диск."""
         try:
             np.save(str(_CACHE_PATH), self.embeddings)
-            meta = {"count": count, "model": self.model_name, "built_at": time.time()}
+            meta = {
+                "count": count,
+                "model": self.model_name,
+                "built_at": time.time(),
+            }
             with _CACHE_META_PATH.open("w", encoding="utf-8") as f:
                 json.dump(meta, f, ensure_ascii=False, indent=2)
             logger.info("SemanticIndex: кеш сохранён (%s)", _CACHE_PATH)
-        except Exception as exc:
+        except (OSError, ValueError, TypeError) as exc:
+            # Не удалось записать кеш (диск, права доступа, формат) —
+            # не критично, индекс остаётся в памяти.
             logger.warning("SemanticIndex: не удалось сохранить кеш: %s", exc)
 
 
@@ -297,7 +320,7 @@ class SemanticIndex:
 # Глобальный экземпляр (singleton) — инициализируется в main.py
 # ------------------------------------------------------------------
 _global_index: SemanticIndex | None = None
-_entries_for_index: list[dict[str, Any]] | None = None  # для ленивой инициализации
+_entries_for_index: list[dict[str, Any]] | None = None
 
 
 def get_semantic_index() -> SemanticIndex | None:
@@ -312,7 +335,10 @@ def set_semantic_entries(entries: list[dict[str, Any]]) -> None:
     """
     global _entries_for_index
     _entries_for_index = entries
-    logger.info("SemanticIndex: сохранено %d записей для ленивой инициализации", len(entries))
+    logger.info(
+        "SemanticIndex: сохранено %d записей для ленивой инициализации",
+        len(entries),
+    )
 
 
 def init_semantic_index(
@@ -328,5 +354,7 @@ def init_semantic_index(
     index = SemanticIndex(model_name=model_name)
     index.build(all_entries, force_rebuild=force_rebuild)
     _global_index = index
-    logger.info("SemanticIndex: глобальный индекс готов (%d записей)", len(all_entries))
+    logger.info(
+        "SemanticIndex: глобальный индекс готов (%d записей)", len(all_entries)
+    )
     return index

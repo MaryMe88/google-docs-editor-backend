@@ -126,17 +126,19 @@ def _extract_upstream_status(error: LLMError) -> Optional[int]:
     if hasattr(error, "status_code") and isinstance(error.status_code, int):
         return error.status_code
     cause = error.__cause__
-    if cause is not None and hasattr(cause, "status_code") and isinstance(cause.status_code, int):
+    if (
+        cause is not None
+        and hasattr(cause, "status_code")
+        and isinstance(cause.status_code, int)
+    ):
         return cause.status_code
     return None
 
 
 def _classify_error(error: LLMError) -> str:
     """Классифицирует ошибку для LLMFallbackError."""
-    # Проверяем на invalid_response (приоритет выше общего upstream_error)
     if isinstance(error, LLMInvalidResponseError):
         return "invalid_response"
-    # Проверяем цепочку причин
     if error.__cause__:
         cause = error.__cause__
         if isinstance(cause, LLMInvalidResponseError):
@@ -150,7 +152,6 @@ def _classify_error(error: LLMError) -> str:
         return "timeout"
     if isinstance(error, LLMAPIError):
         status = _extract_upstream_status(error)
-        # Проверяем rate_limit по статусу 429 (может быть обёрнут в LLMAPIError)
         if status == 429:
             return "rate_limit"
         if status == 401 or status == 403:
@@ -161,13 +162,19 @@ def _classify_error(error: LLMError) -> str:
             return "upstream_error"
         if status == 400:
             msg = str(error).lower()
-            if any(phrase in msg for phrase in (
-                "context length", "context window", "maximum context",
-                "max tokens", "token limit", "too many tokens"
-            )):
+            if any(
+                phrase in msg
+                for phrase in (
+                    "context length",
+                    "context window",
+                    "maximum context",
+                    "max tokens",
+                    "token limit",
+                    "too many tokens",
+                )
+            ):
                 return "context_limit"
         return "upstream_error"
-    # Проверяем цепочку причин для timeout
     if error.__cause__:
         cause = error.__cause__
         if isinstance(cause, httpx.TimeoutException):
@@ -176,50 +183,26 @@ def _classify_error(error: LLMError) -> str:
 
 
 def _backoff_with_jitter(base_delay: float, attempt: int) -> float:
-    """
-    Экспоненциальный backoff с полным jitter.
-
-    Формула: uniform(0, base_delay * 2^attempt).
-    Full jitter лучше рассеивает повторные запросы при пиковой нагрузке,
-    чем равномерный или additive jitter.
-
-    SEC: используется random.uniform — намеренно, не secrets.
-    Jitter не является security-critical: его цель — рассеять
-    нагрузку при retry, а не генерировать непредсказуемые токены.
-    Криптографическая стойкость здесь не требуется.
-    """
-    cap = base_delay * (2 ** attempt)
+    cap = base_delay * (2**attempt)
     return random.uniform(0, cap)  # noqa: S311
 
 
-# ---------------------------------------------------------------------------
-# Адаптивный расчёт max_tokens (legacy, используется как fallback)
-# ---------------------------------------------------------------------------
 _DEFAULT_MAX_TOKENS = 6000
 _MIN_MAX_TOKENS = 1536
 _MAX_MAX_TOKENS = 12000
-
 _CHARS_PER_TOKEN = 4
 _RESPONSE_BUDGET_MULTIPLIER = 1.35
 
 
 def estimate_max_tokens(prompt: str) -> int:
-    """Оценивает разумный max_tokens исходя из длины промпта.
-
-    Для коротких промптов возвращает нижнюю границу. Для длинных —
-    масштабирует бюджет ответа пропорционально оценке входа, но
-    ограничивает результат диапазоном [_MIN_MAX_TOKENS, _MAX_MAX_TOKENS].
-    """
     prompt_length = max(len(prompt), 0)
     estimated_input_tokens = prompt_length // _CHARS_PER_TOKEN
     response_budget = int(estimated_input_tokens * _RESPONSE_BUDGET_MULTIPLIER)
 
     if response_budget < _MIN_MAX_TOKENS:
         return _MIN_MAX_TOKENS
-
     if response_budget > _MAX_MAX_TOKENS:
         return _MAX_MAX_TOKENS
-
     return response_budget
 
 
@@ -242,7 +225,9 @@ class BaseLLMClient(ABC):
                     return err
                 return "API error"
             return f"HTTP {response.status_code}"
-        except Exception:
+        except (ValueError, KeyError, TypeError):
+            # Response body не является корректным JSON-объектом с ожидаемой
+            # структурой. Возвращаем fallback-сообщение по HTTP-статусу.
             return f"HTTP {response.status_code}"
 
     async def __aenter__(self) -> BaseLLMClient:
@@ -279,13 +264,12 @@ class BaseLLMClient(ABC):
 
                 response = await self.call_api(prompt)
 
-                # ИСПРАВЛЕНИЕ: добавляем actual_model и estimated_input_tokens в лог
                 logger.info(
                     "LLM request successful",
                     extra={
                         "provider": self.config.provider.value,
                         "model": self.config.model,
-                        "actual_model": response.model,  # может отличаться от запрошенного
+                        "actual_model": response.model,
                         "prompt_length": len(prompt),
                         "estimated_input_tokens": len(prompt) // _CHARS_PER_TOKEN,
                         "max_tokens": self.config.max_tokens,
@@ -334,12 +318,12 @@ class BaseLLMClient(ABC):
                     raise
 
             except LLMInvalidResponseError as error:
-                # НОВОЕ: повторная попытка при пустом или некорректном ответе
                 last_error = error
                 delay = self._sleep_delay_for(attempt)
                 if delay is not None:
                     logger.warning(
-                        "Invalid response (empty or malformed), retrying in %.2f seconds",
+                        "Invalid response (empty or malformed), retrying "
+                        "in %.2f seconds",
                         delay,
                         extra={"attempt": attempt + 1, "reason": error.reason_code},
                     )
@@ -405,7 +389,11 @@ class _OpenAICompatibleClient(BaseLLMClient):
 
     def parse_response(self, data: Dict[str, Any]) -> LLMResponse:
         try:
-            if "choices" not in data or not isinstance(data["choices"], list) or len(data["choices"]) == 0:
+            if (
+                "choices" not in data
+                or not isinstance(data["choices"], list)
+                or len(data["choices"]) == 0
+            ):
                 raise LLMInvalidResponseError("MISSING_CHOICES")
 
             choice = data["choices"][0]
@@ -429,7 +417,6 @@ class _OpenAICompatibleClient(BaseLLMClient):
             if "usage" in data and isinstance(data["usage"], dict):
                 tokens_used = data["usage"].get("total_tokens")
 
-            # ИСПРАВЛЕНИЕ: извлекаем фактическую модель из ответа
             actual_model = data.get("model", self.config.model)
 
             return LLMResponse(
@@ -533,7 +520,6 @@ class AnthropicClient(BaseLLMClient):
                 if isinstance(input_tokens, int) and isinstance(output_tokens, int):
                     tokens_used = input_tokens + output_tokens
 
-            # ИСПРАВЛЕНИЕ: извлекаем фактическую модель из ответа (если есть)
             actual_model = data.get("model", self.config.model)
 
             return LLMResponse(
@@ -552,15 +538,11 @@ def create_llm_client(
     provider: LLMProvider = LLMProvider.PERPLEXITY,
     model: Optional[str] = None,
     api_key: Optional[str] = None,
-    apikey: Optional[str] = None,
     temperature: float = 0.3,
     max_tokens: int = _DEFAULT_MAX_TOKENS,
     timeout: float = 60.0,
-    max_retries: int = 4,  # увеличено с 3 до 4 для дополнительной устойчивости
+    max_retries: int = 4,
 ) -> BaseLLMClient:
-    if api_key is None and apikey is not None:
-        api_key = apikey
-
     default_models = {
         LLMProvider.PERPLEXITY: "sonar-pro",
         LLMProvider.OPENAI: "gpt-4o-mini",
@@ -615,6 +597,159 @@ def create_llm_client(
     return client_class(config)
 
 
+# ============================================================================
+# Хелперы для call_with_fallback
+# ============================================================================
+
+def _resolve_provider_max_tokens(
+    provider_name: str,
+    model: Optional[str],
+    prompt: str,
+    source_text: Optional[str],
+    explicit_max_tokens: Optional[int],
+) -> Optional[int]:
+    """
+    Вычисляет max_tokens для провайдера.
+    Возвращает None, если провайдер не может обработать запрос (бюджет <= 0).
+    """
+    if explicit_max_tokens is not None:
+        return explicit_max_tokens
+
+    if source_text is not None:
+        try:
+            profile = get_context_profile_from_env(provider_name, model)
+            budget = resolve_context_budget(
+                provider=provider_name,
+                model=model,
+                prompt=prompt,
+                source_text=source_text,
+                context_window=profile.context_window,
+                safety_margin=profile.safety_margin,
+                mode=profile.mode,
+            )
+            logger.info(
+                "Context budget for %s: input_tokens=%d, requested=%d, effective=%d, capped=%s, mode=%s",
+                provider_name,
+                budget.input_tokens_estimate,
+                budget.requested_output_tokens,
+                budget.effective_output_tokens,
+                budget.was_capped,
+                budget.mode,
+            )
+            if budget.effective_output_tokens <= 0:
+                logger.warning(
+                    "Provider %s has zero effective output tokens, skipping",
+                    provider_name,
+                )
+                return None
+            return budget.effective_output_tokens
+        except LLMContextLimitError as error:
+            logger.warning(
+                "Provider %s cannot handle request: %s (mode=%s)",
+                provider_name,
+                error.reason,
+                getattr(error, "mode", "enforce"),
+            )
+            return None
+
+    # Если source_text отсутствует, используем эвристику
+    return estimate_max_tokens(prompt)
+
+
+async def _try_provider(
+    provider_enum: LLMProvider,
+    model: Optional[str],
+    prompt: str,
+    temperature: float,
+    max_retries: int,
+    max_tokens: int,
+) -> LLMResponse:
+    """
+    Пытается выполнить запрос к одному провайдеру.
+    Возвращает LLMResponse или выбрасывает исключение.
+    """
+    provider_name = provider_enum.value
+    logger.info(
+        "call_with_fallback: trying provider=%s model=%s max_tokens=%s prompt_length=%d",
+        provider_name,
+        model,
+        max_tokens,
+        len(prompt),
+    )
+
+    async with create_llm_client(
+        provider=provider_enum,
+        model=model,
+        temperature=temperature,
+        max_retries=max_retries,
+        max_tokens=max_tokens,
+    ) as client:
+        response = await client.generate(prompt)
+
+    logger.info(
+        "call_with_fallback: success with provider=%s finish_reason=%s",
+        provider_name,
+        response.finish_reason,
+    )
+    return response
+
+
+def _build_fallback_error(
+    primary_error: Optional[LLMError],
+    primary_provider: Optional[str],
+    skipped_providers: List[str],
+    unknown_providers: List[str],
+    prompt_length: int,
+) -> LLMFallbackError:
+    """
+    Строит LLMFallbackError с классификацией и метаданными.
+    """
+    if primary_error is not None:
+        kind = _classify_error(primary_error)
+        upstream_status = _extract_upstream_status(primary_error)
+        logger.warning(
+            "All providers exhausted. primary_provider=%s, error_kind=%s, "
+            "upstream_status=%s, skipped_providers=%s, unknown_providers=%s, prompt_length=%d",
+            primary_provider,
+            kind,
+            upstream_status,
+            skipped_providers,
+            unknown_providers,
+            prompt_length,
+        )
+        return LLMFallbackError(
+            f"All providers failed. Last error from {primary_provider if primary_provider else 'none'}",
+            provider=primary_provider,
+            primary_error=primary_error,
+            skipped_providers=tuple(skipped_providers),
+            unknown_providers=tuple(unknown_providers),
+            prompt_length=prompt_length,
+            upstream_status=upstream_status,
+            kind=kind,
+        )
+    else:
+        logger.warning(
+            "All providers skipped or unknown. skipped_providers=%s, unknown_providers=%s, prompt_length=%d",
+            skipped_providers,
+            unknown_providers,
+            prompt_length,
+        )
+        return LLMFallbackError(
+            "All providers failed (no primary error)",
+            provider=None,
+            primary_error=None,
+            skipped_providers=tuple(skipped_providers),
+            unknown_providers=tuple(unknown_providers),
+            prompt_length=prompt_length,
+            upstream_status=None,
+            kind="configuration",
+        )
+
+
+# ============================================================================
+# call_with_fallback
+# ============================================================================
+
 async def call_with_fallback(
     prompt: str,
     providers: List[str],
@@ -642,14 +777,6 @@ async def call_with_fallback(
     Raises:
         LLMFallbackError: Если все провайдеры не смогли обработать запрос
     """
-    if max_tokens is None and source_text is None:
-        # Обратная совместимость: используем старую эвристику
-        max_tokens = estimate_max_tokens(prompt)
-        logger.debug("Using legacy estimate_max_tokens because source_text is None")
-    elif max_tokens is None and source_text is not None:
-        # max_tokens будет вычислен отдельно для каждого провайдера на основе бюджета
-        pass
-
     if not providers:
         raise LLMError("No providers specified. Cannot execute LLM call.")
 
@@ -662,96 +789,31 @@ async def call_with_fallback(
         try:
             provider_enum = LLMProvider(provider_name)
         except ValueError:
-            logger.warning("Unknown provider %r, skipping.", provider_name)
             unknown_providers.append(provider_name)
             continue
 
         model_for_this = model if idx == 0 else None
 
-        # Определяем max_tokens для этого провайдера
-        provider_max_tokens = max_tokens  # если явно передан
+        provider_max_tokens = _resolve_provider_max_tokens(
+            provider_name=provider_name,
+            model=model_for_this,
+            prompt=prompt,
+            source_text=source_text,
+            explicit_max_tokens=max_tokens,
+        )
 
-        if provider_max_tokens is None and source_text is not None:
-            # Используем контекстный бюджет
-            try:
-                # Получаем профиль контекста из env
-                profile = get_context_profile_from_env(provider_name, model_for_this)
-
-                # Рассчитываем бюджет
-                budget = resolve_context_budget(
-                    provider=provider_name,
-                    model=model_for_this,
-                    prompt=prompt,
-                    source_text=source_text,
-                    context_window=profile.context_window,
-                    safety_margin=profile.safety_margin,
-                    mode=profile.mode,
-                )
-
-                provider_max_tokens = budget.effective_output_tokens
-
-                # Логируем бюджет
-                logger.info(
-                    "Context budget for %s: input_tokens=%d, requested=%d, effective=%d, capped=%s, mode=%s",
-                    provider_name,
-                    budget.input_tokens_estimate,
-                    budget.requested_output_tokens,
-                    budget.effective_output_tokens,
-                    budget.was_capped,
-                    budget.mode,
-                )
-
-                # Если effective_output_tokens == 0, провайдер не может обработать запрос
-                if provider_max_tokens <= 0:
-                    logger.warning(
-                        "Provider %s has zero effective output tokens, skipping",
-                        provider_name,
-                    )
-                    skipped_providers.append(provider_name)
-                    continue
-
-            except LLMContextLimitError as error:
-                # Если режим enforce, пропускаем провайдера
-                logger.warning(
-                    "Provider %s cannot handle request: %s (mode=%s)",
-                    provider_name,
-                    error.reason,
-                    getattr(error, "mode", "enforce"),
-                )
-                skipped_providers.append(provider_name)
-                if primary_error is None:
-                    primary_error = error
-                    primary_provider = provider_name
-                continue
-        elif provider_max_tokens is None and source_text is None:
-            # Fallback: используем estimate_max_tokens (уже вычислено выше)
-            provider_max_tokens = max_tokens
-
-        # Если provider_max_tokens всё ещё None (защита)
         if provider_max_tokens is None:
-            provider_max_tokens = estimate_max_tokens(prompt)
+            skipped_providers.append(provider_name)
+            continue
 
         try:
-            logger.info(
-                "call_with_fallback: trying provider=%s model=%s max_tokens=%s prompt_length=%d source_length=%d",
-                provider_name,
-                model_for_this,
-                provider_max_tokens,
-                len(prompt),
-                len(source_text) if source_text else 0,
-            )
-            async with create_llm_client(
-                provider=provider_enum,
+            response = await _try_provider(
+                provider_enum=provider_enum,
                 model=model_for_this,
+                prompt=prompt,
                 temperature=temperature,
                 max_retries=max_retries_per_provider,
                 max_tokens=provider_max_tokens,
-            ) as client:
-                response = await client.generate(prompt)
-            logger.info(
-                "call_with_fallback: success with provider=%s finish_reason=%s",
-                provider_name,
-                response.finish_reason,
             )
             return response
 
@@ -774,50 +836,26 @@ async def call_with_fallback(
                 primary_provider = provider_name
             continue
 
-    # После исчерпания всех провайдеров — всегда выбрасываем LLMFallbackError
-    kind = "unknown"
-    upstream_status = None
-    response_reason_code = None
-    primary_error_type = None
+        except Exception as error:
+            # Осознанно широкий перехват: последний рубеж перед fallback.
+            # Неожиданные ошибки одного провайдера не должны ломать
+            # перебор остальных.
+            logger.warning(
+                "call_with_fallback: provider=%s raised unexpected error: %s",
+                provider_name,
+                type(error).__name__,
+            )
+            if primary_error is None:
+                primary_error = LLMError(f"Unexpected error: {error}")
+                primary_provider = provider_name
+            continue
 
-    if primary_error is not None:
-        kind = _classify_error(primary_error)
-        upstream_status = _extract_upstream_status(primary_error)
-        primary_error_type = type(primary_error).__name__
-        if isinstance(primary_error, LLMInvalidResponseError):
-            response_reason_code = primary_error.reason_code
-
-        logger.warning(
-            "All providers exhausted. primary_provider=%s, error_kind=%s, "
-            "upstream_status=%s, primary_error_type=%s, response_reason_code=%s, "
-            "skipped_providers=%s, unknown_providers=%s, prompt_length=%d",
-            primary_provider,
-            kind,
-            upstream_status,
-            primary_error_type,
-            response_reason_code,
-            skipped_providers,
-            unknown_providers,
-            len(prompt),
-        )
-    else:
-        kind = "configuration"
-        logger.warning(
-            "All providers skipped or unknown. skipped_providers=%s, unknown_providers=%s, prompt_length=%d",
-            skipped_providers,
-            unknown_providers,
-            len(prompt),
-        )
-
-    raise LLMFallbackError(
-        f"All providers failed. Last error from {primary_provider if primary_provider else 'none'}",
-        provider=primary_provider,
+    raise _build_fallback_error(
         primary_error=primary_error,
-        skipped_providers=tuple(skipped_providers),
-        unknown_providers=tuple(unknown_providers),
+        primary_provider=primary_provider,
+        skipped_providers=skipped_providers,
+        unknown_providers=unknown_providers,
         prompt_length=len(prompt),
-        upstream_status=upstream_status,
-        kind=kind,
     )
 
 

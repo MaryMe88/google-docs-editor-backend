@@ -3,6 +3,7 @@
 Канонический registry для известных значений, алиасов и тегов.
 Единый источник истины для runtime, validation и tests.
 """
+
 from __future__ import annotations
 
 from typing import Dict, List, Set, Final
@@ -16,11 +17,19 @@ from src.tag_registry import normalize_tag
 CANONICAL_FEATURE_ALIASES: Final[Dict[str, List[str]]] = {
     "storytelling": ["storytelling", "story", "narrative"],
     "marketing": ["marketing", "marketingpush", "sales", "promo"],
-    # ИСПРАВЛЕНИЕ (Итерация 3-4): замена "anti-llm" на "anti_llm" для согласованности с tag_map.json
+    # ИСПРАВЛЕНИЕ (Итерация 3-4): замена "anti-llm" на "anti_llm" для
+    # согласованности с tag_map.json
     "antiai": ["deai", "antiai", "anti_llm", "humanize", "antiplastic"],
     "rhetoric": ["rhetoric", "persuasion", "figures"],
     "nkrj": ["nkrj", "taiga", "socialnorms"],
-    "editorial": ["editorial", "editing", "noragal", "cleanup", "readerfirst", "basic_edit"],
+    "editorial": [
+        "editorial",
+        "editing",
+        "noragal",
+        "cleanup",
+        "readerfirst",
+        "basic_edit",
+    ],
 }
 
 # Обратный маппинг: тег -> фича
@@ -31,12 +40,14 @@ for feature, aliases in CANONICAL_FEATURE_ALIASES.items():
 
 KNOWN_FEATURE_ALIASES: Final[Set[str]] = set(_TAG_TO_FEATURE.keys())
 
+
 # ---------------------------------------------------------------------------
 # Функции для работы с алиасами
 # ---------------------------------------------------------------------------
 def get_feature_for_tag(tag: str) -> str | None:
     """Возвращает имя фичи для данного тега (нормализованного) или None."""
     return _TAG_TO_FEATURE.get(tag)
+
 
 def get_features_from_tags(tags: List[str]) -> Set[str]:
     """Возвращает множество фич, соответствующих переданным тегам."""
@@ -47,6 +58,7 @@ def get_features_from_tags(tags: List[str]) -> Set[str]:
             features.add(_TAG_TO_FEATURE[norm])
     return features
 
+
 # ---------------------------------------------------------------------------
 # Проверка согласованности с конфигами (для валидации)
 # ---------------------------------------------------------------------------
@@ -54,9 +66,11 @@ def get_known_intents() -> Set[str]:
     """Возвращает множество известных интентов (из shared_contracts)."""
     return set(ALLOWED_INTENTS)
 
+
 def get_known_overlays() -> Set[str]:
     """Возвращает множество известных оверлеев (из shared_contracts)."""
     return set(ALLOWED_OVERLAYS)
+
 
 # ---------------------------------------------------------------------------
 # Проверка согласованности алиасов с тегами (для валидации)
@@ -67,6 +81,7 @@ def check_alias_consistency() -> List[str]:
     Возвращает список предупреждений.
     """
     from src.config_types import KNOWN_TAGS
+
     warnings = []
     for alias in KNOWN_FEATURE_ALIASES:
         if alias not in KNOWN_TAGS:
