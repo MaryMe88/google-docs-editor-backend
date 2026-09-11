@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import pytest
 
-from src.prompt_builder import (
+from src.prompt_builder.kb_rendering import (
     _has_few_shot_pair,
     _select_few_shot_examples,
     _format_few_shot_example,

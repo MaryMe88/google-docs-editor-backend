@@ -14,6 +14,7 @@ from src.prompt_builder import (
     DomainConfig,
     KB_LIMIT_MIN,
     KB_LIMIT_MAX,
+    KnowledgeBlockRequest,  # добавлен импорт
 )
 
 
@@ -64,14 +65,6 @@ def test_merge_cohesion_alias():
     assert m3.cohesion == 2
 
 
-def test_build_knowledge_block_accepts_limits_param():
-    """Проверяем, что сигнатура _build_knowledge_block содержит параметр limits."""
-    import inspect
-    sig = inspect.signature(PromptBuilder._build_knowledge_block)
-    assert "limits" in sig.parameters
-    assert sig.parameters["limits"].default is None
-
-
 # ------------------------------------------------------------------
 # Вспомогательная функция для создания временного домена
 # ------------------------------------------------------------------
@@ -98,13 +91,11 @@ def test_load_domain_config_unknown_key_ignored_with_warning(tmp_path, caplog):
     caplog.set_level(logging.WARNING)
     config_root = _write_domain(tmp_path, "basic_edit", {"grammer": 5, "grammar": 4})
 
-    # сигнатура load_domain_config: (domain, base_path=Path("config"))
     dc = load_domain_config("basic_edit", config_root)
 
     assert "grammer" not in dc.kb_limits
     assert dc.kb_limits.get("grammar") == 4
 
-    # Проверяем, что было предупреждение о grammer
     assert any("grammer" in rec.message for rec in caplog.records)
 
 
@@ -121,9 +112,8 @@ def test_load_domain_config_range_clamped(tmp_path, caplog):
     assert dc.kb_limits["style"] == KB_LIMIT_MIN
     assert dc.kb_limits["logic"] == KB_LIMIT_MAX
 
-    # Проверяем, что были предупреждения о зажиме
     warnings_found = [rec for rec in caplog.records if "вне диапазона" in rec.message]
-    # ИЗМЕНЕНИЕ (Итерация 5): значение 0 теперь допустимо, поэтому предупреждений только 2
+    # значение 0 допустимо, поэтому предупреждений только для style и logic
     assert len(warnings_found) >= 2
 
 
@@ -137,7 +127,19 @@ def test_load_domain_config_bool_value_rejected(tmp_path, caplog):
 
 
 # ------------------------------------------------------------------
-# Интеграционный тест: _build_knowledge_block использует переданные лимиты
+# Проверяем наличие поля limits в KnowledgeBlockRequest
+# ------------------------------------------------------------------
+def test_build_knowledge_block_accepts_limits_param():
+    """Проверяем, что KnowledgeBlockRequest имеет поле limits."""
+    from src.prompt_builder import KnowledgeBlockRequest
+    import dataclasses
+    fields = {f.name for f in dataclasses.fields(KnowledgeBlockRequest)}
+    assert "limits" in fields, "KnowledgeBlockRequest должен иметь поле 'limits'"
+
+
+# ------------------------------------------------------------------
+# Проверяем, что внутри _build_knowledge_block эффективные лимиты
+# применяются к стоп-словам и к вызову _process_kb_block.
 # ------------------------------------------------------------------
 def test_build_knowledge_block_uses_passed_limits():
     """
@@ -154,7 +156,6 @@ def test_build_knowledge_block_uses_passed_limits():
     # Мокаем kb.get так, чтобы он принимал два аргумента
     with patch.object(pb, "_kb_cache") as mock_cache:
         mock_kb = patch("src.prompt_builder.KnowledgeBase").start()
-        # Исправлено: lambda с default
         mock_kb.get.side_effect = lambda key, default=None: {
             "stop_words": {"cat": ["w1", "w2"]},
             "composition_principles": [],
@@ -162,11 +163,13 @@ def test_build_knowledge_block_uses_passed_limits():
 
         mock_cache.get_or_load_multi.return_value = mock_kb
 
-        # Подменяем _process_kb_block, чтобы проверить переданные лимиты
-        with patch("src.prompt_builder._process_kb_block") as mock_process:
-            # Вызываем _build_knowledge_block с кастомными лимитами
+        # Подменяем _process_kb_block, чтобы проверить переданные лимиты.
+        # Патчим в модуле builder, где имя реально используется (там оно
+        # импортировано через from ._patchable import _process_kb_block).
+        with patch("src.prompt_builder.builder._process_kb_block") as mock_process:
+            # Создаём KnowledgeBlockRequest с кастомными лимитами
             custom_limits = LimitsConfig(stop_words_category=2, stop_words_items=1)
-            _, _, _ = pb._build_knowledge_block(
+            req = KnowledgeBlockRequest(
                 text="test",
                 primary_tags=set(),
                 expanded_tags=set(),
@@ -178,9 +181,21 @@ def test_build_knowledge_block_uses_passed_limits():
                 total_few_shot_used=0,
                 few_shot_seed=None,
                 limits=custom_limits,
+                storytelling_enabled=True,
+                marketing_enabled=True,
+                antiai_enabled=False,
+                rhetoric_enabled=False,
+                nkrj_enabled=False,
+                editorial_enabled=False,
+                return_trace=False,
+                semantic_rerank=False,
             )
+            # Вызываем _build_knowledge_block с request
+            _, _, _ = pb._build_knowledge_block(req)
 
-            # Проверяем, что _process_kb_block вызван с limits=custom_limits
+            # Проверяем, что _process_kb_block вызван с limits=custom_limits.
+            # _process_kb_block вызывается с именованными аргументами
+            # (config=..., ctx=...), поэтому ctx лежит в kwargs, а не в args.
             for call in mock_process.call_args_list:
-                kwargs = call[1]
-                assert kwargs.get("limits") is custom_limits
+                ctx = call.kwargs["ctx"]
+                assert ctx.limits is custom_limits

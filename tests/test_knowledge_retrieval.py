@@ -24,6 +24,7 @@ from src.knowledge_retrieval import (
     FallbackStage,
     RULE_FALLBACK_POLICY,
     STRUCTURAL_FALLBACK_POLICY,
+    SelectionParams,
     _collect_with_budget,
     _select_ranked_entries,
     score_rule_entry,
@@ -124,13 +125,16 @@ class TestRuleFallbackOrder:
             ),
         ]
 
+        params = SelectionParams(
+            scorer=score_rule_entry,
+            fallback_policy=RULE_FALLBACK_POLICY,
+        )
         result = _select_ranked_entries(
             entries=entries,
             normalized_text="в тексте есть канцелярит",
             wanted_tags=["missing_tag"],
             limit=1,
-            scorer=score_rule_entry,
-            fallback_policy=RULE_FALLBACK_POLICY,
+            params=params,
         )
 
         assert len(result) == 1
@@ -154,14 +158,17 @@ class TestRuleFallbackOrder:
             ),
         ]
 
+        params = SelectionParams(
+            scorer=score_rule_entry,
+            min_score=100,
+            fallback_policy=RULE_FALLBACK_POLICY,
+        )
         result = _select_ranked_entries(
             entries=entries,
             normalized_text="совсем другой текст без совпадений",
             wanted_tags=["grammar"],
             limit=1,
-            scorer=score_rule_entry,
-            min_score=100,
-            fallback_policy=RULE_FALLBACK_POLICY,
+            params=params,
         )
 
         assert len(result) == 1
@@ -179,14 +186,17 @@ class TestRuleFallbackOrder:
             )
         ]
 
+        params = SelectionParams(
+            scorer=score_rule_entry,
+            min_score=100,
+            fallback_policy=RULE_FALLBACK_POLICY,
+        )
         result = _select_ranked_entries(
             entries=entries,
             normalized_text="текст без совпадений",
             wanted_tags=["missing_tag"],
             limit=1,
-            scorer=score_rule_entry,
-            min_score=100,
-            fallback_policy=RULE_FALLBACK_POLICY,
+            params=params,
         )
 
         assert result == []
@@ -265,14 +275,17 @@ class TestStructuralFallbackOrder:
             )
         ]
 
+        params = SelectionParams(
+            scorer=score_structural_entry,
+            min_score=100,
+            fallback_policy=STRUCTURAL_FALLBACK_POLICY,
+        )
         result = _select_ranked_entries(
             entries=entries,
             normalized_text="совсем другой текст",
             wanted_tags=["missing_tag"],
             limit=1,
-            scorer=score_structural_entry,
-            min_score=100,
-            fallback_policy=STRUCTURAL_FALLBACK_POLICY,
+            params=params,
         )
 
         assert len(result) == 1
@@ -370,13 +383,16 @@ class TestReturnTypesAndEdgeCases:
                 tags=["grammar"],
             )
         ]
+        params = SelectionParams(
+            scorer=score_rule_entry,
+            return_meta=False,
+        )
         result = _select_ranked_entries(
             entries=entries,
             normalized_text="ихний",
             wanted_tags=["grammar"],
             limit=1,
-            scorer=score_rule_entry,
-            return_meta=False,
+            params=params,
         )
         assert isinstance(result, list)
         assert len(result) == 1
@@ -390,13 +406,16 @@ class TestReturnTypesAndEdgeCases:
                 tags=["grammar"],
             )
         ]
+        params = SelectionParams(
+            scorer=score_rule_entry,
+            return_meta=True,
+        )
         result = _select_ranked_entries(
             entries=entries,
             normalized_text="ихний",
             wanted_tags=["grammar"],
             limit=1,
-            scorer=score_rule_entry,
-            return_meta=True,
+            params=params,
         )
         assert isinstance(result, tuple)
         assert len(result) == 3
@@ -406,13 +425,16 @@ class TestReturnTypesAndEdgeCases:
         assert isinstance(dropped, int)
 
     def test_select_ranked_empty_entries_with_return_meta(self) -> None:
+        params = SelectionParams(
+            scorer=score_rule_entry,
+            return_meta=True,
+        )
         result = _select_ranked_entries(
             entries=[],
             normalized_text="",
             wanted_tags=["grammar"],
             limit=1,
-            scorer=score_rule_entry,
-            return_meta=True,
+            params=params,
         )
         assert isinstance(result, tuple)
         assert len(result) == 3
@@ -422,13 +444,16 @@ class TestReturnTypesAndEdgeCases:
         assert dropped == 0
 
     def test_select_ranked_empty_entries_without_meta(self) -> None:
+        params = SelectionParams(
+            scorer=score_rule_entry,
+            return_meta=False,
+        )
         result = _select_ranked_entries(
             entries=[],
             normalized_text="",
             wanted_tags=["grammar"],
             limit=1,
-            scorer=score_rule_entry,
-            return_meta=False,
+            params=params,
         )
         assert isinstance(result, list)
         assert result == []
@@ -555,7 +580,6 @@ class TestSemanticRerankOption:
 
         mock_rerank.assert_called_once()
         args, kwargs = mock_rerank.call_args
-        # Проверяем, что передан именованный параметр semantic_weight
         assert kwargs.get('semantic_weight') == 0.0, "semantic_weight должен быть 0.0 при semantic_rerank=False"
 
     def test_semantic_rerank_true_passes_weight_default(self, monkeypatch):

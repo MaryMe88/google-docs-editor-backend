@@ -8,62 +8,76 @@ from __future__ import annotations
 
 import json
 import os
+import sys
 from pathlib import Path
 from typing import Any, Dict, List
+from unittest.mock import MagicMock, patch
 
 import numpy as np
 import pytest
-from unittest.mock import patch, MagicMock
 
-from src.prompt_builder import AudienceProfile, PromptBuilder, load_knowledge_base
-from src.knowledge_retrieval import FallbackStage
+# ---------------------------------------------------------------------------
+# ГЛОБАЛЬНЫЙ МОК sentence-transformers ДО ИМПОРТА ОСТАЛЬНЫХ МОДУЛЕЙ
+# ---------------------------------------------------------------------------
+# Создаём мок-класс для SentenceTransformer
+class MockSentenceTransformer:
+    def __init__(self, model_name, **kwargs):
+        pass
+    def encode(self, texts, **kwargs):
+        # Возвращаем нулевые эмбеддинги
+        if isinstance(texts, str):
+            texts = [texts]
+        return np.zeros((len(texts), 384), dtype=np.float32)
 
-# Устанавливаем фейковый API-ключ для тестов, чтобы lifespan не падал
+# Подменяем модуль в sys.modules, чтобы импорт возвращал мок
+sys.modules['sentence_transformers'] = MagicMock()
+sys.modules['sentence_transformers'].SentenceTransformer = MockSentenceTransformer
+
+# Также подменяем сам класс, чтобы при импорте из модуля получали мок
+# Это необходимо для случаев, когда импорт делается через from sentence_transformers import SentenceTransformer
+import sentence_transformers
+sentence_transformers.SentenceTransformer = MockSentenceTransformer
+
+# ---------------------------------------------------------------------------
+# Устанавливаем фейковый API-ключ для тестов
+# ---------------------------------------------------------------------------
 os.environ["OPENROUTER_API_KEY"] = "test-key"
-
-# Устанавливаем флаг, чтобы приложение знало, что запущены тесты
-# (используется для отключения rate limiting в тестах)
 os.environ["PYTEST_RUNNING"] = "true"
 
-
-# ============================================================================
+# ---------------------------------------------------------------------------
 # Пути
-# ============================================================================
-
+# ---------------------------------------------------------------------------
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 KB_PATH = PROJECT_ROOT / "knowledge_base"
 CONFIG_PATH = PROJECT_ROOT / "config"
 
-
-# ============================================================================
+# ---------------------------------------------------------------------------
 # Фикстуры
-# ============================================================================
-
+# ---------------------------------------------------------------------------
 
 @pytest.fixture
 def kb_path() -> Path:
     return KB_PATH
 
-
 @pytest.fixture
 def config_path() -> Path:
     return CONFIG_PATH
 
-
 @pytest.fixture
 def builder() -> PromptBuilder:
+    # Импортируем здесь, чтобы мок уже был применён
+    from src.prompt_builder import PromptBuilder
     return PromptBuilder(config_path=CONFIG_PATH, kb_path=KB_PATH)
-
 
 @pytest.fixture
 def sample_audience() -> AudienceProfile:
+    from src.config_types import AudienceProfile
     return AudienceProfile(
         kind="b2b",
         expertise="pro",
         formality="neutral",
         description="Менеджеры по продукту",
     )
-
 
 @pytest.fixture
 def sample_text() -> str:
@@ -73,28 +87,23 @@ def sample_text() -> str:
         "В целом, это очень эффективное решение."
     )
 
-
-# ============================================================================
+# ---------------------------------------------------------------------------
 # Фикстуры для KB-3 (золотой набор)
-# ============================================================================
-
+# ---------------------------------------------------------------------------
 
 @pytest.fixture(scope="session")
 def knowledge_base() -> Any:
     """Загружает базу знаний один раз для всех тестов."""
+    from src.prompt_builder import load_knowledge_base
     if not KB_PATH.exists():
         pytest.skip(f"Knowledge base directory not found: {KB_PATH}")
-    # Загружаем все активные файлы KB, игнорируя load_mode (для тестов)
     return load_knowledge_base(KB_PATH, load_all=True)
-
 
 @pytest.fixture(scope="session")
 def golden_set() -> List[Dict[str, Any]]:
     """Загружает golden_set.json из корня проекта или папки tests."""
-    # Сначала ищем в tests/
     golden_path = Path(__file__).parent / "golden_set.json"
     if not golden_path.exists():
-        # Затем в корне проекта
         golden_path = PROJECT_ROOT / "golden_set.json"
     if not golden_path.exists():
         pytest.skip("golden_set.json not found")
@@ -102,21 +111,18 @@ def golden_set() -> List[Dict[str, Any]]:
         data = json.load(f)
     return data["tests"]
 
-
 def load_json(path: Path) -> Dict[str, Any]:
     """Утилита для загрузки JSON в тестах."""
     return json.loads(path.read_text(encoding="utf-8"))
 
-
-# ============================================================================
+# ---------------------------------------------------------------------------
 # Настройка пропуска интеграционных тестов (SEC-07)
-# ============================================================================
+# ---------------------------------------------------------------------------
 
 def pytest_configure(config):
     """Читаем INTEGRATION_TESTS_ENABLED и сохраняем в конфиг."""
     enabled = os.getenv("INTEGRATION_TESTS_ENABLED", "").lower() in ("true", "1", "yes")
     config._integration_enabled = enabled
-
 
 def pytest_collection_modifyitems(config, items):
     """Пропускаем интеграционные тесты, если флаг не установлен."""
@@ -126,41 +132,30 @@ def pytest_collection_modifyitems(config, items):
         if item.get_closest_marker("integration") and not enabled:
             item.add_marker(skip_integration)
 
+# ---------------------------------------------------------------------------
+# Фикстура для сброса глобального состояния SemanticIndex
+# ---------------------------------------------------------------------------
 
-# ============================================================================
-# Фикстура для мока SentenceTransformer (избегаем загрузки модели и сети)
-# ============================================================================
-
-@pytest.fixture(autouse=True, scope="session")
-def mock_sentence_transformer():
+@pytest.fixture(autouse=True)
+def reset_semantic_index():
     """
-    Мокает SentenceTransformer для всех тестов, чтобы избежать загрузки модели
-    и обращений в интернет. Фикстура применяется автоматически ко всем тестам.
+    Сбрасывает глобальное состояние SemanticIndex перед каждым тестом.
+    Предотвращает ленивую инициализацию индекса с реальной моделью.
     """
-    # Мокаем импорт из библиотеки sentence_transformers
-    with patch("sentence_transformers.SentenceTransformer") as mock_st:
-        mock_model = MagicMock()
+    import src.semantic_index as si
+    si._global_index = None
+    si._entries_for_index = None
+    yield
 
-        def encode(texts, **kwargs):
-            # Возвращаем нулевой массив размерности (len(texts), 384)
-            # 384 — размерность эмбеддингов для rubert-tiny2
-            return np.zeros((len(texts), 384), dtype=np.float32)
-
-        mock_model.encode = MagicMock(side_effect=encode)
-        mock_st.return_value = mock_model
-        yield
-
-
-# ============================================================================
-# Фикстура для отключения семантического реранкинга в тестах
-# ============================================================================
+# ---------------------------------------------------------------------------
+# Фикстура для мока _semantic_rerank (дополнительная защита)
+# ---------------------------------------------------------------------------
 
 @pytest.fixture(autouse=True, scope="session")
 def mock_semantic_rerank():
     """
     Мокает _semantic_rerank, чтобы он не выполнял реальный поиск по индексу,
-    а возвращал исходный список записей без изменений. Это предотвращает ошибки
-    размерности эмбеддингов в юнит-тестах.
+    а возвращал исходный список записей без изменений.
     """
     with patch("src.knowledge_retrieval._semantic_rerank", side_effect=lambda entries, query, *args, **kwargs: entries):
         yield

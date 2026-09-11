@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import logging
+import tempfile
 from pathlib import Path
 from unittest.mock import patch
 
@@ -16,7 +17,7 @@ import pytest
 
 from src.config_types import CANONICAL_TAGS, get_primary_tags_for_category
 from src.shared_contracts import ALLOWED_DOMAINS, ALLOWED_INTENTS, ALLOWED_OVERLAYS
-from src.startup_checks import _check_tag_map_coverage, run_startup_checks
+from src.startup_checks import _check_tag_map_coverage, run_startup_checks, StartupCheckParams
 from src.tag_registry import normalize_tag, get_canonical_tag_names
 
 
@@ -71,26 +72,62 @@ def test_tag_map_coverage_warns_on_missing():
             assert mock_warning.call_count >= 3
 
 
+# ---------------------------------------------------------------------------
+# ИСПРАВЛЕННЫЙ ТЕСТ: использует StartupCheckParams и временную папку,
+# больше не мокает CANONICAL_TAGS, создаёт tag_map.json
+# ---------------------------------------------------------------------------
 def test_run_startup_checks_does_not_fail_due_to_tag_map():
     """
     Запуск run_startup_checks не должен падать из-за отсутствия записей в tag_map.json.
-    Проверяем только то, что исключение не выбрасывается.
+    Используем временную папку, чтобы избежать конфликтов с реальными файлами.
     """
-    # Запускаем с реальными данными; если какие-то записи отсутствуют, логируется warning, но не ошибка.
-    with patch("logging.Logger.warning") as mock_warning:
-        run_startup_checks(
-            allowed_domains=ALLOWED_DOMAINS,
-            allowed_intents=ALLOWED_INTENTS,
-            allowed_overlays=ALLOWED_OVERLAYS,
-            config_path=Path("config"),
-            kb_path=Path("knowledge_base"),
+    with tempfile.TemporaryDirectory() as tmp:
+        config_path = Path(tmp) / "config"
+        config_path.mkdir(parents=True)
+
+        # Создаём tag_map.json с пустыми разделами
+        (config_path / "tag_map.json").write_text(
+            json.dumps({"domains": {}, "intents": {}, "overlays": {}}),
+            encoding="utf-8"
         )
-        # Проверяем, что warnings были (если есть пропуски), но исключений не было
-        # Наличие предупреждений — ок.
-        # Также проверяем, что не было вызова logger.error или критических ошибок.
-        # Мы можем проверить, что mock_warning вызывался хотя бы один раз (скорее всего).
-        # Но если все записи есть, предупреждений может не быть. Поэтому проверяем только отсутствие исключений.
-        # Это тест не должен упасть.
+
+        domains_dir = config_path / "domains"
+        domains_dir.mkdir()
+        (domains_dir / "blog.json").write_text(
+            json.dumps({
+                "name": "blog",
+                "system_rules": "",
+                "tone": "neutral",
+                "allow_storytelling": False,
+                "allow_marketing": False,
+            }),
+            encoding="utf-8"
+        )
+        # Создаём core.json
+        (config_path / "core.json").write_text(
+            json.dumps({"role": "test"}),
+            encoding="utf-8"
+        )
+        (config_path / "intents").mkdir()
+        (config_path / "overlays").mkdir()
+
+        kb_path = Path(tmp) / "knowledge_base"
+        kb_path.mkdir()
+        (kb_path / "grammar_errors.json").write_text(
+            json.dumps([{"wrong": "test", "correct": "test", "rule": "test", "tags": ["grammar"]}]),
+            encoding="utf-8"
+        )
+
+        params = StartupCheckParams(
+            allowed_domains={"blog"},
+            allowed_intents={"neutral"},
+            allowed_overlays=set(),
+            config_path=config_path,
+            kb_path=kb_path,
+        )
+
+        # Запускаем проверки — они не должны упасть
+        run_startup_checks(params)
         assert True
 
 

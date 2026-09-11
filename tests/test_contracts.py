@@ -221,7 +221,7 @@ class TestLLMClientContract:
         key = os.environ.pop("OPENROUTER_API_KEY", None)
         try:
             with pytest.raises((ValueError, Exception)):
-                create_llm_client(provider=LLMProvider.OPENROUTER, apikey=None)
+                create_llm_client(provider=LLMProvider.OPENROUTER, api_key=None)
         finally:
             if key:
                 os.environ["OPENROUTER_API_KEY"] = key
@@ -239,7 +239,7 @@ class TestLLMClientContract:
         with patch.dict(os.environ, clean_env, clear=True):
             client = create_llm_client(
                 provider=LLMProvider.OPENROUTER,
-                apikey="fake-key-for-contract-test",
+                api_key="fake-key-for-contract-test",
             )
         assert hasattr(client, "__aenter__"), "Клиент должен быть async context manager"
         assert hasattr(client, "__aexit__")

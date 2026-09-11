@@ -22,11 +22,11 @@ from src.reason_codes import ReasonCode
 from src.kb_manifest_loader import load_manifest
 from src.prompt_builder import (
     KB_BLOCK_REGISTRY,
-    _load_kb_file,
     KnowledgeBudgetManager,
     LimitsConfig,
     KnowledgeLevel as KBLevel,
 )
+from src.prompt_builder.kb_loading import _load_kb_file
 
 # Импортируем FILE_RULES из генератора манифеста (scripts/generate_kb_manifest.py)
 try:
@@ -241,7 +241,7 @@ class TestManifestConsistency:
         consumed.add("stop_words")
         consumed.add("domain_glossary")
         consumed.add("nkrj_structure_patterns")
-        # НОВОЕ: блок техник работы с оценками
+        # Блок техник работы с оценками
         consumed.add("evaluation_techniques")
 
         # Проверяем каждый файл в манифесте

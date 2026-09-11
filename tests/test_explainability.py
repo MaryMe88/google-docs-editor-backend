@@ -14,6 +14,7 @@ from src.prompt_builder import (
     resolve_prompt_features,
     load_domain_config,
     load_intent_config,
+    KnowledgeBlockRequest,  # добавлен импорт
 )
 from src.config_types import (
     FeatureResolutionResult,
@@ -26,11 +27,7 @@ from src.config_types import (
     DomainConfig,
 )
 from src.reason_codes import ReasonCode, ACTIVATION_REASONS, SUPPRESSION_REASONS
-
-# NEW: импорт registry для проверки алиасов
 from src.registry import check_alias_consistency
-
-# NEW: импорт проверок из startup_checks (они остались)
 from src.startup_checks import (
     _check_feature_resolution_invariants,
     _check_assembly_diagnostics_invariants,
@@ -241,7 +238,7 @@ class TestAssemblyDiagnostics:
         intent = None
         overlays = []
 
-        result = builder._build_knowledge_block(
+        req = KnowledgeBlockRequest(
             text=text,
             primary_tags=primary_tags,
             expanded_tags=expanded_tags,
@@ -260,7 +257,10 @@ class TestAssemblyDiagnostics:
             nkrj_enabled=False,
             editorial_enabled=False,
             return_trace=True,
+            semantic_rerank=False,
         )
+
+        result = builder._build_knowledge_block(req)
 
         assert len(result) == 4
         knowledge_text, meta, total_used, trace = result
@@ -293,7 +293,7 @@ class TestAssemblyDiagnostics:
         intent = None
         overlays = []
 
-        _, _, _, trace = builder._build_knowledge_block(
+        req = KnowledgeBlockRequest(
             text=text,
             primary_tags=primary_tags,
             expanded_tags=expanded_tags,
@@ -312,7 +312,10 @@ class TestAssemblyDiagnostics:
             nkrj_enabled=True,
             editorial_enabled=True,
             return_trace=True,
+            semantic_rerank=False,
         )
+
+        _, _, _, trace = builder._build_knowledge_block(req)
 
         assert len(trace.blocks) > 0
         for diag in trace.blocks:
@@ -342,7 +345,7 @@ class TestAssemblyDiagnostics:
         intent = None
         overlays = []
 
-        _, _, _, trace = builder._build_knowledge_block(
+        req = KnowledgeBlockRequest(
             text=text,
             primary_tags=primary_tags,
             expanded_tags=expanded_tags,
@@ -361,7 +364,10 @@ class TestAssemblyDiagnostics:
             nkrj_enabled=False,
             editorial_enabled=False,
             return_trace=True,
+            semantic_rerank=False,
         )
+
+        _, _, _, trace = builder._build_knowledge_block(req)
 
         gated_block_names = {"storytelling", "marketing", "rhetoric", "editorial", "nkrj"}
         for diag in trace.blocks:
@@ -380,7 +386,7 @@ class TestAssemblyDiagnostics:
         intent = None
         overlays = []
 
-        _, _, _, trace = builder._build_knowledge_block(
+        req = KnowledgeBlockRequest(
             text=text,
             primary_tags=primary_tags,
             expanded_tags=expanded_tags,
@@ -399,7 +405,10 @@ class TestAssemblyDiagnostics:
             nkrj_enabled=False,
             editorial_enabled=False,
             return_trace=True,
+            semantic_rerank=False,
         )
+
+        _, _, _, trace = builder._build_knowledge_block(req)
 
         grammar_diag = next((d for d in trace.blocks if d.name == "grammar"), None)
         assert grammar_diag is not None

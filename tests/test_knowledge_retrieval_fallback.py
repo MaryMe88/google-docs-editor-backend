@@ -9,6 +9,7 @@ from src.knowledge_retrieval import (
     FallbackPolicy,
     RULE_FALLBACK_POLICY,
     STRUCTURAL_FALLBACK_POLICY,
+    SelectionParams,
     _select_ranked_entries,
     normalize_text_for_match,
     score_rule_entry,
@@ -81,14 +82,17 @@ def test_strong_match_beats_other_candidates() -> None:
         ),
     ]
 
+    params = SelectionParams(
+        scorer=score_rule_entry,
+        min_score=1,
+        fallback_policy=RULE_FALLBACK_POLICY,
+    )
     result = _select_ranked_entries(
         entries=entries,
         normalized_text=normalize_text_for_match("В тексте встретилось слово ихний."),
         wanted_tags=["style"],
         limit=1,
-        scorer=score_rule_entry,
-        min_score=1,
-        fallback_policy=RULE_FALLBACK_POLICY,
+        params=params,
     )
 
     assert len(result) == 1
@@ -121,14 +125,17 @@ def test_text_only_fallback_beats_tag_only() -> None:
         primary_only_for_tag_fallback=True,
     )
 
+    params = SelectionParams(
+        scorer=score_rule_entry,
+        min_score=500,
+        fallback_policy=strict_policy,
+    )
     result = _select_ranked_entries(
         entries=entries,
         normalized_text=normalize_text_for_match("Нам нужны краткие фразы и проще подача."),
         wanted_tags=["style"],
         limit=1,
-        scorer=score_rule_entry,
-        min_score=500,
-        fallback_policy=strict_policy,
+        params=params,
     )
 
     assert len(result) == 1
@@ -157,15 +164,18 @@ def test_tag_only_uses_primary_tags_not_expanded_noise() -> None:
         primary_only_for_tag_fallback=True,
     )
 
+    params = SelectionParams(
+        scorer=score_structural_entry,
+        expanded_tags={"narrative"},
+        min_score=9999,
+        fallback_policy=policy,
+    )
     result = _select_ranked_entries(
         entries=entries,
         normalized_text="",
         wanted_tags=["storytelling"],
         limit=1,
-        scorer=score_structural_entry,
-        expanded_tags={"narrative"},
-        min_score=9999,
-        fallback_policy=policy,
+        params=params,
     )
 
     assert len(result) == 1
@@ -234,15 +244,18 @@ def test_empty_result_when_no_stage_passes() -> None:
         primary_only_for_tag_fallback=True,
     )
 
+    params = SelectionParams(
+        scorer=score_structural_entry,
+        expanded_tags={"narrative"},
+        min_score=9999,
+        fallback_policy=policy,
+    )
     result = _select_ranked_entries(
         entries=entries,
         normalized_text="",
         wanted_tags=["storytelling"],
         limit=1,
-        scorer=score_structural_entry,
-        expanded_tags={"narrative"},
-        min_score=9999,
-        fallback_policy=policy,
+        params=params,
     )
 
     assert result == []

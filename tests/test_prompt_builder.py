@@ -13,20 +13,27 @@ from src.config_types import (
     BlockBudget,
     DomainConfig,
     LimitsConfig,
+    AssemblyTrace,
+    AssemblyBlockDiagnostics,
 )
+from src.reason_codes import ReasonCode
 from src.prompt_builder import (
     PromptBuilder,
-    _get_confidence_note,
-    _derive_seed,
-    _process_kb_block,
     KB_BLOCK_REGISTRY,
     KBBlockConfig,
-    _append_rule_entries,
     load_output_format,
     load_domain_config,
     load_intent_config,
+    KnowledgeBlockRequest,
+)
+from src.prompt_builder.kb_rendering import (
+    _get_confidence_note,
+    _derive_seed,
+    _process_kb_block,
+    _append_rule_entries,
 )
 from src.knowledge_retrieval import FallbackStage, _collect_with_budget
+from src.prompt_builder.kb_rendering import ProcessContext
 
 
 # ============================================================================
@@ -59,18 +66,18 @@ def make_mock_kb(data: dict) -> MagicMock:
     - поддерживает метод .get(key, default)
     """
     kb = MagicMock()
-    # Добавляем атрибуты
     for key, value in data.items():
         setattr(kb, key, value)
-    # Реализуем метод get
+
     def get_side_effect(key, default=None):
         return data.get(key, default)
+
     kb.get.side_effect = get_side_effect
     return kb
 
 
 # ============================================================================
-# Старые тесты (без изменений)
+# Старые тесты
 # ============================================================================
 
 def test_build_returns_string(builder: PromptBuilder) -> None:
@@ -171,7 +178,7 @@ def test_supported_domain_intent_combinations(builder: PromptBuilder, domain: st
 
 
 # ---------------------------------------------------------------------------
-# Few-shot тесты (PR‑2)
+# Few-shot тесты
 # ---------------------------------------------------------------------------
 
 def test_include_few_shot_false_omits_examples(builder: PromptBuilder) -> None:
@@ -211,12 +218,11 @@ def test_include_few_shot_without_knowledge_does_nothing(builder: PromptBuilder)
         include_knowledge=False,
         include_few_shot=False,
     )
-    # Нормализуем случайные nonce перед сравнением
     assert _normalize_user_text_markers(result) == _normalize_user_text_markers(result2)
 
 
 # ---------------------------------------------------------------------------
-# Тесты для ТП-2 (квалификатор уверенности) — с подменой KB_BLOCK_REGISTRY
+# Тесты квалификатора уверенности
 # ---------------------------------------------------------------------------
 
 def test_get_confidence_note_returns_correct_strings() -> None:
@@ -255,7 +261,7 @@ def test_confidence_note_inserted_for_tag_only_stage(builder: PromptBuilder) -> 
     )
     test_registry = [test_config]
 
-    with patch("src.prompt_builder.KB_BLOCK_REGISTRY", test_registry):
+    with patch("src.prompt_builder.builder.KB_BLOCK_REGISTRY", test_registry):
         result = builder.build(
             text="Тестовый текст без совпадений.",
             domain="blog",
@@ -271,10 +277,7 @@ def test_confidence_note_inserted_for_tag_only_stage(builder: PromptBuilder) -> 
 
 
 def test_confidence_note_not_inserted_for_strong_stage(builder: PromptBuilder) -> None:
-    """
-    При stage=STRONG квалификатор не должен появляться.
-    Используем запись с точным совпадением по wrong (без correct, чтобы это было правило).
-    """
+    """При stage=STRONG квалификатор не должен появляться."""
     data = {
         "grammar_errors": [
             {"wrong": "Тестовый текст", "rule": "правило грамматики", "tags": ["grammar"]}
@@ -294,7 +297,7 @@ def test_confidence_note_not_inserted_for_strong_stage(builder: PromptBuilder) -
     }
     kb = make_mock_kb(data)
 
-    with patch('src.prompt_builder.load_knowledge_base', return_value=kb):
+    with patch('src.prompt_builder.builder.load_knowledge_base', return_value=kb):
         result = builder.build(
             text="Тестовый текст",
             domain="blog",
@@ -303,17 +306,13 @@ def test_confidence_note_not_inserted_for_strong_stage(builder: PromptBuilder) -
             knowledge_level=KnowledgeLevel.FULL,
             token_budget=None,
         )
-        # Блок грамматики должен быть
         assert "Грамматические ориентиры:" in result
-        # Квалификатор не должен появиться
         assert "теме раздела" not in result
         assert "смысловому совпадению" not in result
 
 
 def test_confidence_note_not_inserted_when_no_knowledge(builder: PromptBuilder) -> None:
-    """
-    Если блоки знаний пусты, квалификатор не добавляется.
-    """
+    """Если блоки знаний пусты, квалификатор не добавляется."""
     data = {
         "grammar_errors": [],
         "stylistic_issues": [],
@@ -331,7 +330,7 @@ def test_confidence_note_not_inserted_when_no_knowledge(builder: PromptBuilder) 
     }
     kb = make_mock_kb(data)
 
-    with patch('src.prompt_builder.load_knowledge_base', return_value=kb):
+    with patch('src.prompt_builder.builder.load_knowledge_base', return_value=kb):
         result = builder.build(
             text="Тестовый текст.",
             domain="blog",
@@ -340,18 +339,13 @@ def test_confidence_note_not_inserted_when_no_knowledge(builder: PromptBuilder) 
             knowledge_level=KnowledgeLevel.FULL,
             token_budget=None,
         )
-        # В промпте не должно быть квалификаторов
         assert "теме раздела" not in result
         assert "смысловому совпадению" not in result
-        # Блоков знаний быть не должно
         assert "Грамматические ориентиры:" not in result
 
 
 def test_confidence_note_appears_only_once_per_block(builder: PromptBuilder) -> None:
-    """
-    Квалификатор добавляется ровно один раз для блока,
-    даже если в блоке несколько записей.
-    """
+    """Квалификатор добавляется ровно один раз для блока."""
     fake_entries = [
         {"wrong": "ошибка1", "rule": "правило1", "tags": ["grammar"]},
         {"wrong": "ошибка2", "rule": "правило2", "tags": ["grammar"]},
@@ -370,7 +364,7 @@ def test_confidence_note_appears_only_once_per_block(builder: PromptBuilder) -> 
     )
     test_registry = [test_config]
 
-    with patch("src.prompt_builder.KB_BLOCK_REGISTRY", test_registry):
+    with patch("src.prompt_builder.builder.KB_BLOCK_REGISTRY", test_registry):
         result = builder.build(
             text="Тестовый текст без совпадений.",
             domain="blog",
@@ -388,9 +382,7 @@ def test_confidence_note_appears_only_once_per_block(builder: PromptBuilder) -> 
 
 
 def test_confidence_note_position_before_rules(builder: PromptBuilder) -> None:
-    """
-    Проверяем, что квалификатор идёт перед заголовком "Грамматические ориентиры:".
-    """
+    """Проверяем, что квалификатор идёт перед заголовком "Грамматические ориентиры:"."""
     fake_entry = {
         "wrong": "несовпадающий текст",
         "rule": "правило грамматики",
@@ -410,7 +402,7 @@ def test_confidence_note_position_before_rules(builder: PromptBuilder) -> None:
     )
     test_registry = [test_config]
 
-    with patch("src.prompt_builder.KB_BLOCK_REGISTRY", test_registry):
+    with patch("src.prompt_builder.builder.KB_BLOCK_REGISTRY", test_registry):
         result = builder.build(
             text="Тестовый текст без совпадений.",
             domain="blog",
@@ -428,15 +420,11 @@ def test_confidence_note_position_before_rules(builder: PromptBuilder) -> None:
 
 
 # ============================================================================
-# Новые тесты ТП-1 (исправление _collect_with_budget)
+# Тесты _collect_with_budget
 # ============================================================================
 
 def test_collect_with_budget_applies_to_first_entry() -> None:
-    """
-    Проверяет, что char_budget применяется даже к первой записи.
-    Раньше из-за условия `and result` первая запись всегда проходила,
-    теперь исправлено.
-    """
+    """Проверяет, что char_budget применяется даже к первой записи."""
     huge_entry = {
         "wrong": "x" * 5000,
         "correct": "y" * 5000,
@@ -449,12 +437,8 @@ def test_collect_with_budget_applies_to_first_entry() -> None:
 
 
 # ============================================================================
-# НОВЫЕ ТЕСТЫ ДЛЯ ШАГА 10 (исправлены)
+# Тесты для _process_kb_block
 # ============================================================================
-
-# ----------------------------------------------------------------------------
-# 1. _process_kb_block с моком retrieval_fn
-# ----------------------------------------------------------------------------
 
 def test_process_kb_block_grammar() -> None:
     """Проверяет, что _process_kb_block правильно обрабатывает блок grammar."""
@@ -492,8 +476,7 @@ def test_process_kb_block_grammar() -> None:
     budget = BlockBudget(entry_limit=5, char_budget=None, enabled=True)
     limits = LimitsConfig()
 
-    total = _process_kb_block(
-        config=config,
+    ctx = ProcessContext(
         lines=lines,
         meta=meta,
         kb=kb,
@@ -508,7 +491,10 @@ def test_process_kb_block_grammar() -> None:
         total_few_shot_used=0,
         limits=limits,
         few_shot_seed=None,
+        semantic_rerank=False,
     )
+
+    total = _process_kb_block(config=config, ctx=ctx)
 
     assert len(lines) > 0
     assert "Грамматические ориентиры:" in lines[0]
@@ -518,13 +504,13 @@ def test_process_kb_block_grammar() -> None:
 
 
 # ----------------------------------------------------------------------------
-# 2. Проверка, что _build_knowledge_block не вызывает _process_kb_block для disabled
+# Проверка, что _build_knowledge_block не вызывает _process_kb_block для disabled
 # ----------------------------------------------------------------------------
 
 def test_process_kb_block_skips_disabled(builder: PromptBuilder) -> None:
     """Блок с enabled=False не должен обрабатываться в _build_knowledge_block."""
     mock_process = MagicMock()
-    with patch('src.prompt_builder._process_kb_block', mock_process):
+    with patch('src.prompt_builder.builder._process_kb_block', mock_process):
         budget = KnowledgeBudget({
             "grammar": BlockBudget(entry_limit=5, char_budget=None, enabled=False),
         })
@@ -544,8 +530,8 @@ def test_process_kb_block_skips_disabled(builder: PromptBuilder) -> None:
             "nkrj_structure_patterns": {},
         }
         kb = make_mock_kb(data)
-        with patch('src.prompt_builder.load_knowledge_base', return_value=kb):
-            builder._build_knowledge_block(
+        with patch('src.prompt_builder.builder.load_knowledge_base', return_value=kb):
+            req = KnowledgeBlockRequest(
                 text="Тест",
                 primary_tags=set(),
                 expanded_tags=set(),
@@ -556,22 +542,22 @@ def test_process_kb_block_skips_disabled(builder: PromptBuilder) -> None:
                 include_few_shot=False,
                 total_few_shot_used=0,
             )
+            builder._build_knowledge_block(req)
         mock_process.assert_not_called()
 
 
 # ----------------------------------------------------------------------------
-# 3. Порядок блоков в _build_knowledge_block (ИСПРАВЛЕН)
+# Порядок блоков в _build_knowledge_block
 # ----------------------------------------------------------------------------
 
 def test_build_knowledge_block_order(builder: PromptBuilder) -> None:
     """Проверяем, что блоки выводятся в порядке, заданном в KB_BLOCK_REGISTRY."""
-    def mock_process(*args, **kwargs):
-        config = kwargs["config"]
-        lines = kwargs["lines"]
+    def mock_process(config, ctx):
+        lines = ctx.lines
         lines.append(config.title)
-        return kwargs.get('total_few_shot_used', 0)
+        return ctx.total_few_shot_used
 
-    with patch('src.prompt_builder._process_kb_block', side_effect=mock_process) as mock_proc:
+    with patch('src.prompt_builder.builder._process_kb_block', side_effect=mock_process) as mock_proc:
         data = {
             "grammar_errors": [{"wrong": "g"}],
             "stylistic_issues": [{"wrong": "s"}],
@@ -584,20 +570,19 @@ def test_build_knowledge_block_order(builder: PromptBuilder) -> None:
             "case_study_templates": [{"name": "cs1"}],
             "rhetoric_frameworks": [{"name": "r1"}],
             "editorial_techniques": [{"name": "e1"}],
-            "evaluation_techniques": {"category": "evaluations"},  # добавляем данные для нового блока
+            "evaluation_techniques": {"category": "evaluations"},
             "stop_words": {},
             "domain_glossary": {},
             "nkrj_structure_patterns": {},
         }
         kb = make_mock_kb(data)
-        with patch('src.prompt_builder.load_knowledge_base', return_value=kb):
+        with patch('src.prompt_builder.builder.load_knowledge_base', return_value=kb):
             budget_dict = {
                 block.budget_key: BlockBudget(entry_limit=10, char_budget=None, enabled=True)
                 for block in KB_BLOCK_REGISTRY
             }
             budget = KnowledgeBudget(budget_dict)
-            # Явно включаем все блоки, включая evaluation_techniques
-            text, _, _ = builder._build_knowledge_block(
+            req = KnowledgeBlockRequest(
                 text="Тест",
                 primary_tags=set(),
                 expanded_tags=set(),
@@ -614,16 +599,16 @@ def test_build_knowledge_block_order(builder: PromptBuilder) -> None:
                 nkrj_enabled=True,
                 editorial_enabled=True,
             )
+            text, _, _ = builder._build_knowledge_block(req)
 
-    # Ожидаем заголовки только тех блоков, у которых title не пустой
     expected_titles = [block.title for block in KB_BLOCK_REGISTRY if block.title]
     titles_in_text = [line.strip() for line in text.splitlines() if line.strip() in expected_titles]
     assert titles_in_text == expected_titles, f"Порядок блоков нарушен: {titles_in_text} != {expected_titles}"
-    assert mock_proc.call_count == len(KB_BLOCK_REGISTRY) - 1  # минус блок evaluation_techniques, т.к. он не через _process
+    assert mock_proc.call_count == len(KB_BLOCK_REGISTRY) - 1
 
 
 # ----------------------------------------------------------------------------
-# 4. allow_storytelling=False (ИСПРАВЛЕН)
+# allow_storytelling=False
 # ----------------------------------------------------------------------------
 
 def test_allow_storytelling_false(builder: PromptBuilder) -> None:
@@ -638,16 +623,13 @@ def test_allow_storytelling_false(builder: PromptBuilder) -> None:
 
     called_blocks = []
 
-    def mock_process(*args, **kwargs):
-        config = kwargs["config"]
-        lines = kwargs["lines"]
+    def mock_process(config, ctx):
         called_blocks.append(config.name)
-        lines.append(config.title)
-        return kwargs.get('total_few_shot_used', 0)
+        ctx.lines.append(config.title)
+        return ctx.total_few_shot_used
 
-    # Мокаем load_domain_config, чтобы он возвращал наш domain_config
-    with patch("src.prompt_builder.load_domain_config", return_value=domain_config):
-        with patch('src.prompt_builder._process_kb_block', side_effect=mock_process):
+    with patch("src.prompt_builder.builder.load_domain_config", return_value=domain_config):
+        with patch('src.prompt_builder.builder._process_kb_block', side_effect=mock_process):
             builder.build(
                 text="Тестовый текст.",
                 domain="blog",
@@ -662,7 +644,7 @@ def test_allow_storytelling_false(builder: PromptBuilder) -> None:
 
 
 # ----------------------------------------------------------------------------
-# 5. Детерминированный few-shot seed
+# Детерминированный few-shot seed
 # ----------------------------------------------------------------------------
 
 def test_few_shot_seed_determinism(builder: PromptBuilder) -> None:
@@ -684,12 +666,11 @@ def test_few_shot_seed_determinism(builder: PromptBuilder) -> None:
         few_shot_seed=42,
         token_budget=5000,
     )
-    # Нормализуем случайные nonce перед сравнением
     assert _normalize_user_text_markers(result1) == _normalize_user_text_markers(result2), "Промпты должны быть идентичны при одинаковом seed"
 
 
 # ----------------------------------------------------------------------------
-# 6. _derive_seed стабильность
+# _derive_seed стабильность
 # ----------------------------------------------------------------------------
 
 def test_derive_seed_stable() -> None:
@@ -702,7 +683,7 @@ def test_derive_seed_stable() -> None:
 
 
 # ----------------------------------------------------------------------------
-# 7. DeprecationWarning для build_prompt (исправлен)
+# DeprecationWarning для build_prompt
 # ----------------------------------------------------------------------------
 
 def test_deprecation_warning(builder: PromptBuilder) -> None:
@@ -718,21 +699,17 @@ def test_deprecation_warning(builder: PromptBuilder) -> None:
 
 
 # ----------------------------------------------------------------------------
-# 8. reload_configs очищает кеш (ИСПРАВЛЕН)
+# reload_configs очищает кеш
 # ----------------------------------------------------------------------------
 
 def test_reload_clears_cache(builder: PromptBuilder) -> None:
     """reload_configs должен очищать кэш доменов и интентов."""
-    # Прогреваем кэш
     builder.get_domain_config("blog")
     builder.get_intent_config("storytelling")
 
-    # Мокаем load_domain_config и load_intent_config
-    with patch("src.prompt_builder.load_domain_config", wraps=load_domain_config) as mock_load_domain, \
-         patch("src.prompt_builder.load_intent_config", wraps=load_intent_config) as mock_load_intent:
-        # Сброс кэша
+    with patch("src.prompt_builder.builder.load_domain_config", wraps=load_domain_config) as mock_load_domain, \
+         patch("src.prompt_builder.builder.load_intent_config", wraps=load_intent_config) as mock_load_intent:
         builder.reload_configs()
-        # Повторные вызовы должны вызвать load_* снова
         builder.get_domain_config("blog")
         builder.get_intent_config("storytelling")
         assert mock_load_domain.call_count == 1
@@ -740,7 +717,7 @@ def test_reload_clears_cache(builder: PromptBuilder) -> None:
 
 
 # ----------------------------------------------------------------------------
-# 9. KnowledgeBudget.disable
+# KnowledgeBudget.disable
 # ----------------------------------------------------------------------------
 
 def test_budget_disable() -> None:
@@ -755,14 +732,14 @@ def test_budget_disable() -> None:
     assert budget.get("grammar").enabled is False
     assert budget.get("style").enabled is True
 
-    budget.disable("nonexistent")  # молча игнорируется
+    budget.disable("nonexistent")
     assert budget.get("grammar").enabled is False
     assert budget.get("grammar").entry_limit == 5
     assert budget.get("grammar").char_budget == 100
 
 
 # ============================================================================
-# НОВЫЕ ТЕСТЫ ДЛЯ ЗАДАЧ 4-8 (исправлены)
+# Тесты для задач 4-8
 # ============================================================================
 
 def test_domain_tasks_and_constraints_in_prompt(builder: PromptBuilder) -> None:
@@ -776,25 +753,20 @@ def test_ip_ceiling_in_prompt(builder: PromptBuilder) -> None:
     """Проверяет наличие целевого ИП в промпте."""
     prompt = builder.build(text="Тест", domain="deai", include_knowledge=False)
     assert "Целевой Индекс пластиковости" in prompt
-    assert "≤ 1.7" in prompt  # для deai
+    assert "≤ 1.7" in prompt
 
     prompt_blog = builder.build(text="Тест", domain="blog", include_knowledge=False)
-    assert "≤ 2.5" in prompt_blog  # глобальный
+    assert "≤ 2.5" in prompt_blog
 
 
 def test_conflicting_overlays_resolved_not_raised(builder: PromptBuilder) -> None:
-    """
-    Проверяет, что конфликтующие оверлеи с явным suppress разрешаются без ошибки.
-    Ранее тест ожидал ValueError, но теперь конфликт разрешается через suppress.
-    """
+    """Проверяет, что конфликтующие оверлеи с явным suppress разрешаются без ошибки."""
     prompt = builder.build(
         text="Тест",
         domain="blog",
         overlays=["finalcheck_full", "finalcheck_light"],
         include_knowledge=False,
     )
-    # Ожидаем, что останется только один из них (finalcheck_full побеждает)
-    # Проверяем, что finalcheck_full есть, а finalcheck_light отсутствует
     assert "finalcheck_full" in prompt
     assert "finalcheck_light" not in prompt
 
@@ -819,7 +791,7 @@ def test_load_output_format_no_markdown_removed() -> None:
 
 
 # ============================================================================
-# НОВЫЕ ТЕСТЫ ДЛЯ edit_level (Этап 5) — ИСПРАВЛЕНЫ
+# Тесты для edit_level
 # ============================================================================
 
 def test_edit_level_default_processing(builder: PromptBuilder) -> None:
@@ -900,12 +872,11 @@ def test_edit_level_invalid_fallback(
             assert "используется 'processing'" in caplog.text
 
 
-# ИСПРАВЛЕННАЯ параметризация: используем ключевые фразы, которые есть в новом тексте
 @pytest.mark.parametrize("level,expected_phrase", [
-    ("light", "точечная"),                      # уникальная фраза для light
+    ("light", "точечная"),
     ("processing", "Композицию и порядок абзацев не менять"),
     ("remake", "Разрешена перестройка композиции"),
-    ("adaptive_remake", "адаптивная переделка"),  # уникальная фраза для adaptive_remake
+    ("adaptive_remake", "адаптивная переделка"),
 ])
 def test_build_edit_level_block_contains_key_phrases(builder: PromptBuilder, level: str, expected_phrase: str) -> None:
     """Проверяет, что _build_edit_level_block возвращает правильные фразы для каждого уровня."""
@@ -920,7 +891,7 @@ def test_build_edit_level_block_contains_key_phrases(builder: PromptBuilder, lev
 
 
 def test_build_edit_level_block_integration(builder: PromptBuilder) -> None:
-    """Интеграционный тест: для домена genre с overlay casestudy, проверяем наличие adaptive_remake и условной логики."""
+    """Интеграционный тест: для домена genre с overlay casestudy."""
     prompt = builder.build(
         text="Мы делаем сайты уже пять лет. У нас хорошая команда.",
         domain="genre",
@@ -928,7 +899,7 @@ def test_build_edit_level_block_integration(builder: PromptBuilder) -> None:
         include_knowledge=False,
     )
     assert "Уровень правки: адаптивная переделка" in prompt
-    assert "Если текст уже соответствует" in prompt   # проверяем условную конструкцию
+    assert "Если текст уже соответствует" in prompt
     assert "Если текст не соответствует" in prompt
 
 
@@ -944,7 +915,7 @@ def test_build_edit_level_for_domain_without_edit_level(builder: PromptBuilder) 
 
 
 # ============================================================================
-# NEW: Тесты для пилотного реорганизации (case_study)
+# Тесты для case_study
 # ============================================================================
 
 def test_prompt_includes_case_study_knowledge(builder: PromptBuilder) -> None:
@@ -958,13 +929,10 @@ def test_prompt_includes_case_study_knowledge(builder: PromptBuilder) -> None:
         knowledge_level=KnowledgeLevel.FULL,
         include_retrieval_meta=False,
     )
-    # Проверяем наличие уникальной фразы из description записи case_study_composition
     expected_phrase = "Обязательные элементы структуры кейса"
     assert expected_phrase in prompt, \
         f"В промпте отсутствует фраза '{expected_phrase}'. Промпт (первые 1000 символов):\n{prompt[:1000]}"
-    # Дополнительная проверка на специфический контент
     assert "контекст, проблема, решение, результат, вывод" in prompt or "контекст" in prompt
-    # Проверяем, что нет технических ключей
     assert "case_study_composition" not in prompt
     assert "genre_knowledge" not in prompt
     count = prompt.count(expected_phrase)
@@ -1019,29 +987,25 @@ def test_existing_marketing_blocks_remain(builder: PromptBuilder) -> None:
 
 
 # ============================================================================
-# НОВЫЕ ТЕСТЫ: load_full_kb
+# Тесты load_full_kb
 # ============================================================================
 
 def test_load_full_kb(builder: PromptBuilder) -> None:
     """Проверяет, что load_full_kb загружает KB и сохраняет в _loaded_kb."""
-    # Сначала убедимся, что _loaded_kb = None
     assert builder._loaded_kb is None
 
     kb = builder.load_full_kb()
     assert kb is not None
-    # Проверяем, что загружена настоящая KB (есть атрибуты)
     assert hasattr(kb, "grammar_errors")
-    # Проверяем, что _loaded_kb установлен
     assert builder._loaded_kb is kb
 
-    # Повторный вызов возвращает тот же объект
     kb2 = builder.load_full_kb()
     assert kb2 is kb
 
 
 def test_load_full_kb_uses_load_all(builder: PromptBuilder) -> None:
     """Проверяет, что load_full_kb вызывает load_knowledge_base с load_all=True."""
-    with patch("src.prompt_builder.load_knowledge_base") as mock_load:
+    with patch("src.prompt_builder.builder.load_knowledge_base") as mock_load:
         mock_load.return_value = MagicMock()
         builder.load_full_kb()
         mock_load.assert_called_once_with(
@@ -1068,3 +1032,209 @@ def test_invalidate_caches_clears_loaded_kb(builder: PromptBuilder) -> None:
 
     builder._invalidate_caches()
     assert builder._loaded_kb is None
+
+
+# ============================================================================
+# Тесты для разбиения _build_knowledge_block
+# ============================================================================
+
+def test_process_stop_words_block(builder: PromptBuilder) -> None:
+    """Проверяет _process_stop_words_block."""
+    from src.config_types import BlockBudget, KnowledgeBudget
+
+    kb = make_mock_kb({"stop_words": {"category1": ["word1", "word2"], "category2": ["word3"]}})
+    req = KnowledgeBlockRequest(
+        text="test",
+        primary_tags=set(),
+        expanded_tags=set(),
+        budget=KnowledgeBudget({"stop_words": BlockBudget(entry_limit=10, char_budget=None, enabled=True)}),
+        domain="blog",
+        intent=None,
+        overlays=[],
+        include_few_shot=False,
+        total_few_shot_used=0,
+        limits=LimitsConfig(stop_words_category=2, stop_words_items=2),
+    )
+    lines: list[str] = []
+    builder._process_stop_words_block(kb, req, lines, None, req.limits)
+    assert len(lines) == 3
+    assert "Стоп-слова" in lines[0]
+    assert "category1: word1, word2" in lines[1]
+
+
+def test_process_evaluation_block(builder: PromptBuilder) -> None:
+    """Проверяет _process_evaluation_block."""
+    kb = make_mock_kb({"evaluation_techniques": {"technique1": "description"}})
+    req = KnowledgeBlockRequest(
+        text="test",
+        primary_tags=set(),
+        expanded_tags=set(),
+        budget=KnowledgeBudget({}),
+        domain="blog",
+        intent=None,
+        overlays=[],
+        include_few_shot=False,
+        total_few_shot_used=0,
+    )
+    lines: list[str] = []
+    builder._process_evaluation_block(kb, req, lines, None)
+    assert any("Техники работы с оценками" in line for line in lines)
+
+
+def test_process_glossary_block(builder: PromptBuilder) -> None:
+    """Проверяет _process_glossary_block."""
+    from src.config_types import BlockBudget, KnowledgeBudget
+
+    kb = make_mock_kb({"domain_glossary": {"term1": "definition1", "term2": "definition2"}})
+    req = KnowledgeBlockRequest(
+        text="test",
+        primary_tags=set(),
+        expanded_tags=set(),
+        budget=KnowledgeBudget({"glossary": BlockBudget(entry_limit=2, char_budget=None, enabled=True)}),
+        domain="blog",
+        intent=None,
+        overlays=[],
+        include_few_shot=False,
+        total_few_shot_used=0,
+    )
+    lines: list[str] = []
+    builder._process_glossary_block(kb, req, lines, None)
+    assert len(lines) >= 2
+
+
+def test_process_nkrj_block(builder: PromptBuilder) -> None:
+    """Проверяет _process_nkrj_block."""
+    from src.config_types import BlockBudget, KnowledgeBudget
+
+    kb = make_mock_kb({"nkrj_structure_patterns": {"pattern1": "description1", "pattern2": "description2"}})
+    req = KnowledgeBlockRequest(
+        text="test",
+        primary_tags=set(),
+        expanded_tags=set(),
+        budget=KnowledgeBudget({"nkrj": BlockBudget(entry_limit=5, char_budget=None, enabled=True)}),
+        domain="blog",
+        intent=None,
+        overlays=[],
+        include_few_shot=False,
+        total_few_shot_used=0,
+        nkrj_enabled=True,
+    )
+    lines: list[str] = []
+    builder._process_nkrj_block(kb, req, lines, None)
+    assert len(lines) > 0, "Блок nkrj не добавил строк"
+    data = kb.nkrj_structure_patterns
+    found = False
+    for line in lines:
+        for key, value in data.items():
+            if key in line or value in line:
+                found = True
+                break
+        if found:
+            break
+    assert found, "В lines не найдено содержимое nkrj-паттернов"
+
+
+def test_add_trace_diagnostic(builder: PromptBuilder) -> None:
+    """Проверяет _add_trace_diagnostic."""
+    trace = AssemblyTrace()
+    builder._add_trace_diagnostic(
+        trace,
+        "test_block",
+        eligible=True,
+        included=True,
+        reason_codes=[ReasonCode.BLOCK_INCLUDED],
+        empty=False,
+        char_count=10,
+        entries_count=2,
+    )
+    assert len(trace.blocks) == 1
+    diag = trace.blocks[0]
+    assert diag.name == "test_block"
+    assert diag.eligible is True
+    assert diag.included is True
+    assert ReasonCode.BLOCK_INCLUDED in diag.reason_codes
+    assert diag.char_count == 10
+    assert diag.entries_count == 2
+
+
+# ---------------------------------------------------------------------------
+# Тесты для _process_registry_block
+# ---------------------------------------------------------------------------
+
+def test_process_registry_block_includes_block_when_eligible():
+    """Проверяет, что _process_registry_block включает блок при eligibility."""
+    builder = PromptBuilder()
+    lines = []
+    meta = {}
+    req = KnowledgeBlockRequest(
+        text="test",
+        primary_tags=set(),
+        expanded_tags=set(),
+        budget=KnowledgeBudget({"grammar": BlockBudget(entry_limit=5, char_budget=None, enabled=True)}),
+        domain="blog",
+        intent=None,
+        overlays=[],
+        include_few_shot=False,
+        total_few_shot_used=0,
+        limits=LimitsConfig(),
+        storytelling_enabled=True,
+        marketing_enabled=False,
+        antiai_enabled=False,
+        rhetoric_enabled=False,
+        nkrj_enabled=False,
+        editorial_enabled=False,
+        return_trace=True,
+        semantic_rerank=False,
+    )
+    kb = make_mock_kb({"grammar_errors": [{"wrong": "x", "rule": "y", "tags": ["grammar"]}]})
+    block_cfg = KBBlockConfig(
+        name="grammar",
+        budget_key="grammar",
+        retrieval_fn=lambda *args, **kwargs: ([{"wrong": "x"}], FallbackStage.STRONG, 0),
+        append_fn=_append_rule_entries,
+        title="Грамматические ориентиры:",
+        kb_attr=None,
+        uses_structural_call=False,
+        candidate_attr="grammar_candidates",
+    )
+    trace = AssemblyTrace()
+    current_total = builder._process_registry_block(
+        block_cfg, kb, req, lines, meta, 0, trace, LimitsConfig()
+    )
+    assert len(lines) > 0
+    assert "Грамматические ориентиры:" in lines[0]
+    assert trace.blocks[0].included is True
+
+
+def test_process_registry_block_skips_block_when_budget_disabled():
+    """Проверяет, что блок пропускается при отключённом бюджете."""
+    builder = PromptBuilder()
+    lines = []
+    meta = {}
+    req = KnowledgeBlockRequest(
+        text="test",
+        primary_tags=set(),
+        expanded_tags=set(),
+        budget=KnowledgeBudget({"grammar": BlockBudget(entry_limit=5, char_budget=None, enabled=False)}),
+        domain="blog",
+        intent=None,
+        overlays=[],
+        include_few_shot=False,
+        total_few_shot_used=0,
+        limits=LimitsConfig(),
+        storytelling_enabled=False,
+        marketing_enabled=False,
+        antiai_enabled=False,
+        rhetoric_enabled=False,
+        nkrj_enabled=False,
+        editorial_enabled=False,
+        return_trace=True,
+        semantic_rerank=False,
+    )
+    kb = make_mock_kb({"grammar_errors": [{"wrong": "x"}]})
+    block_cfg = KBBlockConfig(name="grammar", budget_key="grammar", retrieval_fn=None, append_fn=None, title="", kb_attr=None, uses_structural_call=False, candidate_attr=None)
+    trace = AssemblyTrace()
+    builder._process_registry_block(block_cfg, kb, req, lines, meta, 0, trace, LimitsConfig())
+    assert len(lines) == 0
+    assert trace.blocks[0].eligible is False
+    assert ReasonCode.BLOCK_INELIGIBLE_BUDGET_DISABLED in trace.blocks[0].reason_codes

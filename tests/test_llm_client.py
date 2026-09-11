@@ -16,13 +16,18 @@ from src.llm_client import (
     LLMFallbackError,
     LLMAPIError,
     LLMTimeoutError,
+    LLMResponse,
     call_with_fallback,
     estimate_max_tokens,
     _MIN_MAX_TOKENS,
     _MAX_MAX_TOKENS,
     _CHARS_PER_TOKEN,
     LLMProvider,
+    _resolve_provider_max_tokens,
+    _try_provider,
+    _build_fallback_error,
 )
+from src.context_budget import LLMContextLimitError
 
 
 # ---------------------------------------------------------------------------
@@ -303,3 +308,179 @@ async def test_fallback_model_passed_only_to_first_provider() -> None:
     assert calls[0]["model"] == "gpt-4"
     # Второй вызов (anthropic) должен получить model=None
     assert calls[1]["model"] is None
+
+
+# ---------------------------------------------------------------------------
+# НОВЫЕ ТЕСТЫ ДЛЯ ХЕЛПЕРОВ call_with_fallback
+# ---------------------------------------------------------------------------
+
+def test_resolve_provider_max_tokens_explicit():
+    """Явно переданный max_tokens возвращается без вычислений."""
+    result = _resolve_provider_max_tokens(
+        provider_name="openrouter",
+        model=None,
+        prompt="test",
+        source_text=None,
+        explicit_max_tokens=1000,
+    )
+    assert result == 1000
+
+
+def test_resolve_provider_max_tokens_with_source():
+    """При наличии source_text вычисляется бюджет."""
+    with patch("src.llm_client.get_context_profile_from_env") as mock_profile, \
+         patch("src.llm_client.resolve_context_budget") as mock_budget:
+        mock_profile.return_value = MagicMock(context_window=8192, safety_margin=512, mode="observe")
+        mock_budget.return_value = MagicMock(effective_output_tokens=768, was_capped=False, mode="observe")
+
+        result = _resolve_provider_max_tokens(
+            provider_name="openrouter",
+            model=None,
+            prompt="test",
+            source_text="source",
+            explicit_max_tokens=None,
+        )
+        assert result == 768
+
+
+def test_resolve_provider_max_tokens_zero_budget_skips():
+    """Если effective_output_tokens <= 0, возвращается None."""
+    with patch("src.llm_client.get_context_profile_from_env") as mock_profile, \
+         patch("src.llm_client.resolve_context_budget") as mock_budget:
+        mock_profile.return_value = MagicMock(context_window=8192, safety_margin=512, mode="enforce")
+        mock_budget.return_value = MagicMock(effective_output_tokens=0)
+
+        result = _resolve_provider_max_tokens(
+            provider_name="openrouter",
+            model=None,
+            prompt="test",
+            source_text="source",
+            explicit_max_tokens=None,
+        )
+        assert result is None
+
+
+def test_resolve_provider_max_tokens_context_limit_skips():
+    """LLMContextLimitError приводит к пропуску провайдера (None)."""
+    with patch("src.llm_client.get_context_profile_from_env") as mock_profile, \
+         patch("src.llm_client.resolve_context_budget") as mock_budget:
+        mock_profile.return_value = MagicMock(context_window=8192, safety_margin=512, mode="enforce")
+        # Правильное создание исключения со всеми обязательными аргументами
+        error = LLMContextLimitError(
+            provider="openrouter",
+            model="auto",
+            input_tokens_estimate=1000,
+            requested_output_tokens=100,
+            available_output_tokens=0,
+            context_window=8192,
+            reason="insufficient_output_budget",
+            mode="enforce"
+        )
+        mock_budget.side_effect = error
+
+        result = _resolve_provider_max_tokens(
+            provider_name="openrouter",
+            model=None,
+            prompt="test",
+            source_text="source",
+            explicit_max_tokens=None,
+        )
+        assert result is None
+
+
+def test_resolve_provider_max_tokens_fallback_estimate():
+    """Без source_text и без explicit используется estimate_max_tokens."""
+    with patch("src.llm_client.estimate_max_tokens", return_value=999):
+        result = _resolve_provider_max_tokens(
+            provider_name="openrouter",
+            model=None,
+            prompt="test",
+            source_text=None,
+            explicit_max_tokens=None,
+        )
+        assert result == 999
+
+
+@pytest.mark.asyncio
+async def test_try_provider_success():
+    """Успешный вызов провайдера возвращает LLMResponse."""
+    mock_response = MagicMock(spec=LLMResponse)
+    mock_client = AsyncMock()
+    mock_client.generate = AsyncMock(return_value=mock_response)
+    mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+    mock_client.__aexit__ = AsyncMock(return_value=False)
+
+    with patch("src.llm_client.create_llm_client", return_value=mock_client):
+        response = await _try_provider(
+            provider_enum=LLMProvider.OPENROUTER,
+            model=None,
+            prompt="test",
+            temperature=0.3,
+            max_retries=1,
+            max_tokens=100,
+        )
+        assert response is mock_response
+
+
+@pytest.mark.asyncio
+async def test_try_provider_value_error():
+    """ValueError (нет ключа) пробрасывается дальше."""
+    with patch("src.llm_client.create_llm_client", side_effect=ValueError("Missing key")):
+        with pytest.raises(ValueError):
+            await _try_provider(
+                provider_enum=LLMProvider.OPENROUTER,
+                model=None,
+                prompt="test",
+                temperature=0.3,
+                max_retries=1,
+                max_tokens=100,
+            )
+
+
+@pytest.mark.asyncio
+async def test_try_provider_llm_error():
+    """LLMError пробрасывается."""
+    with patch("src.llm_client.create_llm_client", side_effect=LLMError("API error")):
+        with pytest.raises(LLMError):
+            await _try_provider(
+                provider_enum=LLMProvider.OPENROUTER,
+                model=None,
+                prompt="test",
+                temperature=0.3,
+                max_retries=1,
+                max_tokens=100,
+            )
+
+
+def test_build_fallback_error_with_primary():
+    """С первичной ошибкой заполняются все поля."""
+    primary = LLMAPIError("Bad request", status_code=400)
+    error = _build_fallback_error(
+        primary_error=primary,
+        primary_provider="openrouter",
+        skipped_providers=["anthropic"],
+        unknown_providers=["foo"],
+        prompt_length=10,
+    )
+    assert error.kind == "upstream_error"  # 400 без context -> upstream_error
+    assert error.provider == "openrouter"
+    assert error.upstream_status == 400
+    assert error.skipped_providers == ("anthropic",)
+    assert error.unknown_providers == ("foo",)
+    assert error.prompt_length == 10
+
+
+def test_build_fallback_error_no_primary():
+    """Без первичной ошибки kind = configuration."""
+    error = _build_fallback_error(
+        primary_error=None,
+        primary_provider=None,
+        skipped_providers=["openrouter"],
+        unknown_providers=["foo"],
+        prompt_length=5,
+    )
+    assert error.kind == "configuration"
+    assert error.provider is None
+    assert error.upstream_status is None
+    assert error.skipped_providers == ("openrouter",)
+    assert error.unknown_providers == ("foo",)
