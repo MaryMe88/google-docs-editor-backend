@@ -7,14 +7,14 @@
 from __future__ import annotations
 
 import logging
-from typing import List, Optional, Sequence, Set
+from collections.abc import Sequence
 
 from src.shared_contracts import ALLOWED_INTENTS, ALLOWED_OVERLAYS
 
 logger = logging.getLogger(__name__)
 
 
-def normalize_intent(intent: Optional[str]) -> Optional[str]:
+def normalize_intent(intent: str | None) -> str | None:
     if intent is None or intent == "neutral":
         return None
     normalized = intent.lower().strip()
@@ -27,8 +27,8 @@ def normalize_intent(intent: Optional[str]) -> Optional[str]:
 def normalize_overlays(
     overlays: Sequence[str],
     *,
-    allowed_overlays: Optional[Set[str]] = None,
-) -> List[str]:
+    allowed_overlays: set[str] | None = None,
+) -> list[str]:
     """
     Нормализует overlay-имена.
 
@@ -42,7 +42,7 @@ def normalize_overlays(
         if allowed_overlays is None
         else allowed_overlays
     )
-    result: List[str] = []
+    result: list[str] = []
     for ov in overlays:
         norm = ov.lower().strip()
         if not norm:
@@ -54,7 +54,7 @@ def normalize_overlays(
     return result
 
 
-def normalize_string_list(value: List[str]) -> List[str]:
+def normalize_string_list(value: list[str]) -> list[str]:
     if not isinstance(value, list):
         return []
     result = []
@@ -67,7 +67,7 @@ def normalize_string_list(value: List[str]) -> List[str]:
 
 
 def _is_incompatible_intent(
-    effective_intent: Optional[str],
+    effective_intent: str | None,
     incompatible_intents: tuple,
 ) -> bool:
     """

@@ -8,13 +8,13 @@ from __future__ import annotations
 import json
 import logging
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Set, Union
+from typing import Any
 
 from src.config_types import KnowledgeBase
 from src.kb_manifest_loader import (
+    ManifestEntry,
     load_manifest,
     select_files_for_request,
-    ManifestEntry,
 )
 
 logger = logging.getLogger(__name__)
@@ -22,9 +22,9 @@ logger = logging.getLogger(__name__)
 
 def _load_kb_file(
     path: Path,
-    expected_key: Optional[str] = None,
+    expected_key: str | None = None,
     use_known_keys: bool = True,
-) -> Union[List[Dict[str, Any]], Dict[str, Any]]:
+) -> list[dict[str, Any]] | dict[str, Any]:
     if not path.exists():
         logger.warning("KB file not found: %s", path)
         return []
@@ -73,8 +73,8 @@ def _load_kb_file(
 
 def load_knowledge_base(
     kb_path: Path,
-    active_tags: Optional[Set[str]] = None,
-    intent: Optional[str] = None,
+    active_tags: set[str] | None = None,
+    intent: str | None = None,
     load_all: bool = False,
 ) -> KnowledgeBase:
     manifest = load_manifest(kb_path / "kb_manifest.json")
@@ -114,7 +114,7 @@ def load_knowledge_base(
             manifest, active_tags or set(), intent
         )
 
-    block_data: Dict[str, Any] = {}
+    block_data: dict[str, Any] = {}
     for entry in selected:
         full_path = kb_path / entry.file
         if not full_path.exists():

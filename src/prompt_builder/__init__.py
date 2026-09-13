@@ -12,47 +12,17 @@
 в часть публичного API пакета.
 """
 
-from .normalization import (
-    normalize_intent,
-    normalize_overlays,
-    normalize_string_list,
-)
-
-from .defaults import (
-    ALLOWED_KB_LIMIT_KEYS,
-    ALLOWED_EDIT_LEVELS,
-    KB_LIMIT_MIN,
-    KB_LIMIT_MAX,
-)
-
-from .config_loaders import (
-    load_json_file,
-    load_core_config,
-    load_domain_config,
-    load_intent_config,
-    load_overlay_config,
-    load_overlay_configs,
-    load_output_format,
-)
-
-from .kb_loading import load_knowledge_base
-
-from .kb_rendering import (
-    KBBlockConfig,
-    KB_BLOCK_REGISTRY,
-    DEFAULT_CANDIDATE_LIMIT,
-    ProcessContext,
-)
-
-from .feature_resolution import resolve_prompt_features
-
-from .builder import PromptBuilder, KnowledgeBlockRequest
-
 # Реэкспорт из config_types для обратной совместимости
 from src.config_types import (
+    AssemblyBlockDiagnostics,
+    AssemblyTrace,
     AudienceProfile,
+    BlockBudget,
+    CachePolicy,
     CoreConfig,
     DomainConfig,
+    FeatureResolutionResult,
+    FileCache,
     IntentConfig,
     KnowledgeBase,
     KnowledgeBudget,
@@ -60,14 +30,19 @@ from src.config_types import (
     KnowledgeLevel,
     LimitsConfig,
     OverlayConfig,
-    BlockBudget,
-    AssemblyBlockDiagnostics,
-    AssemblyTrace,
-    FeatureResolutionResult,
-    CachePolicy,
-    FileCache,
     get_canonical_tags_for_category,
     get_primary_tags_for_category,
+)
+
+# Реэкспорт из reason_codes
+from src.reason_codes import ReasonCode
+
+# Реэкспорт из registry
+from src.registry import (
+    CANONICAL_FEATURE_ALIASES,
+    KNOWN_FEATURE_ALIASES,
+    check_alias_consistency,
+    get_features_from_tags,
 )
 
 # Реэкспорт из shared_contracts
@@ -78,17 +53,38 @@ from src.shared_contracts import (
     ALLOWED_OVERLAYS,
 )
 
-# Реэкспорт из reason_codes
-from src.reason_codes import ReasonCode
-
-# Реэкспорт из registry
-from src.registry import (
-    CANONICAL_FEATURE_ALIASES,
-    KNOWN_FEATURE_ALIASES,
-    get_features_from_tags,
-    check_alias_consistency,
+from .builder import KnowledgeBlockRequest, PromptBuilder
+from .config_loaders import (
+    load_core_config,
+    load_domain_config,
+    load_intent_config,
+    load_json_file,
+    load_output_format,
+    load_overlay_config,
+    load_overlay_configs,
+)
+from .defaults import (
+    ALLOWED_EDIT_LEVELS,
+    ALLOWED_KB_LIMIT_KEYS,
+    KB_LIMIT_MAX,
+    KB_LIMIT_MIN,
+)
+from .feature_resolution import resolve_prompt_features
+from .kb_loading import load_knowledge_base
+from .kb_rendering import (
+    DEFAULT_CANDIDATE_LIMIT,
+    KB_BLOCK_REGISTRY,
+    KBBlockConfig,
+    ProcessContext,
+)
+from .normalization import (
+    normalize_intent,
+    normalize_overlays,
+    normalize_string_list,
 )
 
+# RUF022: __all__ намеренно сгруппирован по назначению (с комментариями),
+# а не отсортирован по алфавиту — читаемость важнее машинной сортировки.
 __all__ = [
     # Основной класс и dataclass запроса
     "PromptBuilder",
@@ -97,6 +93,7 @@ __all__ = [
     "load_core_config",
     "load_domain_config",
     "load_intent_config",
+    "load_json_file",
     "load_overlay_config",
     "load_overlay_configs",
     "load_output_format",

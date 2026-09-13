@@ -13,7 +13,6 @@ import json
 import logging
 from dataclasses import dataclass
 from pathlib import Path
-from typing import List, Optional, Set
 
 logger = logging.getLogger(__name__)
 
@@ -28,12 +27,12 @@ class ManifestEntry:
     file: str  # путь относительно knowledge_base/
     stage: str  # например "deai_cleanup", "editorial_core"
     load_mode: str  # "always" | "by_tags" | "by_intent" | "never"
-    tags: List[str]  # теги для загрузки по совпадению
-    intents: List[str]  # интенты для загрузки по совпадению
+    tags: list[str]  # теги для загрузки по совпадению
+    intents: list[str]  # интенты для загрузки по совпадению
     budget_weight: str  # "high" | "medium" | "low"
     status: str  # "active" | "disabled"
     priority: int  # порядок загрузки (меньше — раньше)
-    block_name: Optional[str] = (
+    block_name: str | None = (
         None  # имя блока для объединения нескольких файлов
     )
     block_type: str = (
@@ -41,7 +40,7 @@ class ManifestEntry:
     )
 
 
-def load_manifest(path: Path = DEFAULT_MANIFEST_PATH) -> List[ManifestEntry]:
+def load_manifest(path: Path = DEFAULT_MANIFEST_PATH) -> list[ManifestEntry]:
     """
     Загружает и парсит kb_manifest.json.
 
@@ -87,10 +86,10 @@ def load_manifest(path: Path = DEFAULT_MANIFEST_PATH) -> List[ManifestEntry]:
 
 
 def select_files_for_request(
-    manifest: List[ManifestEntry],
-    active_tags: Set[str],
-    intent: Optional[str] = None,
-) -> List[ManifestEntry]:
+    manifest: list[ManifestEntry],
+    active_tags: set[str],
+    intent: str | None = None,
+) -> list[ManifestEntry]:
     """
     Фильтрует записи манифеста по контексту запроса.
 

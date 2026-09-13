@@ -20,13 +20,13 @@
 from __future__ import annotations
 
 import re
-from typing import List, Pattern
+from re import Pattern
 
 __all__ = [
     "PLACEHOLDER_GUARD_INSTRUCTION",
     "find_placeholder_leaks",
-    "has_placeholder_leak",
     "harden_prompt_against_placeholders",
+    "has_placeholder_leak",
 ]
 
 
@@ -95,7 +95,7 @@ _GENERIC_TOKEN_PATTERN: Pattern[str] = re.compile(
 )
 
 
-def find_placeholder_leaks(text: str) -> List[str]:
+def find_placeholder_leaks(text: str) -> list[str]:
     """Возвращает отсортированный список уникальных найденных плейсхолдеров.
 
     Args:

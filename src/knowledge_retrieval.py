@@ -11,23 +11,17 @@ from __future__ import annotations
 
 import logging
 import re
-from dataclasses import dataclass, field
+from collections.abc import Iterable
+from dataclasses import dataclass
 from enum import Enum
 from typing import (
     Any,
-    Dict,
-    Iterable,
-    List,
     Literal,
-    Optional,
-    Set,
-    Tuple,
-    Union,
     overload,
 )
 
-from src.tag_registry import normalize_tag
 from src.scoring_weights import get_scoring_weight
+from src.tag_registry import normalize_tag
 
 logger = logging.getLogger(__name__)
 
@@ -46,7 +40,7 @@ class FallbackPolicy:
     allow_text_only: bool = True
     allow_tag_only: bool = True
     allow_neutral_fallback: bool = False
-    neutral_tags: Tuple[str, ...] = ("neutral", "editing", "clarity")
+    neutral_tags: tuple[str, ...] = ("neutral", "editing", "clarity")
     primary_only_for_tag_fallback: bool = True
     min_info_score_for_neutral: int = 1
 
@@ -78,18 +72,17 @@ class SelectionParams:
     """
     require_text_match: bool = False
     scorer: Any = None
-    candidate_limit: Optional[int] = None
+    candidate_limit: int | None = None
     debug_context: str = ""
-    expanded_tags: Optional[Set[str]] = None
-    min_score: Optional[int] = None
-    char_budget: Optional[int] = None
-    fallback_policy: Optional[FallbackPolicy] = None
+    expanded_tags: set[str] | None = None
+    min_score: int | None = None
+    char_budget: int | None = None
+    fallback_policy: FallbackPolicy | None = None
     return_meta: bool = False
     semantic_rerank: bool = False
 
 
 # ---------------------------------------------------------------------------
-# Вспомогательные функции (без изменений)
 # ---------------------------------------------------------------------------
 
 def normalize_text_for_match(text: str) -> str:
@@ -110,9 +103,9 @@ def _contains_pattern(normalized_text: str, pattern: str) -> bool:
     return norm_pattern in normalized_text
 
 
-def _get_entry_match_patterns(entry: Dict[str, Any]) -> List[str]:
-    patterns: List[str] = []
-    seen: Set[str] = set()
+def _get_entry_match_patterns(entry: dict[str, Any]) -> list[str]:
+    patterns: list[str] = []
+    seen: set[str] = set()
     for field in ("wrong", "name", "rule", "description"):
         value = entry.get(field)
         if isinstance(value, str):
@@ -123,13 +116,11 @@ def _get_entry_match_patterns(entry: Dict[str, Any]) -> List[str]:
     return patterns
 
 
-def _entry_info_score(entry: Dict[str, Any]) -> int:
+def _entry_info_score(entry: dict[str, Any]) -> int:
     score = 0
     for field in ("name", "description", "rule", "wrong", "when_to_use"):
         value = entry.get(field)
-        if isinstance(value, str) and value.strip():
-            score += 1
-        elif isinstance(value, list) and value:
+        if (isinstance(value, str) and value.strip()) or (isinstance(value, list) and value):
             score += 1
     for container_key in ("steps", "sections"):
         container = entry.get(container_key)
@@ -138,7 +129,7 @@ def _entry_info_score(entry: Dict[str, Any]) -> int:
     return score
 
 
-def _estimate_entry_chars(entry: Dict[str, Any]) -> int:
+def _estimate_entry_chars(entry: dict[str, Any]) -> int:
     total = 0
     for field in (
         "wrong", "correct", "rule", "description", "name",
@@ -161,12 +152,12 @@ def _estimate_entry_chars(entry: Dict[str, Any]) -> int:
 
 
 def score_rule_entry(
-    entry: Dict[str, Any],
+    entry: dict[str, Any],
     normalized_text: str,
-    wanted_tags: Set[str],
+    wanted_tags: set[str],
     idx: int,
-    expanded_tags: Optional[Set[str]] = None,
-) -> Tuple[int, int]:
+    expanded_tags: set[str] | None = None,
+) -> tuple[int, int]:
     score = 0
     wrong_val = entry.get("wrong", "")
     if isinstance(wrong_val, str):
@@ -196,14 +187,14 @@ def score_rule_entry(
 
 
 def score_structural_entry(
-    entry: Dict[str, Any],
+    entry: dict[str, Any],
     normalized_text: str,
-    wanted_tags: Set[str],
+    wanted_tags: set[str],
     idx: int,
-    expanded_tags: Optional[Set[str]] = None,
-) -> Tuple[int, int]:
+    expanded_tags: set[str] | None = None,
+) -> tuple[int, int]:
     score = 0
-    patterns: List[str] = []
+    patterns: list[str] = []
 
     def add_field(field: str) -> None:
         value = entry.get(field)
@@ -241,8 +232,8 @@ def score_structural_entry(
                         if stripped:
                             patterns.append(stripped)
 
-    unique_patterns: List[str] = []
-    seen: Set[str] = set()
+    unique_patterns: list[str] = []
+    seen: set[str] = set()
     for pattern in patterns:
         if pattern not in seen:
             seen.add(pattern)
@@ -273,20 +264,22 @@ def score_structural_entry(
     return score, -idx
 
 
-def _make_dedupe_key(entry: Dict[str, Any]) -> Tuple[Any, ...]:
+def _make_dedupe_key(entry: dict[str, Any]) -> tuple[Any, ...]:
     if "id" in entry:
         return ("id", entry["id"])
-    def _container_signature(key: str) -> Tuple[Any, ...]:
+
+    def _container_signature(key: str) -> tuple[Any, ...]:
         container = entry.get(key)
         if not isinstance(container, list):
             return ()
-        parts: List[str] = []
+        parts: list[str] = []
         for item in container:
             if isinstance(item, dict):
                 parts.append(
                     str(item.get("name", "")) + "|" + str(item.get("description", ""))
                 )
         return tuple(parts)
+
     return (
         entry.get("wrong", ""),
         entry.get("rule", ""),
@@ -297,18 +290,18 @@ def _make_dedupe_key(entry: Dict[str, Any]) -> Tuple[Any, ...]:
     )
 
 
-def _normalize_tag_set(tags: Iterable[str]) -> Set[str]:
+def _normalize_tag_set(tags: Iterable[str]) -> set[str]:
     return {normalize_tag(tag) for tag in tags if isinstance(tag, str)}
 
 
-def _get_entry_tag_set(entry: Dict[str, Any]) -> Set[str]:
+def _get_entry_tag_set(entry: dict[str, Any]) -> set[str]:
     raw_tags = entry.get("tags", [])
     if not isinstance(raw_tags, (list, tuple)):
         return set()
     return {normalize_tag(tag) for tag in raw_tags if isinstance(tag, str)}
 
 
-def _get_text_match_strength(entry: Dict[str, Any], normalized_text: str) -> int:
+def _get_text_match_strength(entry: dict[str, Any], normalized_text: str) -> int:
     if not normalized_text:
         return 0
     patterns = _get_entry_match_patterns(entry)
@@ -323,20 +316,20 @@ def _get_text_match_strength(entry: Dict[str, Any], normalized_text: str) -> int
     return 0
 
 
-def _has_text_match(entry: Dict[str, Any], normalized_text: str) -> bool:
+def _has_text_match(entry: dict[str, Any], normalized_text: str) -> bool:
     return _get_text_match_strength(entry, normalized_text) > 0
 
 
-def _get_primary_overlap(entry: Dict[str, Any], wanted_tags: Set[str]) -> int:
+def _get_primary_overlap(entry: dict[str, Any], wanted_tags: set[str]) -> int:
     if not wanted_tags:
         return 0
     return len(_get_entry_tag_set(entry) & wanted_tags)
 
 
 def _get_any_overlap(
-    entry: Dict[str, Any],
-    wanted_tags: Set[str],
-    expanded_tags: Optional[Set[str]],
+    entry: dict[str, Any],
+    wanted_tags: set[str],
+    expanded_tags: set[str] | None,
 ) -> int:
     tag_set = _get_entry_tag_set(entry)
     overlap = len(tag_set & wanted_tags)
@@ -345,7 +338,7 @@ def _get_any_overlap(
     return overlap
 
 
-def _is_neutral_candidate(entry: Dict[str, Any], policy: FallbackPolicy) -> bool:
+def _is_neutral_candidate(entry: dict[str, Any], policy: FallbackPolicy) -> bool:
     tag_set = _get_entry_tag_set(entry)
     if not tag_set:
         return False
@@ -355,15 +348,15 @@ def _is_neutral_candidate(entry: Dict[str, Any], policy: FallbackPolicy) -> bool
 
 
 def _collect_with_budget(
-    ranked_entries: List[Dict[str, Any]],
+    ranked_entries: list[dict[str, Any]],
     limit: int,
-    char_budget: Optional[int],
-) -> Tuple[List[Dict[str, Any]], int]:
-    result: List[Dict[str, Any]] = []
-    seen_keys: Set[Tuple[Any, ...]] = set()
+    char_budget: int | None,
+) -> tuple[list[dict[str, Any]], int]:
+    result: list[dict[str, Any]] = []
+    seen_keys: set[tuple[Any, ...]] = set()
     chars_used = 0
     dropped = 0
-    for idx, entry in enumerate(ranked_entries):
+    for _idx, entry in enumerate(ranked_entries):
         key = _make_dedupe_key(entry)
         if key in seen_keys:
             continue
@@ -382,8 +375,8 @@ def _collect_with_budget(
 def _log_stage_debug(
     debug_context: str,
     stage: FallbackStage,
-    candidates: List[Dict[str, Any]],
-    selected: List[Dict[str, Any]],
+    candidates: list[dict[str, Any]],
+    selected: list[dict[str, Any]],
 ) -> None:
     if not logger.isEnabledFor(logging.DEBUG):
         return
@@ -397,15 +390,15 @@ def _log_stage_debug(
     )
 
 
-def _sort_ranked(scored: List[Tuple[int, int, Dict[str, Any]]]) -> List[Dict[str, Any]]:
+def _sort_ranked(scored: list[tuple[int, int, dict[str, Any]]]) -> list[dict[str, Any]]:
     scored.sort(key=lambda item: (item[0], item[1]), reverse=True)
     return [entry for _, _, entry in scored]
 
 
 def _ensure_return_type(
-    result: Union[List[Dict[str, Any]], Tuple[List[Dict[str, Any]], FallbackStage, int]],
+    result: list[dict[str, Any]] | tuple[list[dict[str, Any]], FallbackStage, int],
     return_meta: bool,
-) -> Union[List[Dict[str, Any]], Tuple[List[Dict[str, Any]], FallbackStage, int]]:
+) -> list[dict[str, Any]] | tuple[list[dict[str, Any]], FallbackStage, int]:
     if return_meta:
         if not isinstance(result, tuple) or len(result) != 3:
             raise TypeError(
@@ -423,18 +416,18 @@ def _ensure_return_type(
 
 
 def _semantic_rerank(
-    entries: List[Dict[str, Any]],
+    entries: list[dict[str, Any]],
     query: str,
     semantic_weight: float = 0.35,
     top_k_factor: int = 3,
-) -> List[Dict[str, Any]]:
+) -> list[dict[str, Any]]:
     if not entries or not query or not query.strip() or semantic_weight <= 0:
         return entries
     try:
         from src.semantic_index import (
+            _entries_for_index,
             get_semantic_index,
             init_semantic_index,
-            _entries_for_index,
         )
         index = get_semantic_index()
         if index is None:
@@ -457,14 +450,14 @@ def _semantic_rerank(
     n = len(entries)
     top_k = min(n * top_k_factor, 200)
     semantic_results = index.search(query.strip(), top_k=top_k)
-    sem_score_map: Dict[int, float] = {
+    sem_score_map: dict[int, float] = {
         id(entry): score for entry, score in semantic_results
     }
 
     def keyword_rank_score(pos: int) -> float:
         return 1.0 - (pos / n) if n > 1 else 1.0
 
-    combined: List[Tuple[float, int, Dict[str, Any]]] = []
+    combined: list[tuple[float, int, dict[str, Any]]] = []
     for pos, entry in enumerate(entries):
         kw_score = keyword_rank_score(pos)
         sem_score = sem_score_map.get(id(entry), 0.0)
@@ -485,17 +478,17 @@ def _semantic_rerank(
 
 
 # ============================================================================
-# ВЫДЕЛЕННЫЕ СТАДИИ ДЛЯ _select_ranked_entries (исправлены сигнатуры)
+# Стадии _select_ranked_entries
 # ============================================================================
 
 def _try_strong_stage(
-    candidates: List[Dict[str, Any]],
+    candidates: list[dict[str, Any]],
     normalized_text: str,
-    wanted_set: Set[str],
+    wanted_set: set[str],
     params: SelectionParams,
     limit: int,
     policy: FallbackPolicy,
-) -> Optional[Tuple[List[Dict[str, Any]], int]]:
+) -> tuple[list[dict[str, Any]], int] | None:
     """Пытается выбрать записи strong-стадии."""
     effective_min_score = (
         policy.min_strong_score
@@ -504,7 +497,7 @@ def _try_strong_stage(
     )
     scorer = params.scorer or score_rule_entry
 
-    scored: List[Tuple[int, int, Dict[str, Any]]] = []
+    scored: list[tuple[int, int, dict[str, Any]]] = []
     for idx, entry in enumerate(candidates):
         score, tie = scorer(
             entry,
@@ -533,18 +526,18 @@ def _try_strong_stage(
 
 
 def _try_text_only_stage(
-    candidates: List[Dict[str, Any]],
+    candidates: list[dict[str, Any]],
     normalized_text: str,
-    wanted_set: Set[str],  # добавлен, но не используется
+    wanted_set: set[str],  # часть единой сигнатуры стадий; здесь не используется
     params: SelectionParams,
     limit: int,
     policy: FallbackPolicy,
-) -> Optional[Tuple[List[Dict[str, Any]], int]]:
+) -> tuple[list[dict[str, Any]], int] | None:
     """Пытается выбрать записи text_only-стадии."""
     if not policy.allow_text_only:
         return None
 
-    text_only_scored: List[Tuple[int, int, Dict[str, Any]]] = []
+    text_only_scored: list[tuple[int, int, dict[str, Any]]] = []
     for idx, entry in enumerate(candidates):
         text_strength = _get_text_match_strength(entry, normalized_text)
         if text_strength <= 0:
@@ -568,18 +561,18 @@ def _try_text_only_stage(
 
 
 def _try_tag_only_stage(
-    candidates: List[Dict[str, Any]],
-    normalized_text: str,  # добавлен, но не используется
-    wanted_set: Set[str],
+    candidates: list[dict[str, Any]],
+    normalized_text: str,  # часть единой сигнатуры стадий; здесь не используется
+    wanted_set: set[str],
     params: SelectionParams,
     limit: int,
     policy: FallbackPolicy,
-) -> Optional[Tuple[List[Dict[str, Any]], int]]:
+) -> tuple[list[dict[str, Any]], int] | None:
     """Пытается выбрать записи tag_only-стадии."""
     if not policy.allow_tag_only:
         return None
 
-    tag_only_scored: List[Tuple[int, int, int, Dict[str, Any]]] = []
+    tag_only_scored: list[tuple[int, int, int, dict[str, Any]]] = []
     for idx, entry in enumerate(candidates):
         if policy.primary_only_for_tag_fallback:
             overlap = _get_primary_overlap(entry, wanted_set)
@@ -609,18 +602,18 @@ def _try_tag_only_stage(
 
 
 def _try_neutral_stage(
-    candidates: List[Dict[str, Any]],
-    normalized_text: str,  # добавлен, но не используется
-    wanted_set: Set[str],  # добавлен, но не используется
+    candidates: list[dict[str, Any]],
+    normalized_text: str,  # часть единой сигнатуры стадий; здесь не используется
+    wanted_set: set[str],  # часть единой сигнатуры стадий; здесь не используется
     params: SelectionParams,
     limit: int,
     policy: FallbackPolicy,
-) -> Optional[Tuple[List[Dict[str, Any]], int]]:
+) -> tuple[list[dict[str, Any]], int] | None:
     """Пытается выбрать записи neutral-стадии."""
     if not policy.allow_neutral_fallback:
         return None
 
-    neutral_scored: List[Tuple[int, int, Dict[str, Any]]] = []
+    neutral_scored: list[tuple[int, int, dict[str, Any]]] = []
     for idx, entry in enumerate(candidates):
         if not _is_neutral_candidate(entry, policy):
             continue
@@ -643,16 +636,16 @@ def _try_neutral_stage(
 
 
 # ============================================================================
-# ОСНОВНАЯ ФУНКЦИЯ (теперь координатор)
+# Основная функция — координатор стадий
 # ============================================================================
 
 def _select_ranked_entries(
-    entries: List[Dict[str, Any]],
+    entries: list[dict[str, Any]],
     normalized_text: str,
     wanted_tags: Iterable[str],
     limit: int,
     params: SelectionParams,
-) -> Union[List[Dict[str, Any]], Tuple[List[Dict[str, Any]], FallbackStage, int]]:
+) -> list[dict[str, Any]] | tuple[list[dict[str, Any]], FallbackStage, int]:
     """
     Общая функция ранжирования записей с quality-gated fallback.
     Стадии: strong -> text_only -> tag_only -> neutral -> empty.
@@ -702,7 +695,7 @@ def _select_ranked_entries(
 
 
 # ---------------------------------------------------------------------------
-# Публичные функции (без изменений)
+# Публичные функции
 # ---------------------------------------------------------------------------
 
 _CATEGORY_CONFIG = {
@@ -739,14 +732,14 @@ def select_entries(
     text: str,
     tags: Iterable[str],
     category: Literal["grammar", "style", "logic", "structural"],
-    params: Optional[SelectionParams] = None,
+    params: SelectionParams | None = None,
     limit: int = 10,
-    candidate_limit: Optional[int] = None,
+    candidate_limit: int | None = None,
     min_score: int = 1,
-    char_budget: Optional[int] = None,
+    char_budget: int | None = None,
     return_meta: bool = False,
     semantic_rerank: bool = False,
-) -> List[Dict[str, Any]]: ...
+) -> list[dict[str, Any]]: ...
 
 
 @overload
@@ -755,14 +748,14 @@ def select_entries(
     text: str,
     tags: Iterable[str],
     category: Literal["grammar", "style", "logic", "structural"],
-    params: Optional[SelectionParams] = None,
+    params: SelectionParams | None = None,
     limit: int = 10,
-    candidate_limit: Optional[int] = None,
+    candidate_limit: int | None = None,
     min_score: int = 1,
-    char_budget: Optional[int] = None,
+    char_budget: int | None = None,
     return_meta: Literal[True] = True,
     semantic_rerank: bool = False,
-) -> Tuple[List[Dict[str, Any]], FallbackStage, int]: ...
+) -> tuple[list[dict[str, Any]], FallbackStage, int]: ...
 
 
 def select_entries(
@@ -770,14 +763,14 @@ def select_entries(
     text: str,
     tags: Iterable[str],
     category: Literal["grammar", "style", "logic", "structural"],
-    params: Optional[SelectionParams] = None,
+    params: SelectionParams | None = None,
     limit: int = 10,
-    candidate_limit: Optional[int] = None,
+    candidate_limit: int | None = None,
     min_score: int = 1,
-    char_budget: Optional[int] = None,
+    char_budget: int | None = None,
     return_meta: bool = False,
     semantic_rerank: bool = False,
-) -> Union[List[Dict[str, Any]], Tuple[List[Dict[str, Any]], FallbackStage, int]]:
+) -> list[dict[str, Any]] | tuple[list[dict[str, Any]], FallbackStage, int]:
     if params is None:
         scorer = score_rule_entry if category != "structural" else score_structural_entry
         fb_policy = (
@@ -852,12 +845,12 @@ def select_grammar_rules(
     text: str,
     tags: Iterable[str],
     limit: int = 10,
-    candidate_limit: Optional[int] = None,
+    candidate_limit: int | None = None,
     min_score: int = 1,
-    char_budget: Optional[int] = None,
+    char_budget: int | None = None,
     return_meta: bool = False,
     semantic_rerank: bool = False,
-) -> Union[List[Dict[str, Any]], Tuple[List[Dict[str, Any]], FallbackStage, int]]:
+) -> list[dict[str, Any]] | tuple[list[dict[str, Any]], FallbackStage, int]:
     params = SelectionParams(
         scorer=score_rule_entry,
         candidate_limit=candidate_limit,
@@ -882,12 +875,12 @@ def select_style_issues(
     text: str,
     tags: Iterable[str],
     limit: int = 10,
-    candidate_limit: Optional[int] = None,
+    candidate_limit: int | None = None,
     min_score: int = 1,
-    char_budget: Optional[int] = None,
+    char_budget: int | None = None,
     return_meta: bool = False,
     semantic_rerank: bool = False,
-) -> Union[List[Dict[str, Any]], Tuple[List[Dict[str, Any]], FallbackStage, int]]:
+) -> list[dict[str, Any]] | tuple[list[dict[str, Any]], FallbackStage, int]:
     params = SelectionParams(
         scorer=score_rule_entry,
         candidate_limit=candidate_limit,
@@ -912,12 +905,12 @@ def select_logic_issues(
     text: str,
     tags: Iterable[str],
     limit: int = 8,
-    candidate_limit: Optional[int] = None,
+    candidate_limit: int | None = None,
     min_score: int = 1,
-    char_budget: Optional[int] = None,
+    char_budget: int | None = None,
     return_meta: bool = False,
     semantic_rerank: bool = False,
-) -> Union[List[Dict[str, Any]], Tuple[List[Dict[str, Any]], FallbackStage, int]]:
+) -> list[dict[str, Any]] | tuple[list[dict[str, Any]], FallbackStage, int]:
     params = SelectionParams(
         scorer=score_rule_entry,
         candidate_limit=candidate_limit,
@@ -938,14 +931,14 @@ def select_logic_issues(
 
 
 def select_structural_by_tags_or_all(
-    entries: List[Dict[str, Any]],
+    entries: list[dict[str, Any]],
     tags: Iterable[str],
     limit: int,
-    expanded_tags: Optional[Set[str]] = None,
-    min_score: Optional[int] = None,
-    char_budget: Optional[int] = None,
+    expanded_tags: set[str] | None = None,
+    min_score: int | None = None,
+    char_budget: int | None = None,
     return_meta: bool = False,
-) -> Union[List[Dict[str, Any]], Tuple[List[Dict[str, Any]], FallbackStage, int]]:
+) -> list[dict[str, Any]] | tuple[list[dict[str, Any]], FallbackStage, int]:
     params = SelectionParams(
         scorer=score_structural_entry,
         candidate_limit=None,

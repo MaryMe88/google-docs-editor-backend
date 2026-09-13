@@ -5,7 +5,7 @@
 """
 
 from enum import Enum
-from typing import Final, Set
+from typing import Final
 
 
 class ReasonCode(str, Enum):
@@ -77,7 +77,7 @@ class ReasonCode(str, Enum):
 
 
 # Множество всех activation reasons (для быстрой проверки)
-ACTIVATION_REASONS: Final[Set[str]] = {
+ACTIVATION_REASONS: Final[set[str]] = {
     ReasonCode.DOMAIN_ALLOWS_STORYTELLING,
     ReasonCode.DOMAIN_ALLOWS_MARKETING,
     ReasonCode.RECOGNIZED_STORYTELLING_ALIAS,
@@ -90,7 +90,7 @@ ACTIVATION_REASONS: Final[Set[str]] = {
 }
 
 # Множество всех suppression reasons
-SUPPRESSION_REASONS: Final[Set[str]] = {
+SUPPRESSION_REASONS: Final[set[str]] = {
     ReasonCode.SUPPRESSED_BY_DOMAIN_PRIORITY,
     ReasonCode.SUPPRESSED_BY_DOMAIN_RULE,
     ReasonCode.SUPPRESSED_BY_OVERLAY_RULE,

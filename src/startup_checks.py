@@ -5,29 +5,28 @@ import json
 import logging
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Dict, List, Set, Optional, Tuple
+from typing import Any
 
 from src.config_types import (
     DomainConfig,
     IntentConfig,
     OverlayConfig,
 )
-from src.reason_codes import ReasonCode, ACTIVATION_REASONS
-from src.tag_registry import (
-    normalize_tag,
-    get_canonical_tag_names,
-)
-from src.registry import check_alias_consistency, CANONICAL_FEATURE_ALIASES
 from src.prompt_builder import (
     load_domain_config,
     load_intent_config,
     load_overlay_config,
-    KnowledgeBlockRequest,
 )
+from src.reason_codes import ACTIVATION_REASONS, ReasonCode
+from src.registry import CANONICAL_FEATURE_ALIASES, check_alias_consistency
 from src.shared_contracts import (
     ALLOWED_DOMAINS,
     ALLOWED_INTENTS,
     ALLOWED_OVERLAYS,
+)
+from src.tag_registry import (
+    get_canonical_tag_names,
+    normalize_tag,
 )
 
 logger = logging.getLogger(__name__)
@@ -36,9 +35,9 @@ logger = logging.getLogger(__name__)
 @dataclass(frozen=True)
 class StartupCheckParams:
     """Параметры для запуска проверок при старте."""
-    allowed_domains: Set[str]
-    allowed_intents: Set[str]
-    allowed_overlays: Set[str]
+    allowed_domains: set[str]
+    allowed_intents: set[str]
+    allowed_overlays: set[str]
     config_path: Path = Path("config")
     kb_path: Path = Path("knowledge_base")
 
@@ -49,7 +48,7 @@ class StartupCheckParams:
 
 def _check_domain_files_strict(
     config_path: Path,
-    allowed_domains: Set[str],
+    allowed_domains: set[str],
 ) -> None:
     """Проверяет, что для каждого домена из ALLOWED_DOMAINS есть файл, и нет лишних файлов."""
     domains_dir = config_path / "domains"
@@ -88,7 +87,7 @@ def _check_domain_files_strict(
 
 def _check_intent_files_strict(
     config_path: Path,
-    allowed_intents: Set[str],
+    allowed_intents: set[str],
 ) -> None:
     """Проверяет файлы интентов, кроме neutral, и отсутствие лишних."""
     intents_dir = config_path / "intents"
@@ -141,7 +140,7 @@ def _check_intent_files_strict(
 
 def _check_overlay_files_strict(
     config_path: Path,
-    allowed_overlays: Set[str],
+    allowed_overlays: set[str],
 ) -> None:
     """Проверяет файлы оверлеев и отсутствие лишних."""
     overlays_dir = config_path / "overlays"
@@ -180,7 +179,7 @@ def _check_overlay_files_strict(
         )
 
 
-def _check_overlay_names_idempotent(allowed_overlays: Set[str]) -> None:
+def _check_overlay_names_idempotent(allowed_overlays: set[str]) -> None:
     """PR-4 (НП-1): проверяет, что имена файлов оверлеев идемпотентны к normalize_tag."""
     bad: list[str] = []
     for name in allowed_overlays:
@@ -245,8 +244,8 @@ def _check_scoring_weights_file(config_path: Path) -> None:
 # Проверка тегов в KB (мягкая, не блокирующая)
 # ============================================================================
 
-def _flatten_records(item: Any) -> List[Dict[str, Any]]:
-    records: List[Dict[str, Any]] = []
+def _flatten_records(item: Any) -> list[dict[str, Any]]:
+    records: list[dict[str, Any]] = []
     if isinstance(item, dict):
         nested_keys = [
             k
@@ -265,14 +264,14 @@ def _flatten_records(item: Any) -> List[Dict[str, Any]]:
     return records
 
 
-_KB_FILES_WITHOUT_TAGS: Set[str] = {
+_KB_FILES_WITHOUT_TAGS: set[str] = {
     "stop_words.json",
     "nkrj_structure_patterns.json",
 }
 
 
-def _collect_kb_tags(kb_path: Path) -> Set[str]:
-    kb_tags: Set[str] = set()
+def _collect_kb_tags(kb_path: Path) -> set[str]:
+    kb_tags: set[str] = set()
     if not kb_path.is_dir():
         logger.warning("Knowledge base directory not found: %s", kb_path)
         return kb_tags
@@ -296,7 +295,7 @@ def _collect_kb_tags(kb_path: Path) -> Set[str]:
                 f"Failed to load KB file {file_path.name}: {e}"
             ) from e
 
-        items: List[Dict[str, Any]] = []
+        items: list[dict[str, Any]] = []
         if isinstance(data, list):
             items = data
         elif isinstance(data, dict):
@@ -355,9 +354,9 @@ def _check_tags_vs_kb(kb_path: Path) -> None:
 
 def _check_tag_map_coverage(
     config_path: Path,
-    allowed_domains: Set[str],
-    allowed_intents: Set[str],
-    allowed_overlays: Set[str],
+    allowed_domains: set[str],
+    allowed_intents: set[str],
+    allowed_overlays: set[str],
 ) -> None:
     from src.config_types import CANONICAL_TAGS
 
@@ -518,14 +517,14 @@ def _check_feature_resolution_invariants(config_path: Path) -> None:
 
 def _check_assembly_diagnostics_invariants(config_path: Path) -> None:
     try:
+        from src.config_types import KnowledgeLevel
         from src.prompt_builder import (
-            PromptBuilder,
-            KnowledgeBudgetManager,
-            resolve_prompt_features,
             KnowledgeBlockRequest,
+            KnowledgeBudgetManager,
+            PromptBuilder,
+            resolve_prompt_features,
         )
         from src.prompt_builder.kb_rendering import _collect_retrieval_tags
-        from src.config_types import KnowledgeLevel
     except ImportError as e:
         logger.warning(
             "Cannot import prompt_builder for assembly invariants check: %s", e
@@ -666,7 +665,7 @@ def _normalize_ref_name(ref: str) -> str:
     return ref
 
 
-def _normalize_reference(ref: str) -> Tuple[Optional[str], str]:
+def _normalize_reference(ref: str) -> tuple[str | None, str]:
     """
     Разбирает ссылку вида 'intent:name', 'overlay:name', 'feature:name' или просто 'name'.
     Возвращает (тип, имя) или (None, имя) если тип не указан.
@@ -683,13 +682,13 @@ def _is_valid_feature(feature_name: str) -> bool:
     return feature_name in CANONICAL_FEATURE_ALIASES
 
 
-def _load_all_configs(config_path: Path) -> Tuple[
-    Dict[str, DomainConfig],
-    Dict[str, IntentConfig],
-    Dict[str, OverlayConfig],
+def _load_all_configs(config_path: Path) -> tuple[
+    dict[str, DomainConfig],
+    dict[str, IntentConfig],
+    dict[str, OverlayConfig],
 ]:
     """Загружает все конфиги доменов, интентов и оверлеев."""
-    domains: Dict[str, DomainConfig] = {}
+    domains: dict[str, DomainConfig] = {}
     for domain_name in ALLOWED_DOMAINS:
         try:
             domains[domain_name] = load_domain_config(domain_name, config_path)
@@ -698,7 +697,7 @@ def _load_all_configs(config_path: Path) -> Tuple[
                 f"Failed to load domain config for {domain_name}: {e}"
             ) from e
 
-    intents: Dict[str, IntentConfig] = {}
+    intents: dict[str, IntentConfig] = {}
     for intent_name in ALLOWED_INTENTS - {"neutral"}:
         try:
             cfg = load_intent_config(intent_name, config_path)
@@ -709,7 +708,7 @@ def _load_all_configs(config_path: Path) -> Tuple[
                 f"Failed to load intent config for {intent_name}: {e}"
             ) from e
 
-    overlays: Dict[str, OverlayConfig] = {}
+    overlays: dict[str, OverlayConfig] = {}
     for overlay_name in ALLOWED_OVERLAYS:
         try:
             overlays[overlay_name] = load_overlay_config(
@@ -724,9 +723,9 @@ def _load_all_configs(config_path: Path) -> Tuple[
 
 
 def _validate_references_in_configs(
-    domains: Dict[str, DomainConfig],
-    intents: Dict[str, IntentConfig],
-    overlays: Dict[str, OverlayConfig],
+    domains: dict[str, DomainConfig],
+    intents: dict[str, IntentConfig],
+    overlays: dict[str, OverlayConfig],
 ) -> None:
     """
     Проверяет все ссылки (suppresses, conflicts_with, incompatible_*) на существование.
@@ -802,7 +801,7 @@ def _validate_references_in_configs(
             )
 
 
-def _check_self_conflicts(overlays: Dict[str, OverlayConfig]) -> None:
+def _check_self_conflicts(overlays: dict[str, OverlayConfig]) -> None:
     """Проверяет, что ни один оверлей не ссылается сам на себя в conflicts_with."""
     for overlay_name, cfg in overlays.items():
         for ref in cfg.conflicts_with:
@@ -815,12 +814,12 @@ def _check_self_conflicts(overlays: Dict[str, OverlayConfig]) -> None:
 
 
 def _check_suppression_cycles(
-    domains: Dict[str, DomainConfig],
-    intents: Dict[str, IntentConfig],
-    overlays: Dict[str, OverlayConfig],
+    domains: dict[str, DomainConfig],
+    intents: dict[str, IntentConfig],
+    overlays: dict[str, OverlayConfig],
 ) -> None:
     """Строит граф suppression и проверяет на циклы."""
-    suppression_graph: Dict[str, Set[str]] = {}
+    suppression_graph: dict[str, set[str]] = {}
     for entity, cfg in {**domains, **intents, **overlays}.items():
         prefix = (
             "domain"
@@ -850,7 +849,7 @@ def _check_suppression_cycles(
                 )
 
 
-def _check_equal_priority_conflicts(overlays: Dict[str, OverlayConfig]) -> None:
+def _check_equal_priority_conflicts(overlays: dict[str, OverlayConfig]) -> None:
     """
     Проверяет, что для каждой пары конфликтующих оверлеев с одинаковым priority
     есть явный suppress в одном из них.

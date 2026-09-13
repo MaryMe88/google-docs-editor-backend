@@ -19,7 +19,7 @@ import math
 import os
 import re
 from dataclasses import dataclass
-from typing import Optional, Literal
+from typing import Literal
 
 # ---------------------------------------------------------------------------
 # Константы по умолчанию
@@ -61,7 +61,7 @@ class ModelContextProfile:
     """
 
     provider: str
-    model: Optional[str]
+    model: str | None
     context_window: int
     safety_margin: int
     mode: ContextBudgetMode
@@ -105,7 +105,7 @@ class LLMContextLimitError(Exception):
     def __init__(
         self,
         provider: str,
-        model: Optional[str],
+        model: str | None,
         input_tokens_estimate: int,
         requested_output_tokens: int,
         available_output_tokens: int,
@@ -194,7 +194,7 @@ def estimate_edit_output_tokens(
 # ---------------------------------------------------------------------------
 
 
-def _normalize_model_name_for_env(model: Optional[str]) -> str:
+def _normalize_model_name_for_env(model: str | None) -> str:
     """Нормализует имя модели для использования в имени переменной окружения."""
     if not model:
         return ""
@@ -205,7 +205,7 @@ def _normalize_model_name_for_env(model: Optional[str]) -> str:
 
 def get_context_profile_from_env(
     provider: str,
-    model: Optional[str] = None,
+    model: str | None = None,
 ) -> ModelContextProfile:
     """
     Загружает профиль контекста из переменных окружения.
@@ -333,12 +333,12 @@ def _get_mode(provider_upper: str) -> ContextBudgetMode:
 def resolve_context_budget(
     *,
     provider: str,
-    model: Optional[str],
+    model: str | None,
     prompt: str,
     source_text: str,
-    context_window: Optional[int] = None,
-    safety_margin: Optional[int] = None,
-    mode: Optional[ContextBudgetMode] = None,
+    context_window: int | None = None,
+    safety_margin: int | None = None,
+    mode: ContextBudgetMode | None = None,
 ) -> ContextBudget:
     """
     Рассчитывает итоговый контекстный бюджет.

@@ -22,19 +22,14 @@ from __future__ import annotations
 import json
 import logging
 import time
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
 from typing import (
     Any,
-    Callable,
-    Dict,
     Generic,
-    List,
-    Optional,
-    Set,
     TypeVar,
-    Union,
 )
 
 try:
@@ -50,6 +45,10 @@ from src.reason_codes import ReasonCode  # noqa: F401
 logger = logging.getLogger(__name__)
 V = TypeVar("V")
 
+# Sentinel для KnowledgeBase.get(): отличает «default не передан»
+# от «default передан как None/False/0/""/{}».
+_MISSING = object()
+
 
 # ============================================================================
 # Domain types — TypedDict и dataclass'ы для конфигов и базы знаний
@@ -63,7 +62,7 @@ class RuleEntry(TypedDict, total=False):
     correct: str
     rule: str
     description: str
-    tags: List[str]
+    tags: list[str]
     category: str
 
 
@@ -72,11 +71,11 @@ class StructuralEntry(TypedDict, total=False):
 
     name: str
     description: str
-    when_to_use: Union[str, List[str]]
+    when_to_use: str | list[str]
     rule: str
-    steps: List[Dict[str, Any]]
-    sections: List[Dict[str, Any]]
-    tags: List[str]
+    steps: list[dict[str, Any]]
+    sections: list[dict[str, Any]]
+    tags: list[str]
 
 
 class EditorialTechniqueEntry(TypedDict, total=False):
@@ -86,16 +85,16 @@ class EditorialTechniqueEntry(TypedDict, total=False):
     name: str
     category: str
     description: str
-    when_to_use: List[str]
-    how_to_apply: List[str]
+    when_to_use: list[str]
+    how_to_apply: list[str]
     example_wrong: str
     example_correct: str
     example_explanation: str
-    tags: List[str]
-    source: Dict[str, Any]
+    tags: list[str]
+    source: dict[str, Any]
 
 
-FlatEntry = Dict[str, Any]
+FlatEntry = dict[str, Any]
 
 
 # ============================================================================
@@ -125,8 +124,8 @@ class DomainConfig:
     allow_marketing: bool = True
     tasks: tuple = field(default_factory=tuple)
     constraints: tuple = field(default_factory=tuple)
-    ip_ceiling: Optional[float] = None
-    kb_limits: Dict[str, int] = field(default_factory=dict)
+    ip_ceiling: float | None = None
+    kb_limits: dict[str, int] = field(default_factory=dict)
     priority: int = 100
     suppresses: tuple = field(default_factory=tuple)
     conflicts_with: tuple = field(default_factory=tuple)
@@ -140,7 +139,7 @@ class IntentConfig:
     """Конфигурация цели обработки."""
 
     name: str
-    instructions: List[str]
+    instructions: list[str]
     priority: int = 50
     suppresses: tuple = field(default_factory=tuple)
     conflicts_with: tuple = field(default_factory=tuple)
@@ -181,7 +180,11 @@ class KnowledgeBase:
     реализован через __getattr__, поэтому существующий код не ломается.
 
     Методы:
-        get(key, default=None) — получить блок по ключу.
+        get(key, default=<sentinel>) — получить блок по ключу.
+            Если default не передан, возвращается пустой список
+            (обратная совместимость со старым поведением).
+            Явно переданные None, False, 0, "", {} возвращаются как есть,
+            без подмены на [] — как в dict.get().
         register(key, data) — установить блок.
         keys() — список всех ключей.
     """
@@ -191,19 +194,29 @@ class KnowledgeBase:
         Создаёт KnowledgeBase из именованных аргументов.
         Каждый аргумент становится блоком с соответствующим именем.
         """
-        self._blocks: Dict[str, Any] = {}
+        self._blocks: dict[str, Any] = {}
         for key, value in kwargs.items():
             self._blocks[key] = value
 
-    def get(self, key: str, default: Any = None) -> Any:
-        """Возвращает блок по ключу или default (по умолчанию пустой список)."""
-        return self._blocks.get(key, default or [])
+    # FIX 3.1: явно переданный falsy default больше не подменяется на [].
+    def get(self, key: str, default: Any = _MISSING) -> Any:
+        """Возвращает блок по ключу или default.
+
+        Если default не передан, возвращается пустой список (обратная
+        совместимость). Явно переданные None, False, 0, "", {} возвращаются
+        без подмены — как в dict.get().
+        """
+        if key in self._blocks:
+            return self._blocks[key]
+        if default is _MISSING:
+            return []
+        return default
 
     def register(self, key: str, data: Any) -> None:
         """Регистрирует (перезаписывает) блок с именем key."""
         self._blocks[key] = data
 
-    def keys(self) -> Set[str]:
+    def keys(self) -> set[str]:
         """Возвращает множество имён блоков."""
         return set(self._blocks.keys())
 
@@ -252,12 +265,12 @@ class LimitsConfig:
     casestudy: int = 4
     evaluation_techniques: int = 8
 
-    grammar_candidates: Optional[int] = None
-    style_candidates: Optional[int] = None
-    logic_candidates: Optional[int] = None
-    storytelling_candidates: Optional[int] = None
-    marketing_candidates: Optional[int] = None
-    rhetoric_candidates: Optional[int] = None
+    grammar_candidates: int | None = None
+    style_candidates: int | None = None
+    logic_candidates: int | None = None
+    storytelling_candidates: int | None = None
+    marketing_candidates: int | None = None
+    rhetoric_candidates: int | None = None
 
 
 # ============================================================================
@@ -283,14 +296,14 @@ class KnowledgeLevel(str, Enum):
     FULL = "full"
 
 
-KNOWLEDGE_BUDGET_CHARS: Dict[KnowledgeLevel, int] = {
+KNOWLEDGE_BUDGET_CHARS: dict[KnowledgeLevel, int] = {
     KnowledgeLevel.NONE: 0,
     KnowledgeLevel.CORE: 4_000,
     KnowledgeLevel.STANDARD: 10_000,
     KnowledgeLevel.FULL: 16_000,
 }
 
-_LEVEL_BLOCKS: Dict[KnowledgeLevel, Set[str]] = {
+_LEVEL_BLOCKS: dict[KnowledgeLevel, set[str]] = {
     KnowledgeLevel.NONE: set(),
     KnowledgeLevel.CORE: {"grammar", "style", "stop_words"},
     KnowledgeLevel.STANDARD: {
@@ -324,7 +337,7 @@ _LEVEL_BLOCKS: Dict[KnowledgeLevel, Set[str]] = {
 }
 
 
-def blocks_allowed_at_level(level: KnowledgeLevel) -> Set[str]:
+def blocks_allowed_at_level(level: KnowledgeLevel) -> set[str]:
     """Возвращает множество имён блоков, разрешённых на данном уровне."""
     return _LEVEL_BLOCKS.get(level, set())
 
@@ -354,7 +367,7 @@ class KnowledgeBlockPlan:
     min_level: KnowledgeLevel
     mandatory: bool = False
     estimated_chars: int = 0
-    builder: Optional[Callable[[], str]] = field(default=None, repr=False)
+    builder: Callable[[], str] | None = field(default=None, repr=False)
     enable_condition: bool = True
 
 
@@ -375,7 +388,7 @@ class BlockBudget:
     """
 
     entry_limit: int
-    char_budget: Optional[int]
+    char_budget: int | None
     enabled: bool = True
 
     @property
@@ -409,10 +422,10 @@ class KnowledgeBudget:
         "evaluation_techniques",
     )
 
-    def __init__(self, budgets: Dict[str, BlockBudget]) -> None:
+    def __init__(self, budgets: dict[str, BlockBudget]) -> None:
         self._budgets = budgets
 
-    def get(self, block_name: str) -> Optional[BlockBudget]:
+    def get(self, block_name: str) -> BlockBudget | None:
         """Возвращает BlockBudget по имени блока."""
         return self._budgets.get(block_name)
 
@@ -452,21 +465,21 @@ class KnowledgeBudgetManager:
     Блоки, не разрешённые на текущем KnowledgeLevel, получают enabled=False.
     """
 
-    def __init__(self, token_budget: Optional[int] = None) -> None:
+    def __init__(self, token_budget: int | None = None) -> None:
         """
         Args:
             token_budget: Приблизительный лимит токенов под блок «База знаний».
             1 токен ≈ 4 символа (heuristic). None = без ограничений.
         """
         self._token_budget = token_budget
-        self._char_budget: Optional[int] = (
+        self._char_budget: int | None = (
             token_budget * 4 if token_budget is not None else None
         )
 
     def allocate(
         self,
         limits: LimitsConfig,
-        active_blocks: Optional[Set[str]] = None,
+        active_blocks: set[str] | None = None,
         level: KnowledgeLevel = KnowledgeLevel.FULL,
     ) -> KnowledgeBudget:
         """
@@ -487,7 +500,7 @@ class KnowledgeBudgetManager:
         )
 
         n_enabled = len(enabled_set) or 1
-        per_block_chars: Optional[int] = (
+        per_block_chars: int | None = (
             self._char_budget // n_enabled
             if self._char_budget is not None
             else None
@@ -550,7 +563,7 @@ class CachePolicy:
     """
 
     check_mtime: bool = True
-    ttl_seconds: Optional[float] = None
+    ttl_seconds: float | None = None
 
 
 @dataclass
@@ -558,9 +571,9 @@ class _CacheEntry(Generic[V]):
     """Внутренняя запись кэша."""
 
     value: V
-    path: Optional[Path]
+    path: Path | None
     loaded_at: float
-    mtime_at_load: Optional[float]
+    mtime_at_load: float | None
 
 
 class FileCache:
@@ -572,9 +585,9 @@ class FileCache:
         data = cache.get_or_load("key", path, loader_fn, *loader_args)
     """
 
-    def __init__(self, policy: Optional[CachePolicy] = None) -> None:
+    def __init__(self, policy: CachePolicy | None = None) -> None:
         self._policy = policy or CachePolicy(check_mtime=True)
-        self._store: Dict[str, _CacheEntry[Any]] = {}
+        self._store: dict[str, _CacheEntry[Any]] = {}
 
     def _is_valid(self, entry: _CacheEntry[Any]) -> bool:
         """Проверяет актуальность записи кэша."""
@@ -600,7 +613,7 @@ class FileCache:
     def get_or_load(
         self,
         key: str,
-        path: Optional[Path],
+        path: Path | None,
         loader: Callable[..., V],
         *loader_args: Any,
     ) -> V:
@@ -637,7 +650,7 @@ class FileCache:
     def get_or_load_multi(
         self,
         key: str,
-        paths: List[Path],
+        paths: list[Path],
         loader: Callable[..., V],
         *loader_args: Any,
     ) -> V:
@@ -680,7 +693,7 @@ class FileCache:
         value = loader(*loader_args)
 
         try:
-            max_mtime: Optional[float] = max(
+            max_mtime: float | None = max(
                 (path.stat().st_mtime for path in paths if path.exists()),
                 default=None,
             )
@@ -709,7 +722,7 @@ class FileCache:
 # ============================================================================
 
 
-def _load_canonical_tags() -> Dict[str, Dict[str, Any]]:
+def _load_canonical_tags() -> dict[str, dict[str, Any]]:
     """
     Загружает CANONICAL_TAGS из config/tag_map.json.
     Файл ищется относительно корня проекта (два уровня выше этого модуля).
@@ -733,7 +746,7 @@ def _load_canonical_tags() -> Dict[str, Dict[str, Any]]:
         return {}
 
 
-CANONICAL_TAGS: Dict[str, Dict[str, Any]] = _load_canonical_tags()
+CANONICAL_TAGS: dict[str, dict[str, Any]] = _load_canonical_tags()
 
 KB_TAGS_STRICT_VALIDATION: bool = False
 
@@ -743,13 +756,13 @@ def _normalize_tag_local(tag: str) -> str:
     return tag.lower().replace("-", "_").replace(" ", "_")
 
 
-def _normalize_tags_local(tags: List[str]) -> List[str]:
+def _normalize_tags_local(tags: list[str]) -> list[str]:
     return [_normalize_tag_local(tag) for tag in tags if isinstance(tag, str)]
 
 
-def _build_known_tags_from_canonical() -> Set[str]:
+def _build_known_tags_from_canonical() -> set[str]:
     """Строит множество всех canonical тегов."""
-    tags: Set[str] = set()
+    tags: set[str] = set()
 
     for category_data in CANONICAL_TAGS.values():
         for tag_data in category_data.values():
@@ -765,10 +778,10 @@ def _build_known_tags_from_canonical() -> Set[str]:
     return tags
 
 
-KNOWN_TAGS: Set[str] = _build_known_tags_from_canonical()
+KNOWN_TAGS: set[str] = _build_known_tags_from_canonical()
 
 
-def get_canonical_tags_for_category(category: str, value: str) -> List[str]:
+def get_canonical_tags_for_category(category: str, value: str) -> list[str]:
     """Возвращает primary + expanded теги для категории/значения."""
     try:
         from src.tag_registry import normalize_tag, normalize_tags
@@ -788,7 +801,7 @@ def get_canonical_tags_for_category(category: str, value: str) -> List[str]:
     return normalize_tags([norm_value])
 
 
-def get_primary_tags_for_category(category: str, value: str) -> List[str]:
+def get_primary_tags_for_category(category: str, value: str) -> list[str]:
     """Возвращает primary теги."""
     try:
         from src.tag_registry import normalize_tag, normalize_tags
@@ -806,7 +819,7 @@ def get_primary_tags_for_category(category: str, value: str) -> List[str]:
     return normalize_tags([norm_value])
 
 
-def get_expanded_tags_for_category(category: str, value: str) -> List[str]:
+def get_expanded_tags_for_category(category: str, value: str) -> list[str]:
     """Возвращает expanded теги."""
     try:
         from src.tag_registry import normalize_tag, normalize_tags
@@ -834,11 +847,11 @@ class FeatureResolutionResult:
     Используется внутри prompt_builder и валидации.
     """
 
-    tags: List[str]
-    effective_intent: Optional[str]
-    effective_overlays: List[str]
-    suppressed_layers: List[str]
-    warnings: List[str]
+    tags: list[str]
+    effective_intent: str | None
+    effective_overlays: list[str]
+    suppressed_layers: list[str]
+    warnings: list[str]
 
     # Feature flags
     storytelling_enabled: bool
@@ -849,14 +862,14 @@ class FeatureResolutionResult:
     editorial_enabled: bool
 
     # Explainability
-    activated_features: List[str] = field(default_factory=list)
-    suppressed_features: List[str] = field(default_factory=list)
-    activation_reasons: Dict[str, List[str]] = field(default_factory=dict)
-    suppression_reasons: Dict[str, List[str]] = field(default_factory=dict)
-    recognized_aliases: Dict[str, List[str]] = field(default_factory=dict)
-    ignored_unknown_values: List[str] = field(default_factory=list)
+    activated_features: list[str] = field(default_factory=list)
+    suppressed_features: list[str] = field(default_factory=list)
+    activation_reasons: dict[str, list[str]] = field(default_factory=dict)
+    suppression_reasons: dict[str, list[str]] = field(default_factory=dict)
+    recognized_aliases: dict[str, list[str]] = field(default_factory=dict)
+    ignored_unknown_values: list[str] = field(default_factory=list)
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         """
         Преобразует в dict для обратной совместимости (используется в build).
         Сохраняет все ключи, которые ожидает существующий код.
@@ -891,7 +904,7 @@ class AssemblyBlockDiagnostics:
     name: str
     eligible: bool
     included: bool
-    reason_codes: List[str]
+    reason_codes: list[str]
     empty: bool = False
     char_count: int = 0
     entries_count: int = 0
@@ -904,7 +917,7 @@ class AssemblyTrace:
     Содержит список диагностик для всех блоков и общую статистику.
     """
 
-    blocks: List[AssemblyBlockDiagnostics] = field(default_factory=list)
+    blocks: list[AssemblyBlockDiagnostics] = field(default_factory=list)
     total_chars: int = 0
     total_blocks_eligible: int = 0
     total_blocks_included: int = 0

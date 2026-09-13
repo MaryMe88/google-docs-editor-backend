@@ -7,13 +7,12 @@ import time
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Dict, Optional, Tuple
+from typing import Any
 
 from fastapi import Depends, FastAPI, HTTPException, Request, Response, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from pydantic import ValidationError
-
 from slowapi import Limiter, _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
 from slowapi.util import get_remote_address
@@ -28,9 +27,9 @@ from src.contracts import (
 )
 from src.llm_client import (
     LLMError,
+    LLMFallbackError,
     call_with_fallback,
     create_llm_client,
-    LLMFallbackError,
 )
 from src.output_guard import (
     find_placeholder_leaks,
@@ -47,7 +46,7 @@ from src.shared_contracts import (
     ALLOWED_OVERLAYS,
     ALLOWED_PROVIDERS,
 )
-from src.startup_checks import run_startup_checks, StartupCheckParams
+from src.startup_checks import StartupCheckParams, run_startup_checks
 
 logging.basicConfig(
     level=logging.INFO,
@@ -97,7 +96,7 @@ def invalidate_provider_cache() -> None:
     _provider_cache.clear()
 
 
-_PROVIDER_KEY_ENV: Dict[str, str] = {
+_PROVIDER_KEY_ENV: dict[str, str] = {
     "perplexity": "PERPLEXITY_API_KEY",
     "openai": "OPENAI_API_KEY",
     "anthropic": "ANTHROPIC_API_KEY",
@@ -305,8 +304,8 @@ async def _check_provider_deep(provider_name: str) -> bool:
 
 async def _check_providers_availability(
     deep: bool = False,
-) -> Tuple[bool, Dict[str, bool]]:
-    results: Dict[str, bool] = {}
+) -> tuple[bool, dict[str, bool]]:
+    results: dict[str, bool] = {}
     for provider in ALLOWED_PROVIDERS:
         if not deep:
             cached = _get_cached_availability(provider)
@@ -390,7 +389,7 @@ async def health_check(request: Request, deep: bool = False) -> Response:
 
 
 def _log_edit_request_meta(
-    body: EditRequest, retrieval_meta: Optional[Dict] = None
+    body: EditRequest, retrieval_meta: dict | None = None
 ) -> None:
     log_data = {
         "event": "edit_request",
@@ -417,7 +416,7 @@ class InvalidLLMOutputError(Exception):
 
 def _split_edit_output(
     raw: str, output_mode: str
-) -> Tuple[str, Optional[str]]:
+) -> tuple[str, str | None]:
     if output_mode == "text_and_report":
         return _parse_text_and_report(raw)
     return raw, None
@@ -446,7 +445,7 @@ def _validate_edit_output(
     *,
     raw_content: str,
     edited_text: str,
-    report: Optional[str],
+    report: str | None,
     output_mode: str,
 ) -> list[str]:
     reasons: list[str] = []
@@ -475,7 +474,7 @@ async def _generate_clean_edit(
     prompt: str,
     providers: list[str],
     body: EditRequest,
-) -> Tuple[Any, str, Optional[str]]:
+) -> tuple[Any, str, str | None]:
     response = await call_with_fallback(
         prompt=prompt,
         providers=providers,
@@ -586,7 +585,7 @@ def _llm_error_to_http_exception(error: LLMError) -> HTTPException:
 # ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ ДЛЯ edit_text (выделены)
 # ============================================================================
 
-def _build_audience_from_request(body: EditRequest) -> Optional[AudienceProfile]:
+def _build_audience_from_request(body: EditRequest) -> AudienceProfile | None:
     """Строит AudienceProfile из тела запроса, если он передан."""
     if body.audience is None:
         return None
@@ -601,7 +600,7 @@ def _build_audience_from_request(body: EditRequest) -> Optional[AudienceProfile]
 def _build_dry_run_response(
     body: EditRequest,
     prompt: str,
-    retrieval_meta: Dict[str, Any],
+    retrieval_meta: dict[str, Any],
 ) -> EditResponse:
     """Формирует ответ для dry_run."""
     _log_edit_request_meta(body, retrieval_meta)
@@ -618,7 +617,7 @@ def _build_dry_run_response(
 
 
 # ============================================================================
-# ОСНОВНОЙ ЭНДПОИНТ (теперь компактный)
+# Основной эндпоинт редактирования
 # ============================================================================
 
 @app.post(
@@ -729,7 +728,7 @@ _MARKER_TEXT = re.compile(r"={2,}\s*ТЕКСТ\s*={2,}", re.IGNORECASE)
 _MARKER_REPORT = re.compile(r"={2,}\s*ОТЧЁТ\s*={2,}", re.IGNORECASE)
 
 
-def _parse_text_and_report(raw: str) -> Tuple[str, Optional[str]]:
+def _parse_text_and_report(raw: str) -> tuple[str, str | None]:
     text_match = _MARKER_TEXT.search(raw)
     report_match = _MARKER_REPORT.search(raw)
 

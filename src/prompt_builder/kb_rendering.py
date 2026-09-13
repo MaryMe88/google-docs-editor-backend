@@ -8,16 +8,10 @@ from __future__ import annotations
 import hashlib
 import logging
 import random
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from typing import (
     Any,
-    Callable,
-    Dict,
-    List,
-    Optional,
-    Sequence,
-    Set,
-    Tuple,
 )
 
 from src.config_types import (
@@ -31,8 +25,8 @@ from src.knowledge_retrieval import (
     FallbackStage,
     select_grammar_rules,
     select_logic_issues,
-    select_style_issues,
     select_structural_by_tags_or_all,
+    select_style_issues,
 )
 
 logger = logging.getLogger(__name__)
@@ -40,7 +34,7 @@ logger = logging.getLogger(__name__)
 
 def _unpack_retrieval_result(
     result: Any,
-) -> Tuple[List[Dict[str, Any]], "FallbackStage", int]:
+) -> tuple[list[dict[str, Any]], FallbackStage, int]:
     if isinstance(result, tuple) and len(result) == 3:
         return result
     if isinstance(result, tuple) and len(result) == 2:
@@ -69,11 +63,11 @@ def _get_confidence_note(stage: FallbackStage) -> str:
 
 def _collect_retrieval_tags(
     domain: str,
-    intent: Optional[str],
+    intent: str | None,
     overlays: Sequence[str],
-) -> Dict[str, Set[str]]:
-    primary: Set[str] = set()
-    expanded: Set[str] = set()
+) -> dict[str, set[str]]:
+    primary: set[str] = set()
+    expanded: set[str] = set()
     domain_primary = get_primary_tags_for_category("domains", domain)
     if not domain_primary:
         logger.warning(
@@ -92,7 +86,7 @@ def _collect_retrieval_tags(
 
 
 def _append_rule_entries(
-    lines: List[str], title: str, entries: List[Dict[str, Any]]
+    lines: list[str], title: str, entries: list[dict[str, Any]]
 ) -> None:
     if not entries:
         return
@@ -115,7 +109,7 @@ def _append_rule_entries(
 
 
 def _append_structural_entries(
-    lines: List[str], title: str, entries: List[Dict[str, Any]]
+    lines: list[str], title: str, entries: list[dict[str, Any]]
 ) -> None:
     if not entries:
         return
@@ -138,7 +132,7 @@ def _append_structural_entries(
 
 
 def _append_editorial_entries(
-    lines: List[str], title: str, entries: List[Dict[str, Any]]
+    lines: list[str], title: str, entries: list[dict[str, Any]]
 ) -> None:
     if not entries:
         return
@@ -165,7 +159,7 @@ def _append_editorial_entries(
 
 
 def _append_case_study_entries(
-    lines: List[str], title: str, entries: List[Dict[str, Any]]
+    lines: list[str], title: str, entries: list[dict[str, Any]]
 ) -> None:
     if not entries:
         return
@@ -202,7 +196,7 @@ def _append_case_study_entries(
 
 
 def _append_evaluation_techniques(
-    lines: List[str], title: str, data: Dict[str, Any]
+    lines: list[str], title: str, data: dict[str, Any]
 ) -> None:
     if not data:
         return
@@ -261,7 +255,7 @@ def _append_evaluation_techniques(
 
 
 def _append_glossary(
-    lines: List[str], glossary: Dict[str, Any], limit: int
+    lines: list[str], glossary: dict[str, Any], limit: int
 ) -> None:
     if not glossary:
         return
@@ -282,7 +276,7 @@ def _append_glossary(
                 count += 1
 
 
-def _append_nkrj(lines: List[str], nkrj: Dict[str, Any]) -> None:
+def _append_nkrj(lines: list[str], nkrj: dict[str, Any]) -> None:
     if not nkrj:
         return
     lines.append("Структурные паттерны НКРЯ:")
@@ -297,12 +291,12 @@ def _append_nkrj(lines: List[str], nkrj: Dict[str, Any]) -> None:
 
 def _warn_if_empty_retrieval(
     block: str,
-    stage: "FallbackStage",
+    stage: FallbackStage,
     domain: str,
-    intent: Optional[str],
-    overlays: List[str],
+    intent: str | None,
+    overlays: list[str],
     text_len: int,
-    primary_tags: Set[str],
+    primary_tags: set[str],
 ) -> None:
     if intent not in (
         "analytical",
@@ -331,9 +325,9 @@ class KBBlockConfig:
     retrieval_fn: Callable
     append_fn: Callable
     title: str
-    kb_attr: Optional[str] = None
+    kb_attr: str | None = None
     uses_structural_call: bool = False
-    candidate_attr: Optional[str] = None
+    candidate_attr: str | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -343,24 +337,24 @@ class KBBlockConfig:
 class ProcessContext:
     """Контекст обработки одного блока знаний."""
 
-    lines: List[str]
-    meta: Dict[str, Any]
+    lines: list[str]
+    meta: dict[str, Any]
     kb: KnowledgeBase
     text: str
-    primary_tags: Set[str]
-    expanded_tags: Set[str]
+    primary_tags: set[str]
+    expanded_tags: set[str]
     budget: BlockBudget
     domain: str
-    intent: Optional[str]
-    overlays: List[str]
+    intent: str | None
+    overlays: list[str]
     include_few_shot: bool
     total_few_shot_used: int
     limits: LimitsConfig
-    few_shot_seed: Optional[int] = None
+    few_shot_seed: int | None = None
     semantic_rerank: bool = False
 
 
-KB_BLOCK_REGISTRY: List[KBBlockConfig] = [
+KB_BLOCK_REGISTRY: list[KBBlockConfig] = [
     KBBlockConfig(
         name="grammar",
         budget_key="grammar",
@@ -487,24 +481,24 @@ KB_BLOCK_REGISTRY: List[KBBlockConfig] = [
 DEFAULT_CANDIDATE_LIMIT = 10
 
 
-def _has_few_shot_pair(entry: Dict[str, Any]) -> bool:
+def _has_few_shot_pair(entry: dict[str, Any]) -> bool:
     wrong = entry.get("wrong") or entry.get("example_wrong")
     correct = entry.get("correct") or entry.get("example_correct")
     return bool(wrong and correct)
 
 
-def _format_few_shot_example(entry: Dict[str, Any]) -> str:
+def _format_few_shot_example(entry: dict[str, Any]) -> str:
     wrong = entry.get("wrong") or entry.get("example_wrong")
     correct = entry.get("correct") or entry.get("example_correct")
     return f"Было: {wrong}\nСтало: {correct}"
 
 
 def _select_few_shot_examples(
-    entries_with_pairs: List[Dict[str, Any]],
+    entries_with_pairs: list[dict[str, Any]],
     max_examples: int,
     pool_size: int = 10,
-    seed: Optional[int] = None,
-) -> List[Dict[str, Any]]:
+    seed: int | None = None,
+) -> list[dict[str, Any]]:
     if not entries_with_pairs or max_examples <= 0:
         return []
     pool = entries_with_pairs[:pool_size]

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import logging
 from pathlib import Path
-from typing import Final, Set
+from typing import Final
 
 # Шаг A-2: LLMProvider вынесен в отдельный реестр, чтобы shared_contracts
 # не зависел от тяжёлого llm_client (и, соответственно, от httpx).
@@ -16,7 +16,7 @@ logger = logging.getLogger(__name__)
 _CONFIG_BASE = Path(__file__).parent.parent / "config"
 
 
-def _scan_config_files(subdir: str) -> Set[str]:
+def _scan_config_files(subdir: str) -> set[str]:
     """
     Сканирует папку config/<subdir> и возвращает имена *.json файлов без расширения.
     Если папка не существует, возвращает пустое множество и логирует предупреждение.
@@ -31,30 +31,30 @@ def _scan_config_files(subdir: str) -> Set[str]:
 # ---------------------------------------------------------------------------
 # ДОМЕНЫ – автоматически из файлов config/domains/*.json
 # ---------------------------------------------------------------------------
-ALLOWED_DOMAINS: Final[Set[str]] = _scan_config_files("domains")
+ALLOWED_DOMAINS: Final[set[str]] = _scan_config_files("domains")
 
 # ---------------------------------------------------------------------------
 # INTENTS – из файлов config/intents/*.json + служебный "neutral"
 # ---------------------------------------------------------------------------
 _intents_from_files = _scan_config_files("intents")
 # neutral не имеет файла, добавляем вручную
-ALLOWED_INTENTS: Final[Set[str]] = _intents_from_files | {"neutral"}
+ALLOWED_INTENTS: Final[set[str]] = _intents_from_files | {"neutral"}
 
 # ---------------------------------------------------------------------------
 # OVERLAYS – из файлов config/overlays/*.json
 # ---------------------------------------------------------------------------
-ALLOWED_OVERLAYS: Final[Set[str]] = _scan_config_files("overlays")
+ALLOWED_OVERLAYS: Final[set[str]] = _scan_config_files("overlays")
 
 # ---------------------------------------------------------------------------
 # Остальные белые списки остаются статическими (не зависят от файлов)
 # ---------------------------------------------------------------------------
-ALLOWED_OUTPUT_MODES: Final[Set[str]] = {"text_only", "text_and_report"}
+ALLOWED_OUTPUT_MODES: Final[set[str]] = {"text_only", "text_and_report"}
 
 # PR-1 (НП-4): ALLOWED_PROVIDERS выводится из LLMProvider — единственный источник правды.
 # При добавлении нового провайдера достаточно добавить значение в
 # LLMProvider enum.
-ALLOWED_PROVIDERS: Final[Set[str]] = {p.value for p in LLMProvider}
+ALLOWED_PROVIDERS: Final[set[str]] = {p.value for p in LLMProvider}
 
-ALLOWED_KIND: Final[Set[str]] = {"b2b", "b2c", "mixed", "custom"}
-ALLOWED_EXPERTISE: Final[Set[str]] = {"novice", "pro", "expert"}
-ALLOWED_FORMALITY: Final[Set[str]] = {"casual", "neutral", "formal"}
+ALLOWED_KIND: Final[set[str]] = {"b2b", "b2c", "mixed", "custom"}
+ALLOWED_EXPERTISE: Final[set[str]] = {"novice", "pro", "expert"}
+ALLOWED_FORMALITY: Final[set[str]] = {"casual", "neutral", "formal"}

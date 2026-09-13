@@ -10,11 +10,11 @@ from __future__ import annotations
 import json
 import logging
 from pathlib import Path
-from typing import Dict, Final
+from typing import Final
 
 logger = logging.getLogger(__name__)
 
-_DEFAULT_WEIGHTS: Final[Dict[str, int]] = {
+_DEFAULT_WEIGHTS: Final[dict[str, int]] = {
     "wrong_exact_match": 1000,
     "name_exact_match": 500,
     "partial_text_match": 200,
@@ -23,11 +23,11 @@ _DEFAULT_WEIGHTS: Final[Dict[str, int]] = {
     "tag_expanded": 2,
 }
 
-_WEIGHTS_CACHE: Dict[str, int] | None = None
+_WEIGHTS_CACHE: dict[str, int] | None = None
 _CONFIG_PATH = Path("config") / "scoring_weights.json"
 
 
-def load_scoring_weights() -> Dict[str, int]:
+def load_scoring_weights() -> dict[str, int]:
     """
     Загружает веса из config/scoring_weights.json.
     Если файл отсутствует или повреждён, возвращает значения по умолчанию

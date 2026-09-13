@@ -1,7 +1,8 @@
 from __future__ import annotations
 
 import re
-from typing import Any, Dict, Iterable, List, Set
+from collections.abc import Iterable
+from typing import Any
 
 # ---------------------------------------------------------------------------
 # Алиас-карта: любое написание → каноническая форма.
@@ -17,7 +18,7 @@ from typing import Any, Dict, Iterable, List, Set
 #   1. Добавь строку  "my_overlay": "my_overlay"  в раздел OVERLAYS ниже.
 #   2. Если у имени есть альтернативные написания — добавь их тоже.
 # ---------------------------------------------------------------------------
-_ALIAS_MAP: Dict[str, str] = {
+_ALIAS_MAP: dict[str, str] = {
     # ---- домены / теги ----
     "anti_ai": "antiai",
     "anti-ai": "antiai",
@@ -69,9 +70,9 @@ def normalize_tag(value: str) -> str:
     return _ALIAS_MAP.get(compact, compact)
 
 
-def normalize_tags(values: Iterable[str]) -> List[str]:
-    result: List[str] = []
-    seen: Set[str] = set()
+def normalize_tags(values: Iterable[str]) -> list[str]:
+    result: list[str] = []
+    seen: set[str] = set()
     for value in values:
         if not isinstance(value, str):
             continue
@@ -82,8 +83,8 @@ def normalize_tags(values: Iterable[str]) -> List[str]:
     return result
 
 
-def build_known_tags(mapping: Dict[str, Any]) -> Set[str]:
-    known: Set[str] = set()
+def build_known_tags(mapping: dict[str, Any]) -> set[str]:
+    known: set[str] = set()
 
     def _visit(obj: Any) -> None:
         if isinstance(obj, dict):
@@ -108,7 +109,7 @@ def build_known_tags(mapping: Dict[str, Any]) -> Set[str]:
 # ============================================================================
 # ИЗМЕНЕНИЕ: добавлена функция для получения канонических тегов (без алиасов)
 # ============================================================================
-def get_canonical_tag_names() -> Set[str]:
+def get_canonical_tag_names() -> set[str]:
     """
     Возвращает множество канонических primary-тегов из CANONICAL_TAGS (без алиасов).
     Используется в startup-проверках для сверки с реальными тегами в KB.
@@ -125,7 +126,7 @@ def get_canonical_tag_names() -> Set[str]:
         "story",
     }
 
-    tags: Set[str] = set()
+    tags: set[str] = set()
     for category_data in CANONICAL_TAGS.values():
         if not isinstance(category_data, dict):
             continue

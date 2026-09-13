@@ -6,7 +6,8 @@
 from __future__ import annotations
 
 import logging
-from typing import Any, Dict, List, Optional, Sequence, Set
+from collections.abc import Sequence
+from typing import Any
 
 from src.config_types import (
     DomainConfig,
@@ -21,11 +22,11 @@ from src.registry import CANONICAL_FEATURE_ALIASES, get_features_from_tags
 from src.shared_contracts import ALLOWED_OVERLAYS
 
 from .normalization import (
-    normalize_intent,
-    normalize_overlays,
     _is_incompatible_intent,
     _is_incompatible_overlay,
     _normalize_overlay_ref,
+    normalize_intent,
+    normalize_overlays,
 )
 
 logger = logging.getLogger(__name__)
@@ -83,8 +84,8 @@ def _add_ignored_unknown(
 def _build_overlay_slug_map(
     overlays: Sequence[str],
     overlay_configs: Sequence[OverlayConfig],
-) -> Dict[str, OverlayConfig]:
-    mapping: Dict[str, OverlayConfig] = {}
+) -> dict[str, OverlayConfig]:
+    mapping: dict[str, OverlayConfig] = {}
     for slug, cfg in zip(overlays, overlay_configs):
         mapping[slug] = cfg
     for cfg in overlay_configs:
@@ -98,9 +99,9 @@ def _build_overlay_slug_map(
 
 def _prepare_resolution_context(
     domain: str,
-    intent: Optional[str],
+    intent: str | None,
     overlays: Sequence[str],
-    overlay_configs: List[OverlayConfig],
+    overlay_configs: list[OverlayConfig],
 ) -> tuple[FeatureResolutionResult, str, list[str], list[str]]:
     norm_intent = normalize_intent(intent)
     known_overlay_names = {
@@ -201,13 +202,13 @@ def _apply_domain_incompatibility(
 def _apply_overlay_suppressions(
     result: FeatureResolutionResult,
     effective_overlays: list[str],
-    overlay_configs: List[OverlayConfig],
+    overlay_configs: list[OverlayConfig],
     tags: list[str],
     suppressed_layers: list[str],
     warnings: list[str],
 ) -> tuple[list[str], list[str]]:
     overlay_map = _build_overlay_slug_map(effective_overlays, overlay_configs)
-    suppressed_by_overlay: Set[str] = set()
+    suppressed_by_overlay: set[str] = set()
 
     for ov in list(effective_overlays):
         cfg = overlay_map.get(ov)
@@ -251,7 +252,7 @@ def _handle_explicit_suppress_in_conflict(
     tags: list[str],
     suppressed_layers: list[str],
     warnings: list[str],
-) -> Optional[tuple[list[str], list[str]]]:
+) -> tuple[list[str], list[str]] | None:
     """
     Проверяет, есть ли явный suppress между ov и conflict.
     Если есть — удаляет подавленный оверлей и возвращает обновлённые списки.
@@ -291,7 +292,7 @@ def _handle_explicit_suppress_in_conflict(
 def _resolve_overlay_conflicts(
     result: FeatureResolutionResult,
     effective_overlays: list[str],
-    overlay_configs: List[OverlayConfig],
+    overlay_configs: list[OverlayConfig],
     tags: list[str],
     suppressed_layers: list[str],
     warnings: list[str],
@@ -332,7 +333,9 @@ def _resolve_overlay_conflicts(
                 f"overlay '{conflict}' suppressed due to conflict with '{ov}' (higher priority)"
             )
             warnings.append(
-                f"Overlay conflict: '{conflict}' removed (priority {cfg_conflict.priority}) < '{ov}' (priority {cfg_ov.priority})."
+                f"Overlay conflict: '{conflict}' removed "
+                f"(priority {cfg_conflict.priority}) < "
+                f"'{ov}' (priority {cfg_ov.priority})."
             )
             _add_suppression_reason(
                 result,
@@ -346,7 +349,9 @@ def _resolve_overlay_conflicts(
                 f"overlay '{ov}' suppressed due to conflict with '{conflict}' (higher priority)"
             )
             warnings.append(
-                f"Overlay conflict: '{ov}' removed (priority {cfg_ov.priority}) < '{conflict}' (priority {cfg_conflict.priority})."
+                f"Overlay conflict: '{ov}' removed "
+                f"(priority {cfg_ov.priority}) < "
+                f"'{conflict}' (priority {cfg_conflict.priority})."
             )
             _add_suppression_reason(
                 result,
@@ -359,7 +364,8 @@ def _resolve_overlay_conflicts(
             if effective_overlays.index(ov) < effective_overlays.index(conflict):
                 effective_overlays.remove(conflict)
                 suppressed_layers.append(
-                    f"overlay '{conflict}' suppressed due to conflict with '{ov}' (equal priority, deterministic fallback)"
+                    f"overlay '{conflict}' suppressed due to conflict "
+                    f"with '{ov}' (equal priority, deterministic fallback)"
                 )
                 warnings.append(
                     f"Overlay conflict: '{conflict}' removed (equal priority, fallback)."
@@ -373,7 +379,8 @@ def _resolve_overlay_conflicts(
             else:
                 effective_overlays.remove(ov)
                 suppressed_layers.append(
-                    f"overlay '{ov}' suppressed due to conflict with '{conflict}' (equal priority, deterministic fallback)"
+                    f"overlay '{ov}' suppressed due to conflict "
+                    f"with '{conflict}' (equal priority, deterministic fallback)"
                 )
                 warnings.append(
                     f"Overlay conflict: '{ov}' removed (equal priority, fallback)."
@@ -394,7 +401,7 @@ def _resolve_overlay_conflicts(
 
 def _activate_storytelling(
     result: FeatureResolutionResult,
-    all_tags: List[str],
+    all_tags: list[str],
     domain_config: DomainConfig,
 ) -> None:
     recognized = any(
@@ -418,7 +425,7 @@ def _activate_storytelling(
 
 def _activate_marketing(
     result: FeatureResolutionResult,
-    all_tags: List[str],
+    all_tags: list[str],
     domain_config: DomainConfig,
 ) -> None:
     recognized = any(
@@ -442,7 +449,7 @@ def _activate_marketing(
 
 def _activate_antiai(
     result: FeatureResolutionResult,
-    all_tags: List[str],
+    all_tags: list[str],
 ) -> None:
     recognized = any(
         tag in _TAG_TO_FEATURE and _TAG_TO_FEATURE[tag] == "antiai"
@@ -461,7 +468,7 @@ def _activate_antiai(
 
 def _activate_rhetoric(
     result: FeatureResolutionResult,
-    all_tags: List[str],
+    all_tags: list[str],
 ) -> None:
     recognized = any(
         tag in _TAG_TO_FEATURE and _TAG_TO_FEATURE[tag] == "rhetoric"
@@ -480,7 +487,7 @@ def _activate_rhetoric(
 
 def _activate_nkrj(
     result: FeatureResolutionResult,
-    all_tags: List[str],
+    all_tags: list[str],
 ) -> None:
     recognized = any(
         tag in _TAG_TO_FEATURE and _TAG_TO_FEATURE[tag] == "nkrj"
@@ -499,7 +506,7 @@ def _activate_nkrj(
 
 def _activate_editorial(
     result: FeatureResolutionResult,
-    all_tags: List[str],
+    all_tags: list[str],
 ) -> None:
     recognized = any(
         tag in _TAG_TO_FEATURE and _TAG_TO_FEATURE[tag] == "editorial"
@@ -546,7 +553,7 @@ def _activate_features_from_tags(
 
 def _apply_full_level_overrides(
     result: FeatureResolutionResult,
-    knowledge_level: Optional[KnowledgeLevel],
+    knowledge_level: KnowledgeLevel | None,
     domain_config: DomainConfig,
 ) -> None:
     if knowledge_level != KnowledgeLevel.FULL:
@@ -571,9 +578,9 @@ def _apply_full_level_overrides(
 def _apply_suppress_rules(
     result: FeatureResolutionResult,
     domain_config: DomainConfig,
-    intent_config: Optional[IntentConfig],
+    intent_config: IntentConfig | None,
     effective_overlays: list[str],
-    overlay_configs: List[OverlayConfig],
+    overlay_configs: list[OverlayConfig],
     suppressed_layers: list[str],
     warnings: list[str],
 ) -> None:
@@ -594,7 +601,11 @@ def _apply_suppress_rules(
                 result.storytelling_enabled = False
                 suppressed_layers.append(f"storytelling suppressed by overlay '{cfg.name}'")
                 warnings.append(f"Storytelling disabled by overlay '{cfg.name}' suppress rule.")
-                _add_suppression_reason(result, "storytelling", ReasonCode.SUPPRESSED_BY_OVERLAY_RULE)
+                _add_suppression_reason(
+                    result,
+                    "storytelling",
+                    ReasonCode.SUPPRESSED_BY_OVERLAY_RULE,
+                )
             if "marketing" in cfg.suppresses or "marketingpush" in cfg.suppresses:
                 result.marketing_enabled = False
                 suppressed_layers.append(f"marketing suppressed by overlay '{cfg.name}'")
@@ -607,7 +618,11 @@ def _apply_suppress_rules(
                 result.storytelling_enabled = False
                 if "storytelling" not in result.suppressed_features:
                     result.suppressed_features.append("storytelling")
-                _add_suppression_reason(result, "storytelling", ReasonCode.SUPPRESSED_BY_INTENT_RULE)
+                _add_suppression_reason(
+                    result,
+                    "storytelling",
+                    ReasonCode.SUPPRESSED_BY_INTENT_RULE,
+                )
             elif suppressed in ("marketing", "marketingpush"):
                 result.marketing_enabled = False
                 if "marketing" not in result.suppressed_features:
@@ -637,13 +652,13 @@ def _apply_suppress_rules(
 
 def resolve_prompt_features(
     domain: str,
-    intent: Optional[str],
+    intent: str | None,
     overlays: Sequence[str],
     domain_config: DomainConfig,
-    intent_config: Optional[IntentConfig],
-    overlay_configs: List[OverlayConfig],
-    knowledge_level: Optional[KnowledgeLevel] = None,
-) -> Dict[str, Any]:
+    intent_config: IntentConfig | None,
+    overlay_configs: list[OverlayConfig],
+    knowledge_level: KnowledgeLevel | None = None,
+) -> dict[str, Any]:
     result, effective_intent, effective_overlays, tags, suppressed_layers, warnings = (
         _prepare_resolution_context(domain, intent, overlays, overlay_configs)
     )

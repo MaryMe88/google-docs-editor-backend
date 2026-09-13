@@ -1,5 +1,5 @@
 import re
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 from pydantic import BaseModel, Field, field_validator
 
@@ -68,14 +68,14 @@ class AudienceRequest(BaseModel):
 class EditRequest(BaseModel):
     text: str = Field(..., min_length=1, max_length=10000)
     domain: str = Field(default="marketing")
-    intent: Optional[str] = Field(default=None)
-    audience: Optional[AudienceRequest] = Field(default=None)
-    overlays: List[str] = Field(default_factory=list)
+    intent: str | None = Field(default=None)
+    audience: AudienceRequest | None = Field(default=None)
+    overlays: list[str] = Field(default_factory=list)
     output_mode: str = Field(default="text_only")
     provider: str = Field(default="openrouter")
     # SEC: max_length предотвращает передачу произвольной строки напрямую
     # в payload["model"] к LLM API без ограничений.
-    model: Optional[str] = Field(default=None, max_length=200)
+    model: str | None = Field(default=None, max_length=200)
     temperature: float = Field(default=0.3, ge=0.0, le=2.0)
     include_knowledge: bool = Field(default=True)
     include_retrieval_meta: bool = Field(default=False)
@@ -104,7 +104,7 @@ class EditRequest(BaseModel):
 
     @field_validator("intent")
     @classmethod
-    def validate_intent(cls, v: Optional[str]) -> Optional[str]:
+    def validate_intent(cls, v: str | None) -> str | None:
         """Нормализует и проверяет intent через ALLOWED_INTENTS.
 
         Используем strip().lower() — НЕ normalize_tag(), по той же причине:
@@ -164,7 +164,7 @@ class EditRequest(BaseModel):
     # SEC-патч 3.3: Allowlist для поля model.
     @field_validator("model")
     @classmethod
-    def validate_model(cls, v: Optional[str]) -> Optional[str]:
+    def validate_model(cls, v: str | None) -> str | None:
         if v is None:
             return v
         # Убираем лишние пробелы? Обычно модель не должна содержать пробелы.
@@ -184,16 +184,16 @@ class EditResponse(BaseModel):
     """
 
     edited_text: str
-    report: Optional[str] = (
+    report: str | None = (
         None  # PR-2 (НП-2): добавлено для режима text_and_report
     )
     # prompt: str  # УДАЛЕНО: не возвращаем промпт клиенту
-    provider: Optional[str] = None
-    model: Optional[str] = None
+    provider: str | None = None
+    model: str | None = None
     dry_run: bool = False
-    usage: Dict[str, Any] = Field(default_factory=dict)
-    raw_response: Dict[str, Any] = Field(default_factory=dict)
-    retrieval_meta: Optional[Dict[str, Any]] = Field(default=None)
+    usage: dict[str, Any] = Field(default_factory=dict)
+    raw_response: dict[str, Any] = Field(default_factory=dict)
+    retrieval_meta: dict[str, Any] | None = Field(default=None)
 
 
 class PromptResponse(BaseModel):
@@ -205,15 +205,14 @@ class HealthResponse(BaseModel):
 
     PR-3 (НП-3): приведён в соответствие с реальным ответом:
     - добавлены provider_status, deep_check, version
-    - available_domains добавлен явно (был в модели, но не возвращался эндпоинтом)
     """
 
     status: str
     version: str = "1.0.0"
-    available_domains: List[str]
-    available_intents: List[str]
-    available_overlays: List[str]
-    available_providers: List[str]
-    provider_status: Dict[str, bool]
+    available_domains: list[str]
+    available_intents: list[str]
+    available_overlays: list[str]
+    available_providers: list[str]
+    provider_status: dict[str, bool]
     deep_check: bool = False
     contract_version: str = CONTRACT_VERSION

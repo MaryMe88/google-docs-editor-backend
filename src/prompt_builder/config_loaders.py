@@ -7,8 +7,9 @@ from __future__ import annotations
 
 import json
 import logging
+from collections.abc import Sequence
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Sequence
+from typing import Any
 
 from src.config_types import (
     CoreConfig,
@@ -17,20 +18,21 @@ from src.config_types import (
     OverlayConfig,
 )
 from src.tag_registry import normalize_tag
-from .normalization import normalize_string_list
+
 from .defaults import (
-    ALLOWED_KB_LIMIT_KEYS,
-    ALLOWED_EDIT_LEVELS,
-    KB_LIMIT_MIN,
-    KB_LIMIT_MAX,
     _DEFAULT_DOMAIN_CONFIG,
+    ALLOWED_EDIT_LEVELS,
+    ALLOWED_KB_LIMIT_KEYS,
+    KB_LIMIT_MAX,
+    KB_LIMIT_MIN,
     _make_default_overlay_config,
 )
+from .normalization import normalize_string_list
 
 logger = logging.getLogger(__name__)
 
 
-def load_json_file(path: Path) -> Dict[str, Any]:
+def load_json_file(path: Path) -> dict[str, Any]:
     if not path.exists():
         raise FileNotFoundError(f"Config file not found: {path}")
     return json.loads(path.read_text(encoding="utf-8"))
@@ -78,14 +80,14 @@ def load_domain_config(
     raw_tasks = data.get("tasks", [])
     raw_constraints = data.get("constraints", [])
     raw_ip = data.get("ip_ceiling")
-    domain_ip_ceiling: Optional[float] = None
+    domain_ip_ceiling: float | None = None
     if isinstance(raw_ip, (int, float)):
         domain_ip_ceiling = float(raw_ip)
     elif isinstance(raw_ip, dict):
         domain_ip_ceiling = float(raw_ip.get("value", 2.5))
 
     raw_kb_limits = data.get("kb_limits", {})
-    kb_limits: Dict[str, int] = {}
+    kb_limits: dict[str, int] = {}
     if isinstance(raw_kb_limits, dict):
         domain_name = data.get("name", normalized_domain)
         for k, v in raw_kb_limits.items():
@@ -178,8 +180,8 @@ def load_domain_config(
 
 
 def load_intent_config(
-    intent: Optional[str], base_path: Path = Path("config")
-) -> Optional[IntentConfig]:
+    intent: str | None, base_path: Path = Path("config")
+) -> IntentConfig | None:
     if intent is None or intent == "neutral":
         return None
     normalized = normalize_tag(intent)
@@ -236,7 +238,7 @@ def load_overlay_config(
 
 def load_overlay_configs(
     overlays: Sequence[str], base_path: Path = Path("config")
-) -> List[OverlayConfig]:
+) -> list[OverlayConfig]:
     return [load_overlay_config(ov, base_path) for ov in overlays]
 
 
@@ -256,7 +258,7 @@ def load_output_format(mode: str, base_path: Path = Path("config")) -> str:
         )
     if not global_rules:
         return mode_instruction
-    global_parts: List[str] = []
+    global_parts: list[str] = []
     allowed_formatting = global_rules.get("allowed_formatting", "")
     if allowed_formatting:
         global_parts.append(allowed_formatting)

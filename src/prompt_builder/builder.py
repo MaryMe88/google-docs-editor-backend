@@ -8,43 +8,23 @@ from __future__ import annotations
 import logging
 import secrets
 import warnings
+from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import (
     Any,
-    Dict,
-    List,
-    Optional,
-    Sequence,
-    Set,
-    Tuple,
-    Union,
-    overload,
     Literal,
+    overload,
 )
-
-from ._patchable import (
-    load_core_config,
-    load_domain_config,
-    load_intent_config,
-    load_overlay_config,
-    load_output_format,
-    load_knowledge_base,
-    KB_BLOCK_REGISTRY,
-    _process_kb_block,
-    _collect_retrieval_tags,
-    resolve_prompt_features,
-    _append_glossary,
-    _append_nkrj,
-    _append_evaluation_techniques,
-    _derive_seed,
-)
-from .kb_rendering import ProcessContext
 
 from src.config_types import (
+    AssemblyBlockDiagnostics,
+    AssemblyTrace,
     AudienceProfile,
+    CachePolicy,
     CoreConfig,
     DomainConfig,
+    FileCache,
     IntentConfig,
     KnowledgeBase,
     KnowledgeBudget,
@@ -52,10 +32,6 @@ from src.config_types import (
     KnowledgeLevel,
     LimitsConfig,
     OverlayConfig,
-    AssemblyTrace,
-    AssemblyBlockDiagnostics,
-    FileCache,
-    CachePolicy,
 )
 from src.reason_codes import ReasonCode
 from src.registry import check_alias_consistency
@@ -66,6 +42,24 @@ from src.shared_contracts import (
     ALLOWED_OVERLAYS,
 )
 
+from ._patchable import (
+    KB_BLOCK_REGISTRY,
+    _append_evaluation_techniques,
+    _append_glossary,
+    _append_nkrj,
+    _collect_retrieval_tags,
+    _derive_seed,
+    _process_kb_block,
+    load_core_config,
+    load_domain_config,
+    load_intent_config,
+    load_knowledge_base,
+    load_output_format,
+    load_overlay_config,
+    resolve_prompt_features,
+)
+from .kb_rendering import ProcessContext
+
 logger = logging.getLogger(__name__)
 
 
@@ -73,16 +67,16 @@ logger = logging.getLogger(__name__)
 class KnowledgeBlockRequest:
     """Параметры для сборки блока знаний."""
     text: str
-    primary_tags: Set[str]
-    expanded_tags: Set[str]
+    primary_tags: set[str]
+    expanded_tags: set[str]
     budget: KnowledgeBudget
     domain: str
-    intent: Optional[str]
-    overlays: List[str]
+    intent: str | None
+    overlays: list[str]
     include_few_shot: bool
     total_few_shot_used: int
-    few_shot_seed: Optional[int] = None
-    limits: Optional[LimitsConfig] = None
+    few_shot_seed: int | None = None
+    limits: LimitsConfig | None = None
     storytelling_enabled: bool = True
     marketing_enabled: bool = True
     antiai_enabled: bool = False
@@ -110,21 +104,21 @@ class PromptBuilder:
         self,
         config_path: Path = Path("config"),
         kb_path: Path = Path("knowledge_base"),
-        limits: Optional[LimitsConfig] = None,
+        limits: LimitsConfig | None = None,
     ) -> None:
         self.config_path = config_path
         self.kb_path = kb_path
         self._limits = limits or LimitsConfig()
-        self.core_config: Optional[CoreConfig] = None
+        self.core_config: CoreConfig | None = None
 
-        self._core_cache: Optional[CoreConfig] = None
-        self._domain_cache: Dict[str, DomainConfig] = {}
-        self._intent_cache: Dict[str, Optional[IntentConfig]] = {}
-        self._overlay_cache: Dict[str, OverlayConfig] = {}
-        self._output_format_cache: Dict[str, str] = {}
+        self._core_cache: CoreConfig | None = None
+        self._domain_cache: dict[str, DomainConfig] = {}
+        self._intent_cache: dict[str, IntentConfig | None] = {}
+        self._overlay_cache: dict[str, OverlayConfig] = {}
+        self._output_format_cache: dict[str, str] = {}
         self._kb_cache = FileCache(policy=CachePolicy(check_mtime=True))
 
-        self._loaded_kb: Optional[KnowledgeBase] = None
+        self._loaded_kb: KnowledgeBase | None = None
 
         self._load_core_config()
 
@@ -144,8 +138,8 @@ class PromptBuilder:
         return self._domain_cache[domain]
 
     def get_intent_config(
-        self, intent: Optional[str]
-    ) -> Optional[IntentConfig]:
+        self, intent: str | None
+    ) -> IntentConfig | None:
         if intent is None or intent == "neutral":
             return None
         if intent not in self._intent_cache:
@@ -163,7 +157,7 @@ class PromptBuilder:
 
     def get_overlay_configs(
         self, overlays: Sequence[str]
-    ) -> List[OverlayConfig]:
+    ) -> list[OverlayConfig]:
         return [self.get_overlay_config(ov) for ov in overlays]
 
     def get_output_format(self, mode: str) -> str:
@@ -174,7 +168,7 @@ class PromptBuilder:
         return self._output_format_cache[mode]
 
     def get_knowledge_base(
-        self, primary_tags: Set[str], intent: Optional[str]
+        self, primary_tags: set[str], intent: str | None
     ) -> KnowledgeBase:
         cache_key = f"kb:{','.join(sorted(primary_tags))}:{intent or 'none'}"
         manifest_path = self.kb_path / "kb_manifest.json"
@@ -236,14 +230,14 @@ class PromptBuilder:
             # может бросить обход некорректных данных.
             logger.warning("Alias consistency check failed: %s", e)
 
-    def get_available_intents(self) -> Set[str]:
+    def get_available_intents(self) -> set[str]:
         intents_dir = self.config_path / "intents"
         if not intents_dir.exists():
             return set(ALLOWED_INTENTS)
         values = {path.stem for path in intents_dir.glob("*.json")}
         return values or set(ALLOWED_INTENTS)
 
-    def getavailableintents(self) -> Set[str]:
+    def getavailableintents(self) -> set[str]:
         warnings.warn(
             "getavailableintents() deprecated, use get_available_intents()",
             DeprecationWarning,
@@ -251,14 +245,14 @@ class PromptBuilder:
         )
         return self.get_available_intents()
 
-    def get_available_overlays(self) -> Set[str]:
+    def get_available_overlays(self) -> set[str]:
         overlays_dir = self.config_path / "overlays"
         if not overlays_dir.exists():
             return set(ALLOWED_OVERLAYS)
         values = {path.stem for path in overlays_dir.glob("*.json")}
         return values or set(ALLOWED_OVERLAYS)
 
-    def getavailableoverlays(self) -> Set[str]:
+    def getavailableoverlays(self) -> set[str]:
         warnings.warn(
             "getavailableoverlays() deprecated, use get_available_overlays()",
             DeprecationWarning,
@@ -274,7 +268,7 @@ class PromptBuilder:
             )
         return domain
 
-    def _validate_intent(self, intent: Optional[str]) -> Optional[str]:
+    def _validate_intent(self, intent: str | None) -> str | None:
         if intent is None:
             return None
         if intent not in ALLOWED_INTENTS:
@@ -284,7 +278,7 @@ class PromptBuilder:
             )
         return intent
 
-    def _validate_overlays(self, overlays: Sequence[str]) -> List[str]:
+    def _validate_overlays(self, overlays: Sequence[str]) -> list[str]:
         normalized = [o.lower() for o in overlays]
         for o in normalized:
             if o not in ALLOWED_OVERLAYS:
@@ -312,7 +306,7 @@ class PromptBuilder:
         return normalized
 
     def _build_audience_block(
-        self, audience: Optional[AudienceProfile]
+        self, audience: AudienceProfile | None
     ) -> str:
         if audience is None:
             return ""
@@ -446,11 +440,11 @@ class PromptBuilder:
 
     def _add_trace_diagnostic(
         self,
-        trace: Optional[AssemblyTrace],
+        trace: AssemblyTrace | None,
         name: str,
         eligible: bool,
         included: bool,
-        reason_codes: List[str],
+        reason_codes: list[str],
         empty: bool = False,
         char_count: int = 0,
         entries_count: int = 0,
@@ -473,8 +467,8 @@ class PromptBuilder:
         self,
         kb: KnowledgeBase,
         req: KnowledgeBlockRequest,
-        lines: List[str],
-        trace: Optional[AssemblyTrace],
+        lines: list[str],
+        trace: AssemblyTrace | None,
         effective_limits: LimitsConfig,
     ) -> None:
         """
@@ -514,7 +508,9 @@ class PromptBuilder:
             included=True,
             reason_codes=[ReasonCode.BLOCK_INCLUDED],
             empty=False,
-            char_count=sum(len(line) for line in lines[-len(stop_words) - 1 :]),
+            char_count=sum(
+                len(line) for line in lines[-len(stop_words) - 1:]
+            ),
             entries_count=len(stop_words),
         )
 
@@ -522,8 +518,8 @@ class PromptBuilder:
         self,
         kb: KnowledgeBase,
         req: KnowledgeBlockRequest,
-        lines: List[str],
-        trace: Optional[AssemblyTrace],
+        lines: list[str],
+        trace: AssemblyTrace | None,
     ) -> None:
         """
         Обрабатывает блок evaluation_techniques.
@@ -566,12 +562,17 @@ class PromptBuilder:
         after_len = len("".join(lines))
         included = after_len > before_len
 
+        reason_code = (
+            ReasonCode.BLOCK_INCLUDED
+            if included
+            else ReasonCode.BLOCK_EMPTY_AFTER_BUILD
+        )
         self._add_trace_diagnostic(
             trace,
             "evaluation_techniques",
             eligible=True,
             included=included,
-            reason_codes=[ReasonCode.BLOCK_INCLUDED if included else ReasonCode.BLOCK_EMPTY_AFTER_BUILD],
+            reason_codes=[reason_code],
             empty=not included,
             char_count=after_len - before_len,
             entries_count=1,
@@ -581,8 +582,8 @@ class PromptBuilder:
         self,
         kb: KnowledgeBase,
         req: KnowledgeBlockRequest,
-        lines: List[str],
-        trace: Optional[AssemblyTrace],
+        lines: list[str],
+        trace: AssemblyTrace | None,
     ) -> None:
         """
         Обрабатывает блок glossary.
@@ -622,8 +623,8 @@ class PromptBuilder:
         self,
         kb: KnowledgeBase,
         req: KnowledgeBlockRequest,
-        lines: List[str],
-        trace: Optional[AssemblyTrace],
+        lines: list[str],
+        trace: AssemblyTrace | None,
     ) -> None:
         """
         Обрабатывает блок nkrj.
@@ -671,10 +672,10 @@ class PromptBuilder:
         block_cfg,
         kb: KnowledgeBase,
         req: KnowledgeBlockRequest,
-        lines: List[str],
-        meta: Dict[str, Any],
+        lines: list[str],
+        meta: dict[str, Any],
         current_total: int,
-        trace: Optional[AssemblyTrace],
+        trace: AssemblyTrace | None,
         effective_limits: LimitsConfig,
     ) -> int:
         """
@@ -694,16 +695,7 @@ class PromptBuilder:
 
         # Feature-gating: блоки включаются, только если соответствующая фича активна
         feature_gated = False
-        if block_cfg.name == "storytelling" and not req.storytelling_enabled:
-            feature_gated = True
-            reason = ReasonCode.BLOCK_INELIGIBLE_FEATURE_DISABLED
-        elif block_cfg.name == "marketing" and not req.marketing_enabled:
-            feature_gated = True
-            reason = ReasonCode.BLOCK_INELIGIBLE_FEATURE_DISABLED
-        elif block_cfg.name == "rhetoric" and not req.rhetoric_enabled:
-            feature_gated = True
-            reason = ReasonCode.BLOCK_INELIGIBLE_FEATURE_DISABLED
-        elif block_cfg.name == "editorial" and not req.editorial_enabled:
+        if (block_cfg.name == "storytelling" and not req.storytelling_enabled) or (block_cfg.name == "marketing" and not req.marketing_enabled) or (block_cfg.name == "rhetoric" and not req.rhetoric_enabled) or (block_cfg.name == "editorial" and not req.editorial_enabled):
             feature_gated = True
             reason = ReasonCode.BLOCK_INELIGIBLE_FEATURE_DISABLED
 
@@ -762,12 +754,17 @@ class PromptBuilder:
         char_count = after_len - before_len
         entries_added = current_total - before_entries
 
+        reason_code = (
+            ReasonCode.BLOCK_INCLUDED
+            if included
+            else ReasonCode.BLOCK_SKIPPED
+        )
         self._add_trace_diagnostic(
             trace,
             block_cfg.name,
             eligible=True,
             included=included,
-            reason_codes=[ReasonCode.BLOCK_INCLUDED if included else ReasonCode.BLOCK_SKIPPED],
+            reason_codes=[reason_code],
             empty=empty,
             char_count=char_count,
             entries_count=entries_added,
@@ -778,10 +775,7 @@ class PromptBuilder:
     def _build_knowledge_block(
         self,
         req: KnowledgeBlockRequest,
-    ) -> Union[
-        Tuple[str, Dict[str, Any], int],
-        Tuple[str, Dict[str, Any], int, AssemblyTrace],
-    ]:
+    ) -> tuple[str, dict[str, Any], int] | tuple[str, dict[str, Any], int, AssemblyTrace]:
         """
         Сборка блока знаний. Принимает один датакласс KnowledgeBlockRequest.
         """
@@ -791,8 +785,8 @@ class PromptBuilder:
 
         effective_limits = req.limits if req.limits is not None else self._limits
         kb = self.get_knowledge_base(primary_tags, req.intent)
-        lines: List[str] = []
-        meta: Dict[str, Any] = {}
+        lines: list[str] = []
+        meta: dict[str, Any] = {}
         current_total = req.total_few_shot_used
         trace = AssemblyTrace() if req.return_trace else None
 
@@ -810,14 +804,14 @@ class PromptBuilder:
             return "\n".join(lines), meta, current_total, trace
         return "\n".join(lines), meta, current_total
 
-    def _assemble_prompt(self, blocks: List[str]) -> str:
+    def _assemble_prompt(self, blocks: list[str]) -> str:
         return "\n\n".join(block for block in blocks if block.strip())
 
     def _validate_kb_manifest(self) -> None:
         from src.kb_manifest_loader import load_manifest
 
         manifest = load_manifest(self.kb_path / "kb_manifest.json")
-        block_types: Dict[str, str] = {}
+        block_types: dict[str, str] = {}
         for entry in manifest:
             key = (
                 entry.block_name or entry.file.split("/")[0]
@@ -839,16 +833,16 @@ class PromptBuilder:
         self,
         text: str,
         domain: str,
-        intent: Optional[str] = None,
-        audience: Optional[AudienceProfile] = None,
-        overlays: Optional[Sequence[str]] = None,
+        intent: str | None = None,
+        audience: AudienceProfile | None = None,
+        overlays: Sequence[str] | None = None,
         output_mode: str = "text_only",
         include_knowledge: bool = True,
         include_few_shot: bool = True,
         knowledge_level: KnowledgeLevel = KnowledgeLevel.STANDARD,
-        token_budget: Optional[int] = None,
+        token_budget: int | None = None,
         include_retrieval_meta: Literal[False] = False,
-        few_shot_seed: Optional[int] = None,
+        few_shot_seed: int | None = None,
         deep_semantic_search: bool = False,
         **legacy_kwargs: Any,
     ) -> str: ...
@@ -858,37 +852,37 @@ class PromptBuilder:
         self,
         text: str,
         domain: str,
-        intent: Optional[str] = None,
-        audience: Optional[AudienceProfile] = None,
-        overlays: Optional[Sequence[str]] = None,
+        intent: str | None = None,
+        audience: AudienceProfile | None = None,
+        overlays: Sequence[str] | None = None,
         output_mode: str = "text_only",
         include_knowledge: bool = True,
         include_few_shot: bool = True,
         knowledge_level: KnowledgeLevel = KnowledgeLevel.STANDARD,
-        token_budget: Optional[int] = None,
+        token_budget: int | None = None,
         include_retrieval_meta: Literal[True] = True,
-        few_shot_seed: Optional[int] = None,
+        few_shot_seed: int | None = None,
         deep_semantic_search: bool = False,
         **legacy_kwargs: Any,
-    ) -> Tuple[str, Dict[str, Any]]: ...
+    ) -> tuple[str, dict[str, Any]]: ...
 
     def build(
         self,
         text: str,
         domain: str,
-        intent: Optional[str] = None,
-        audience: Optional[AudienceProfile] = None,
-        overlays: Optional[Sequence[str]] = None,
+        intent: str | None = None,
+        audience: AudienceProfile | None = None,
+        overlays: Sequence[str] | None = None,
         output_mode: str = "text_only",
         include_knowledge: bool = True,
         include_few_shot: bool = True,
         knowledge_level: KnowledgeLevel = KnowledgeLevel.STANDARD,
-        token_budget: Optional[int] = None,
+        token_budget: int | None = None,
         include_retrieval_meta: bool = False,
-        few_shot_seed: Optional[int] = None,
+        few_shot_seed: int | None = None,
         deep_semantic_search: bool = False,
         **legacy_kwargs: Any,
-    ) -> Union[str, Tuple[str, Dict[str, Any]]]:
+    ) -> str | tuple[str, dict[str, Any]]:
         legacy_output_mode = legacy_kwargs.pop("outputmode", None)
         legacy_include_knowledge = legacy_kwargs.pop("includeknowledge", None)
         if legacy_kwargs:
@@ -954,7 +948,7 @@ class PromptBuilder:
         if antiai_enabled:
             tag_sets["primary"].add("antiai")
 
-        blocks: List[str] = []
+        blocks: list[str] = []
 
         blocks.append(f"Роль: {self.core_config.role}")
         blocks.append(f"Приоритеты: {self.core_config.priorities}")
@@ -1018,7 +1012,7 @@ class PromptBuilder:
         if audience_block:
             blocks.append("Аудитория:\n" + audience_block)
 
-        retrieval_meta_total: Dict[str, Any] = {}
+        retrieval_meta_total: dict[str, Any] = {}
         if include_knowledge:
             effective_limits = self._merge_domain_limits(domain_config)
             budget = KnowledgeBudgetManager(token_budget).allocate(

@@ -22,17 +22,17 @@ import os
 import random
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any
 
 import httpx
 from dotenv import load_dotenv
 
-from src.provider_registry import LLMProvider
 from src.context_budget import (
-    resolve_context_budget,
-    get_context_profile_from_env,
     LLMContextLimitError,
+    get_context_profile_from_env,
+    resolve_context_budget,
 )
+from src.provider_registry import LLMProvider
 
 load_dotenv()
 
@@ -60,8 +60,8 @@ class LLMResponse:
     content: str
     model: str
     provider: str
-    tokens_used: Optional[int] = None
-    finish_reason: Optional[str] = None
+    tokens_used: int | None = None
+    finish_reason: str | None = None
 
 
 class LLMError(Exception):
@@ -71,7 +71,7 @@ class LLMError(Exception):
 class LLMAPIError(LLMError):
     """Ошибка API провайдера."""
 
-    def __init__(self, message: str, status_code: Optional[int] = None) -> None:
+    def __init__(self, message: str, status_code: int | None = None) -> None:
         super().__init__(message)
         self.status_code = status_code
 
@@ -91,12 +91,12 @@ class LLMFallbackError(LLMError):
         self,
         message: str,
         *,
-        provider: Optional[str] = None,
-        primary_error: Optional[LLMError] = None,
-        skipped_providers: Tuple[str, ...] = (),
-        unknown_providers: Tuple[str, ...] = (),
+        provider: str | None = None,
+        primary_error: LLMError | None = None,
+        skipped_providers: tuple[str, ...] = (),
+        unknown_providers: tuple[str, ...] = (),
         prompt_length: int = 0,
-        upstream_status: Optional[int] = None,
+        upstream_status: int | None = None,
         kind: str = "unknown",
     ) -> None:
         super().__init__(message)
@@ -121,7 +121,7 @@ class LLMInvalidResponseError(LLMError):
         super().__init__(message)
 
 
-def _extract_upstream_status(error: LLMError) -> Optional[int]:
+def _extract_upstream_status(error: LLMError) -> int | None:
     """Извлекает HTTP статус из ошибки, если он присутствует."""
     if hasattr(error, "status_code") and isinstance(error.status_code, int):
         return error.status_code
@@ -184,7 +184,7 @@ def _classify_error(error: LLMError) -> str:
 
 def _backoff_with_jitter(base_delay: float, attempt: int) -> float:
     cap = base_delay * (2**attempt)
-    return random.uniform(0, cap)  # noqa: S311
+    return random.uniform(0, cap)
 
 
 _DEFAULT_MAX_TOKENS = 6000
@@ -239,14 +239,14 @@ class BaseLLMClient(ABC):
     async def close(self) -> None:
         await self.client.aclose()
 
-    def _sleep_delay_for(self, attempt: int) -> Optional[float]:
+    def _sleep_delay_for(self, attempt: int) -> float | None:
         if attempt + 1 >= self.config.max_retries:
             return None
         return _backoff_with_jitter(self.config.retry_delay, attempt)
 
     async def generate(self, prompt: str) -> LLMResponse:
         attempt = 0
-        last_error: Optional[Exception] = None
+        last_error: Exception | None = None
 
         while attempt < self.config.max_retries:
             try:
@@ -348,13 +348,13 @@ class BaseLLMClient(ABC):
 class _OpenAICompatibleClient(BaseLLMClient):
     API_URL: str = ""
 
-    def _build_headers(self) -> Dict[str, str]:
+    def _build_headers(self) -> dict[str, str]:
         return {
             "Authorization": f"Bearer {self.config.api_key}",
             "Content-Type": "application/json",
         }
 
-    def _build_payload(self, prompt: str) -> Dict[str, Any]:
+    def _build_payload(self, prompt: str) -> dict[str, Any]:
         return {
             "model": self.config.model,
             "messages": [{"role": "user", "content": prompt}],
@@ -387,7 +387,7 @@ class _OpenAICompatibleClient(BaseLLMClient):
         except httpx.HTTPError as error:
             raise LLMAPIError(f"HTTP error: {error}") from error
 
-    def parse_response(self, data: Dict[str, Any]) -> LLMResponse:
+    def parse_response(self, data: dict[str, Any]) -> LLMResponse:
         try:
             if (
                 "choices" not in data
@@ -442,7 +442,7 @@ class OpenAIClient(_OpenAICompatibleClient):
 class OpenRouterClient(_OpenAICompatibleClient):
     API_URL = "https://openrouter.ai/api/v1/chat/completions"
 
-    def _build_headers(self) -> Dict[str, str]:
+    def _build_headers(self) -> dict[str, str]:
         headers = super()._build_headers()
         headers["HTTP-Referer"] = os.getenv("OPENROUTER_SITE_URL", "")
         headers["X-Title"] = os.getenv("OPENROUTER_APP_NAME", "text-editor-api")
@@ -491,10 +491,10 @@ class AnthropicClient(BaseLLMClient):
         except httpx.HTTPError as error:
             raise LLMAPIError(f"HTTP error: {error}") from error
 
-    def parse_response(self, data: Dict[str, Any]) -> LLMResponse:
+    def parse_response(self, data: dict[str, Any]) -> LLMResponse:
         try:
             content_blocks = data.get("content", [])
-            text_chunks: List[str] = []
+            text_chunks: list[str] = []
 
             if not isinstance(content_blocks, list):
                 raise LLMInvalidResponseError("MALFORMED_RESPONSE")
@@ -536,8 +536,8 @@ class AnthropicClient(BaseLLMClient):
 
 def create_llm_client(
     provider: LLMProvider = LLMProvider.PERPLEXITY,
-    model: Optional[str] = None,
-    api_key: Optional[str] = None,
+    model: str | None = None,
+    api_key: str | None = None,
     temperature: float = 0.3,
     max_tokens: int = _DEFAULT_MAX_TOKENS,
     timeout: float = 60.0,
@@ -603,11 +603,11 @@ def create_llm_client(
 
 def _resolve_provider_max_tokens(
     provider_name: str,
-    model: Optional[str],
+    model: str | None,
     prompt: str,
-    source_text: Optional[str],
-    explicit_max_tokens: Optional[int],
-) -> Optional[int]:
+    source_text: str | None,
+    explicit_max_tokens: int | None,
+) -> int | None:
     """
     Вычисляет max_tokens для провайдера.
     Возвращает None, если провайдер не может обработать запрос (бюджет <= 0).
@@ -628,7 +628,8 @@ def _resolve_provider_max_tokens(
                 mode=profile.mode,
             )
             logger.info(
-                "Context budget for %s: input_tokens=%d, requested=%d, effective=%d, capped=%s, mode=%s",
+                "Context budget for %s: input_tokens=%d, requested=%d, "
+                "effective=%d, capped=%s, mode=%s",
                 provider_name,
                 budget.input_tokens_estimate,
                 budget.requested_output_tokens,
@@ -658,7 +659,7 @@ def _resolve_provider_max_tokens(
 
 async def _try_provider(
     provider_enum: LLMProvider,
-    model: Optional[str],
+    model: str | None,
     prompt: str,
     temperature: float,
     max_retries: int,
@@ -695,10 +696,10 @@ async def _try_provider(
 
 
 def _build_fallback_error(
-    primary_error: Optional[LLMError],
-    primary_provider: Optional[str],
-    skipped_providers: List[str],
-    unknown_providers: List[str],
+    primary_error: LLMError | None,
+    primary_provider: str | None,
+    skipped_providers: list[str],
+    unknown_providers: list[str],
     prompt_length: int,
 ) -> LLMFallbackError:
     """
@@ -709,7 +710,8 @@ def _build_fallback_error(
         upstream_status = _extract_upstream_status(primary_error)
         logger.warning(
             "All providers exhausted. primary_provider=%s, error_kind=%s, "
-            "upstream_status=%s, skipped_providers=%s, unknown_providers=%s, prompt_length=%d",
+            "upstream_status=%s, skipped_providers=%s, unknown_providers=%s, "
+            "prompt_length=%d",
             primary_provider,
             kind,
             upstream_status,
@@ -717,8 +719,9 @@ def _build_fallback_error(
             unknown_providers,
             prompt_length,
         )
+        last_provider = primary_provider if primary_provider else "none"
         return LLMFallbackError(
-            f"All providers failed. Last error from {primary_provider if primary_provider else 'none'}",
+            f"All providers failed. Last error from {last_provider}",
             provider=primary_provider,
             primary_error=primary_error,
             skipped_providers=tuple(skipped_providers),
@@ -729,7 +732,8 @@ def _build_fallback_error(
         )
     else:
         logger.warning(
-            "All providers skipped or unknown. skipped_providers=%s, unknown_providers=%s, prompt_length=%d",
+            "All providers skipped or unknown. "
+            "skipped_providers=%s, unknown_providers=%s, prompt_length=%d",
             skipped_providers,
             unknown_providers,
             prompt_length,
@@ -752,12 +756,12 @@ def _build_fallback_error(
 
 async def call_with_fallback(
     prompt: str,
-    providers: List[str],
-    model: Optional[str] = None,
+    providers: list[str],
+    model: str | None = None,
     temperature: float = 0.3,
     max_retries_per_provider: int = 1,
-    max_tokens: Optional[int] = None,
-    source_text: Optional[str] = None,
+    max_tokens: int | None = None,
+    source_text: str | None = None,
 ) -> LLMResponse:
     """
     Выполняет запрос к LLM с перебором провайдеров.
@@ -780,10 +784,10 @@ async def call_with_fallback(
     if not providers:
         raise LLMError("No providers specified. Cannot execute LLM call.")
 
-    primary_error: Optional[LLMError] = None
-    primary_provider: Optional[str] = None
-    skipped_providers: List[str] = []
-    unknown_providers: List[str] = []
+    primary_error: LLMError | None = None
+    primary_provider: str | None = None
+    skipped_providers: list[str] = []
+    unknown_providers: list[str] = []
 
     for idx, provider_name in enumerate(providers):
         try:
@@ -819,7 +823,8 @@ async def call_with_fallback(
 
         except ValueError:
             logger.warning(
-                "call_with_fallback: provider=%s unavailable (missing key or model), skipping",
+                "call_with_fallback: provider=%s unavailable "
+                "(missing key or model), skipping",
                 provider_name,
             )
             skipped_providers.append(provider_name)
@@ -862,7 +867,7 @@ async def call_with_fallback(
 async def generate_text(
     prompt: str,
     provider: LLMProvider = LLMProvider.PERPLEXITY,
-    model: Optional[str] = None,
+    model: str | None = None,
     temperature: float = 0.3,
 ) -> str:
     async with create_llm_client(

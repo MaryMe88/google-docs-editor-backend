@@ -6,7 +6,7 @@
 
 from __future__ import annotations
 
-from typing import Dict, List, Set, Final
+from typing import Final
 
 from src.shared_contracts import ALLOWED_INTENTS, ALLOWED_OVERLAYS
 from src.tag_registry import normalize_tag
@@ -14,7 +14,7 @@ from src.tag_registry import normalize_tag
 # ---------------------------------------------------------------------------
 # Canonical feature aliases (фичи и их синонимы)
 # ---------------------------------------------------------------------------
-CANONICAL_FEATURE_ALIASES: Final[Dict[str, List[str]]] = {
+CANONICAL_FEATURE_ALIASES: Final[dict[str, list[str]]] = {
     "storytelling": ["storytelling", "story", "narrative"],
     "marketing": ["marketing", "marketingpush", "sales", "promo"],
     # ИСПРАВЛЕНИЕ (Итерация 3-4): замена "anti-llm" на "anti_llm" для
@@ -33,12 +33,12 @@ CANONICAL_FEATURE_ALIASES: Final[Dict[str, List[str]]] = {
 }
 
 # Обратный маппинг: тег -> фича
-_TAG_TO_FEATURE: Dict[str, str] = {}
+_TAG_TO_FEATURE: dict[str, str] = {}
 for feature, aliases in CANONICAL_FEATURE_ALIASES.items():
     for alias in aliases:
         _TAG_TO_FEATURE[alias] = feature
 
-KNOWN_FEATURE_ALIASES: Final[Set[str]] = set(_TAG_TO_FEATURE.keys())
+KNOWN_FEATURE_ALIASES: Final[set[str]] = set(_TAG_TO_FEATURE.keys())
 
 
 # ---------------------------------------------------------------------------
@@ -49,7 +49,7 @@ def get_feature_for_tag(tag: str) -> str | None:
     return _TAG_TO_FEATURE.get(tag)
 
 
-def get_features_from_tags(tags: List[str]) -> Set[str]:
+def get_features_from_tags(tags: list[str]) -> set[str]:
     """Возвращает множество фич, соответствующих переданным тегам."""
     features = set()
     for tag in tags:
@@ -62,12 +62,12 @@ def get_features_from_tags(tags: List[str]) -> Set[str]:
 # ---------------------------------------------------------------------------
 # Проверка согласованности с конфигами (для валидации)
 # ---------------------------------------------------------------------------
-def get_known_intents() -> Set[str]:
+def get_known_intents() -> set[str]:
     """Возвращает множество известных интентов (из shared_contracts)."""
     return set(ALLOWED_INTENTS)
 
 
-def get_known_overlays() -> Set[str]:
+def get_known_overlays() -> set[str]:
     """Возвращает множество известных оверлеев (из shared_contracts)."""
     return set(ALLOWED_OVERLAYS)
 
@@ -75,7 +75,7 @@ def get_known_overlays() -> Set[str]:
 # ---------------------------------------------------------------------------
 # Проверка согласованности алиасов с тегами (для валидации)
 # ---------------------------------------------------------------------------
-def check_alias_consistency() -> List[str]:
+def check_alias_consistency() -> list[str]:
     """
     Проверяет, что все алиасы присутствуют в KNOWN_TAGS.
     Возвращает список предупреждений.
