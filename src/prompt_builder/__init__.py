@@ -85,7 +85,7 @@ from .normalization import (
 
 # RUF022: __all__ намеренно сгруппирован по назначению (с комментариями),
 # а не отсортирован по алфавиту — читаемость важнее машинной сортировки.
-__all__ = [
+__all__ = [  # noqa: RUF022
     # Основной класс и dataclass запроса
     "PromptBuilder",
     "KnowledgeBlockRequest",

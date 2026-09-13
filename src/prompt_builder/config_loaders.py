@@ -81,7 +81,7 @@ def load_domain_config(
     raw_constraints = data.get("constraints", [])
     raw_ip = data.get("ip_ceiling")
     domain_ip_ceiling: float | None = None
-    if isinstance(raw_ip, (int, float)):
+    if isinstance(raw_ip, int | float):
         domain_ip_ceiling = float(raw_ip)
     elif isinstance(raw_ip, dict):
         domain_ip_ceiling = float(raw_ip.get("value", 2.5))
@@ -107,7 +107,7 @@ def load_domain_config(
                     ", ".join(sorted(ALLOWED_KB_LIMIT_KEYS)),
                 )
                 continue
-            if not isinstance(v, (int, float)) or isinstance(v, bool):
+            if not isinstance(v, int | float) or isinstance(v, bool):
                 logger.warning(
                     "kb_limits['%s'] в домене '%s': значение %r не число — "
                     "пропущено",
