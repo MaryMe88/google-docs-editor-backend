@@ -131,9 +131,7 @@ def test_text_only_fallback_beats_tag_only() -> None:
     )
     result = _select_ranked_entries(
         entries=entries,
-        normalized_text=normalize_text_for_match(
-            "Нам нужны краткие фразы и проще подача."
-        ),
+        normalized_text=normalize_text_for_match("Нам нужны краткие фразы и проще подача."),
         wanted_tags=["style"],
         limit=1,
         params=params,

@@ -51,9 +51,7 @@ def builder() -> PromptBuilder:
 class TestKnowledgeLevelOverrides:
     """Проверяет, что при FULL уровне блоки storytelling/marketing включаются принудительно."""
 
-    def test_storytelling_included_at_full_without_tag(
-        self, builder: PromptBuilder
-    ) -> None:
+    def test_storytelling_included_at_full_without_tag(self, builder: PromptBuilder) -> None:
         """При FULL и allow_storytelling=True storytelling появляется даже без тега."""
         prompt = builder.build(
             text="Тестовый текст для проверки сторителлинга.",
@@ -62,13 +60,11 @@ class TestKnowledgeLevelOverrides:
             include_knowledge=True,
             include_few_shot=False,
         )
-        assert "Сторителлинг-фреймворки:" in prompt, (
-            "При FULL уровне и allow_storytelling=True блок storytelling должен быть включён"
-        )
+        assert (
+            "Сторителлинг-фреймворки:" in prompt
+        ), "При FULL уровне и allow_storytelling=True блок storytelling должен быть включён"
 
-    def test_marketing_included_at_full_without_tag(
-        self, builder: PromptBuilder
-    ) -> None:
+    def test_marketing_included_at_full_without_tag(self, builder: PromptBuilder) -> None:
         """При FULL и allow_marketing=True marketing появляется даже без тега."""
         prompt = builder.build(
             text="Тестовый текст для проверки маркетинга.",
@@ -77,9 +73,9 @@ class TestKnowledgeLevelOverrides:
             include_knowledge=True,
             include_few_shot=False,
         )
-        assert "Маркетинговые шаблоны:" in prompt, (
-            "При FULL уровне и allow_marketing=True блок marketing должен быть включён"
-        )
+        assert (
+            "Маркетинговые шаблоны:" in prompt
+        ), "При FULL уровне и allow_marketing=True блок marketing должен быть включён"
 
     def test_storytelling_not_included_at_standard_without_tag(
         self, builder: PromptBuilder
@@ -92,9 +88,9 @@ class TestKnowledgeLevelOverrides:
             include_knowledge=True,
             include_few_shot=False,
         )
-        assert "Сторителлинг-фреймворки:" not in prompt, (
-            "При STANDARD уровне без тега storytelling не должен быть включён"
-        )
+        assert (
+            "Сторителлинг-фреймворки:" not in prompt
+        ), "При STANDARD уровне без тега storytelling не должен быть включён"
 
     def test_storytelling_included_at_full_even_if_domain_forbids(
         self, builder: PromptBuilder
@@ -107,13 +103,11 @@ class TestKnowledgeLevelOverrides:
             include_knowledge=True,
             include_few_shot=False,
         )
-        assert "Сторителлинг-фреймворки:" not in prompt, (
-            "Если allow_storytelling=False, даже при FULL storytelling не включается"
-        )
+        assert (
+            "Сторителлинг-фреймворки:" not in prompt
+        ), "Если allow_storytelling=False, даже при FULL storytelling не включается"
 
-    def test_knowledge_level_changes_prompt_despite_cache(
-        self, builder: PromptBuilder
-    ) -> None:
+    def test_knowledge_level_changes_prompt_despite_cache(self, builder: PromptBuilder) -> None:
         """
         Тест изменения промпта при смене KnowledgeLevel (аналог kb_loading_contract).
         Проверяет, что смена knowledge_level меняет промпт.
@@ -133,12 +127,12 @@ class TestKnowledgeLevelOverrides:
         )
 
         assert len(p_full) > len(p_core), "FULL-промпт должен быть длиннее CORE"
-        assert "Редакторские приёмы" in p_full, (
-            "При FULL и домене nora_gal должен быть блок 'Редакторские приёмы'"
-        )
-        assert "Редакторские приёмы" not in p_core, (
-            "При CORE не должно быть блока 'Редакторские приёмы'"
-        )
+        assert (
+            "Редакторские приёмы" in p_full
+        ), "При FULL и домене nora_gal должен быть блок 'Редакторские приёмы'"
+        assert (
+            "Редакторские приёмы" not in p_core
+        ), "При CORE не должно быть блока 'Редакторские приёмы'"
 
 
 class TestExplainabilityOverrides:
@@ -164,15 +158,10 @@ class TestExplainabilityOverrides:
                 storytelling_diag = diag
                 break
 
-        assert storytelling_diag is not None, (
-            "Блок storytelling должен присутствовать в trace"
-        )
-        assert storytelling_diag.included is True, (
-            "Блок storytelling должен быть включён"
-        )
+        assert storytelling_diag is not None, "Блок storytelling должен присутствовать в trace"
+        assert storytelling_diag.included is True, "Блок storytelling должен быть включён"
         assert (
-            ReasonCode.BLOCK_INELIGIBLE_FEATURE_DISABLED
-            not in storytelling_diag.reason_codes
+            ReasonCode.BLOCK_INELIGIBLE_FEATURE_DISABLED not in storytelling_diag.reason_codes
         ), "Storytelling не должен быть отключён по feature при FULL"
 
 
@@ -311,12 +300,10 @@ class TestManifestConsistency:
 
         for cfg in KB_BLOCK_REGISTRY:
             block_budget = budget.get(cfg.budget_key)
-            assert block_budget is not None, (
-                f"Блок '{cfg.name}': нет бюджета '{cfg.budget_key}' в KnowledgeBudget"
-            )
-            assert block_budget.enabled, (
-                f"Блок '{cfg.name}' отключён на FULL уровне (лимит 0?)"
-            )
+            assert (
+                block_budget is not None
+            ), f"Блок '{cfg.name}': нет бюджета '{cfg.budget_key}' в KnowledgeBudget"
+            assert block_budget.enabled, f"Блок '{cfg.name}' отключён на FULL уровне (лимит 0?)"
 
     def test_manifest_matches_generator(self) -> None:
         """

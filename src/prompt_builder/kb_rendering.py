@@ -70,9 +70,7 @@ def _collect_retrieval_tags(
     expanded: set[str] = set()
     domain_primary = get_primary_tags_for_category("domains", domain)
     if not domain_primary:
-        logger.warning(
-            "_collect_retrieval_tags: no tags found for domain=%r", domain
-        )
+        logger.warning("_collect_retrieval_tags: no tags found for domain=%r", domain)
     primary.update(domain_primary)
     expanded.update(get_canonical_tags_for_category("domains", domain))
     if intent and intent != "neutral":
@@ -85,18 +83,14 @@ def _collect_retrieval_tags(
     return {"primary": primary, "expanded": expanded - primary}
 
 
-def _append_rule_entries(
-    lines: list[str], title: str, entries: list[dict[str, Any]]
-) -> None:
+def _append_rule_entries(lines: list[str], title: str, entries: list[dict[str, Any]]) -> None:
     if not entries:
         return
     lines.append(title)
     for entry in entries:
         wrong = entry.get("wrong")
         correct = entry.get("correct")
-        rule = (
-            entry.get("rule") or entry.get("description") or entry.get("name")
-        )
+        rule = entry.get("rule") or entry.get("description") or entry.get("name")
         fragments = []
         if wrong:
             fragments.append(f"плохо: {wrong}")
@@ -108,9 +102,7 @@ def _append_rule_entries(
             lines.append("- " + "; ".join(fragments))
 
 
-def _append_structural_entries(
-    lines: list[str], title: str, entries: list[dict[str, Any]]
-) -> None:
+def _append_structural_entries(lines: list[str], title: str, entries: list[dict[str, Any]]) -> None:
     if not entries:
         return
     lines.append(title)
@@ -131,9 +123,7 @@ def _append_structural_entries(
             lines.append("- " + " | ".join(fragments))
 
 
-def _append_editorial_entries(
-    lines: list[str], title: str, entries: list[dict[str, Any]]
-) -> None:
+def _append_editorial_entries(lines: list[str], title: str, entries: list[dict[str, Any]]) -> None:
     if not entries:
         return
     lines.append(title)
@@ -142,9 +132,7 @@ def _append_editorial_entries(
         description = entry.get("description", "")
         how_to_apply = entry.get("how_to_apply", [])
         if isinstance(how_to_apply, list):
-            how_to_apply_str = "; ".join(
-                str(item) for item in how_to_apply[:3]
-            )
+            how_to_apply_str = "; ".join(str(item) for item in how_to_apply[:3])
         else:
             how_to_apply_str = ""
         fragments = []
@@ -158,9 +146,7 @@ def _append_editorial_entries(
             lines.append("- " + " | ".join(fragments))
 
 
-def _append_case_study_entries(
-    lines: list[str], title: str, entries: list[dict[str, Any]]
-) -> None:
+def _append_case_study_entries(lines: list[str], title: str, entries: list[dict[str, Any]]) -> None:
     if not entries:
         return
     lines.append(title)
@@ -195,9 +181,7 @@ def _append_case_study_entries(
                     lines.append(f"     Ориентир: {hint}")
 
 
-def _append_evaluation_techniques(
-    lines: list[str], title: str, data: dict[str, Any]
-) -> None:
+def _append_evaluation_techniques(lines: list[str], title: str, data: dict[str, Any]) -> None:
     if not data:
         return
     lines.append(title)
@@ -223,11 +207,7 @@ def _append_evaluation_techniques(
             name = strategy.get("name", "")
             desc = strategy.get("description", "")
             if name or desc:
-                lines.append(
-                    f"- {name}: {desc}"
-                    if name and desc
-                    else f"- {name or desc}"
-                )
+                lines.append(f"- {name}: {desc}" if name and desc else f"- {name or desc}")
 
     diagnostics = data.get("diagnostics", [])
     if isinstance(diagnostics, list) and diagnostics:
@@ -254,9 +234,7 @@ def _append_evaluation_techniques(
             lines.append(f"Источник: {title}")
 
 
-def _append_glossary(
-    lines: list[str], glossary: dict[str, Any], limit: int
-) -> None:
+def _append_glossary(lines: list[str], glossary: dict[str, Any], limit: int) -> None:
     if not glossary:
         return
     lines.append("Глоссарий домена:")
@@ -268,9 +246,7 @@ def _append_glossary(
             lines.append(f"- {term}: {value.strip()}")
             count += 1
         elif isinstance(value, dict):
-            description = (
-                value.get("description") or value.get("meaning") or ""
-            )
+            description = value.get("description") or value.get("meaning") or ""
             if isinstance(description, str) and description.strip():
                 lines.append(f"- {term}: {description.strip()}")
                 count += 1
@@ -521,9 +497,7 @@ def _process_kb_block(config: KBBlockConfig, ctx: ProcessContext) -> int:
     """
     if not config.uses_structural_call:
         candidate_limit = (
-            getattr(ctx.limits, config.candidate_attr)
-            if config.candidate_attr
-            else None
+            getattr(ctx.limits, config.candidate_attr) if config.candidate_attr else None
         )
         if candidate_limit is None:
             candidate_limit = DEFAULT_CANDIDATE_LIMIT

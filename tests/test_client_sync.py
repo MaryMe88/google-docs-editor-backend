@@ -102,15 +102,11 @@ def _find_matching_brace(source: str, opening_index: int) -> int:
                 return index
 
             if depth < 0:
-                raise ModeConfigParseError(
-                    "Обнаружена лишняя закрывающая фигурная скобка."
-                )
+                raise ModeConfigParseError("Обнаружена лишняя закрывающая фигурная скобка.")
 
         index += 1
 
-    raise ModeConfigParseError(
-        "Не удалось найти закрывающую фигурную скобку MODE_CONFIG."
-    )
+    raise ModeConfigParseError("Не удалось найти закрывающую фигурную скобку MODE_CONFIG.")
 
 
 def _extract_mode_config_object(source: str) -> str:
@@ -121,9 +117,7 @@ def _extract_mode_config_object(source: str) -> str:
     )
 
     if match is None:
-        raise ModeConfigParseError(
-            "В Apps Script не найдена декларация const MODE_CONFIG = {...}."
-        )
+        raise ModeConfigParseError("В Apps Script не найдена декларация const MODE_CONFIG = {...}.")
 
     opening_index = source.find("{", match.start())
     closing_index = _find_matching_brace(source, opening_index)
@@ -194,8 +188,7 @@ def _extract_optional_string(
 ) -> str | None:
     """Извлекает необязательное строковое поле или null."""
     match = re.search(
-        rf"\b{re.escape(field_name)}\s*:\s*"
-        r"(null|['\"]([^'\"]+)['\"])",
+        rf"\b{re.escape(field_name)}\s*:\s*" r"(null|['\"]([^'\"]+)['\"])",
         body,
     )
 
@@ -208,9 +201,7 @@ def _extract_optional_string(
     value = match.group(2)
 
     if value is None or not value.strip():
-        raise ModeConfigParseError(
-            f'Не удалось разобрать поле "{field_name}" режима "{mode_id}".'
-        )
+        raise ModeConfigParseError(f'Не удалось разобрать поле "{field_name}" режима "{mode_id}".')
 
     return value.strip()
 
@@ -224,17 +215,14 @@ def _extract_overlays(mode_id: str, body: str) -> list[str]:
     )
 
     if match is None:
-        raise ModeConfigParseError(
-            f'У режима "{mode_id}" отсутствует массив "overlays".'
-        )
+        raise ModeConfigParseError(f'У режима "{mode_id}" отсутствует массив "overlays".')
 
     raw_items = match.group(1)
     overlays = re.findall(r"['\"]([^'\"]+)['\"]", raw_items)
 
     if not overlays:
         raise ModeConfigParseError(
-            f'У режима "{mode_id}" массив "overlays" пуст '
-            "или содержит нестроковые значения."
+            f'У режима "{mode_id}" массив "overlays" пуст ' "или содержит нестроковые значения."
         )
 
     return [overlay.strip() for overlay in overlays]
@@ -276,9 +264,7 @@ def load_client_modes(script_path: Path) -> dict[str, dict[str, Any]]:
         }
 
     if not modes:
-        raise ModeConfigParseError(
-            "MODE_CONFIG найден, но в нём не обнаружено ни одного режима."
-        )
+        raise ModeConfigParseError("MODE_CONFIG найден, но в нём не обнаружено ни одного режима.")
 
     return modes
 
@@ -314,9 +300,7 @@ def test_all_client_intents_are_allowed(
 ) -> None:
     """Каждый непустой intent из MODE_CONFIG должен поддерживаться backend."""
     client_intents = {
-        str(mode["intent"])
-        for mode in client_modes.values()
-        if mode["intent"] is not None
+        str(mode["intent"]) for mode in client_modes.values() if mode["intent"] is not None
     }
 
     unsupported = client_intents - ALLOWED_INTENTS
@@ -332,9 +316,7 @@ def test_all_client_overlays_are_allowed(
     client_modes: dict[str, dict[str, Any]],
 ) -> None:
     """Каждый overlay из MODE_CONFIG должен поддерживаться backend."""
-    client_overlays = {
-        overlay for mode in client_modes.values() for overlay in mode["overlays"]
-    }
+    client_overlays = {overlay for mode in client_modes.values() for overlay in mode["overlays"]}
 
     unsupported = client_overlays - ALLOWED_OVERLAYS
 
@@ -365,22 +347,22 @@ def test_every_client_mode_has_minimum_contract(
 ) -> None:
     """Каждый режим обязан содержать непустой domain и overlays."""
     for mode_id, mode in client_modes.items():
-        assert isinstance(mode["domain"], str) and mode["domain"], (
-            f'Режим "{mode_id}" не содержит корректный domain.'
-        )
+        assert (
+            isinstance(mode["domain"], str) and mode["domain"]
+        ), f'Режим "{mode_id}" не содержит корректный domain.'
 
-        assert mode["intent"] is None or isinstance(mode["intent"], str), (
-            f'Режим "{mode_id}" содержит некорректный intent.'
-        )
+        assert mode["intent"] is None or isinstance(
+            mode["intent"], str
+        ), f'Режим "{mode_id}" содержит некорректный intent.'
 
-        assert isinstance(mode["overlays"], list) and mode["overlays"], (
-            f'Режим "{mode_id}" не содержит непустой массив overlays.'
-        )
+        assert (
+            isinstance(mode["overlays"], list) and mode["overlays"]
+        ), f'Режим "{mode_id}" не содержит непустой массив overlays.'
 
         assert all(
             isinstance(overlay, str) and overlay for overlay in mode["overlays"]
         ), f'Режим "{mode_id}" содержит некорректное значение overlays.'
 
-        assert isinstance(mode["output_mode"], str) and mode["output_mode"], (
-            f'Режим "{mode_id}" не содержит корректный output_mode.'
-        )
+        assert (
+            isinstance(mode["output_mode"], str) and mode["output_mode"]
+        ), f'Режим "{mode_id}" не содержит корректный output_mode.'

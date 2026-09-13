@@ -51,14 +51,9 @@ def load_scoring_weights() -> dict[str, int]:
         # Проверяем, что все ключи присутствуют и значения — int
         for key in _DEFAULT_WEIGHTS:
             if key not in data:
-                raise ValueError(
-                    f"Missing key '{key}' in scoring_weights.json"
-                )
+                raise ValueError(f"Missing key '{key}' in scoring_weights.json")
             if not isinstance(data[key], int):
-                raise ValueError(
-                    f"Key '{key}' must be integer, got "
-                    f"{type(data[key]).__name__}"
-                )
+                raise ValueError(f"Key '{key}' must be integer, got " f"{type(data[key]).__name__}")
         # Дополнительные ключи в файле разрешены, но не используются
         _WEIGHTS_CACHE = {key: data[key] for key in _DEFAULT_WEIGHTS}
         logger.info("Loaded scoring weights from %s", _CONFIG_PATH)

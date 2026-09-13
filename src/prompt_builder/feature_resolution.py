@@ -32,9 +32,7 @@ from .normalization import (
 logger = logging.getLogger(__name__)
 
 _TAG_TO_FEATURE = {
-    alias: feature
-    for feature, aliases in CANONICAL_FEATURE_ALIASES.items()
-    for alias in aliases
+    alias: feature for feature, aliases in CANONICAL_FEATURE_ALIASES.items() for alias in aliases
 }
 
 
@@ -96,6 +94,7 @@ def _build_overlay_slug_map(
 # ============================================================================
 # НОВЫЕ ПРИВАТНЫЕ ФУНКЦИИ
 # ============================================================================
+
 
 def _prepare_resolution_context(
     domain: str,
@@ -165,9 +164,7 @@ def _apply_domain_incompatibility(
     warnings: list[str],
 ) -> tuple[str, list[str], list[str]]:
     if _is_incompatible_intent(effective_intent, domain_config.incompatible_intents):
-        suppressed_layers.append(
-            f"intent '{effective_intent}' suppressed by domain '{domain}'"
-        )
+        suppressed_layers.append(f"intent '{effective_intent}' suppressed by domain '{domain}'")
         warnings.append(
             f"Intent '{effective_intent}' incompatible with domain '{domain}', ignoring."
         )
@@ -183,12 +180,8 @@ def _apply_domain_incompatibility(
     for overlay in list(effective_overlays):
         if _is_incompatible_overlay(overlay, domain_config.incompatible_overlays):
             effective_overlays.remove(overlay)
-            suppressed_layers.append(
-                f"overlay '{overlay}' suppressed by domain '{domain}'"
-            )
-            warnings.append(
-                f"Overlay '{overlay}' incompatible with domain '{domain}', removed."
-            )
+            suppressed_layers.append(f"overlay '{overlay}' suppressed by domain '{domain}'")
+            warnings.append(f"Overlay '{overlay}' incompatible with domain '{domain}', removed.")
             _add_suppression_reason(
                 result,
                 f"overlay:{overlay}",
@@ -221,9 +214,7 @@ def _apply_overlay_suppressions(
                 suppressed_layers.append(
                     f"overlay '{target_name}' suppressed by overlay '{ov}' (explicit suppress)"
                 )
-                warnings.append(
-                    f"Overlay '{target_name}' explicitly suppressed by '{ov}'."
-                )
+                warnings.append(f"Overlay '{target_name}' explicitly suppressed by '{ov}'.")
                 _add_suppression_reason(
                     result,
                     f"overlay:{target_name}",
@@ -232,15 +223,14 @@ def _apply_overlay_suppressions(
                 tags = [t for t in tags if t != target_name]
 
     if suppressed_by_overlay:
-        effective_overlays = [
-            ov for ov in effective_overlays if ov not in suppressed_by_overlay
-        ]
+        effective_overlays = [ov for ov in effective_overlays if ov not in suppressed_by_overlay]
     return effective_overlays, tags
 
 
 # ============================================================================
 # ВСПОМОГАТЕЛЬНАЯ ФУНКЦИЯ ДЛЯ ОБРАБОТКИ ЯВНОГО SUPPRESS В КОНФЛИКТЕ
 # ============================================================================
+
 
 def _handle_explicit_suppress_in_conflict(
     result: FeatureResolutionResult,
@@ -319,8 +309,15 @@ def _resolve_overlay_conflicts(
 
         # Проверяем явный suppress
         suppressed = _handle_explicit_suppress_in_conflict(
-            result, ov, conflict, cfg_ov, cfg_conflict,
-            effective_overlays, tags, suppressed_layers, warnings
+            result,
+            ov,
+            conflict,
+            cfg_ov,
+            cfg_conflict,
+            effective_overlays,
+            tags,
+            suppressed_layers,
+            warnings,
         )
         if suppressed is not None:
             effective_overlays, tags = suppressed
@@ -382,9 +379,7 @@ def _resolve_overlay_conflicts(
                     f"overlay '{ov}' suppressed due to conflict "
                     f"with '{conflict}' (equal priority, deterministic fallback)"
                 )
-                warnings.append(
-                    f"Overlay conflict: '{ov}' removed (equal priority, fallback)."
-                )
+                warnings.append(f"Overlay conflict: '{ov}' removed (equal priority, fallback).")
                 _add_suppression_reason(
                     result,
                     f"overlay:{ov}",
@@ -399,14 +394,14 @@ def _resolve_overlay_conflicts(
 # ФУНКЦИИ АКТИВАЦИИ ОТДЕЛЬНЫХ ФИЧ
 # ============================================================================
 
+
 def _activate_storytelling(
     result: FeatureResolutionResult,
     all_tags: list[str],
     domain_config: DomainConfig,
 ) -> None:
     recognized = any(
-        tag in _TAG_TO_FEATURE and _TAG_TO_FEATURE[tag] == "storytelling"
-        for tag in all_tags
+        tag in _TAG_TO_FEATURE and _TAG_TO_FEATURE[tag] == "storytelling" for tag in all_tags
     )
     features = get_features_from_tags(all_tags)
     if domain_config.allow_storytelling and "storytelling" in features:
@@ -429,8 +424,7 @@ def _activate_marketing(
     domain_config: DomainConfig,
 ) -> None:
     recognized = any(
-        tag in _TAG_TO_FEATURE and _TAG_TO_FEATURE[tag] == "marketing"
-        for tag in all_tags
+        tag in _TAG_TO_FEATURE and _TAG_TO_FEATURE[tag] == "marketing" for tag in all_tags
     )
     features = get_features_from_tags(all_tags)
     if domain_config.allow_marketing and "marketing" in features:
@@ -452,8 +446,7 @@ def _activate_antiai(
     all_tags: list[str],
 ) -> None:
     recognized = any(
-        tag in _TAG_TO_FEATURE and _TAG_TO_FEATURE[tag] == "antiai"
-        for tag in all_tags
+        tag in _TAG_TO_FEATURE and _TAG_TO_FEATURE[tag] == "antiai" for tag in all_tags
     )
     features = get_features_from_tags(all_tags)
     if "antiai" in features:
@@ -471,8 +464,7 @@ def _activate_rhetoric(
     all_tags: list[str],
 ) -> None:
     recognized = any(
-        tag in _TAG_TO_FEATURE and _TAG_TO_FEATURE[tag] == "rhetoric"
-        for tag in all_tags
+        tag in _TAG_TO_FEATURE and _TAG_TO_FEATURE[tag] == "rhetoric" for tag in all_tags
     )
     features = get_features_from_tags(all_tags)
     if "rhetoric" in features:
@@ -489,10 +481,7 @@ def _activate_nkrj(
     result: FeatureResolutionResult,
     all_tags: list[str],
 ) -> None:
-    recognized = any(
-        tag in _TAG_TO_FEATURE and _TAG_TO_FEATURE[tag] == "nkrj"
-        for tag in all_tags
-    )
+    recognized = any(tag in _TAG_TO_FEATURE and _TAG_TO_FEATURE[tag] == "nkrj" for tag in all_tags)
     features = get_features_from_tags(all_tags)
     if "nkrj" in features:
         result.nkrj_enabled = True
@@ -509,8 +498,7 @@ def _activate_editorial(
     all_tags: list[str],
 ) -> None:
     recognized = any(
-        tag in _TAG_TO_FEATURE and _TAG_TO_FEATURE[tag] == "editorial"
-        for tag in all_tags
+        tag in _TAG_TO_FEATURE and _TAG_TO_FEATURE[tag] == "editorial" for tag in all_tags
     )
     features = get_features_from_tags(all_tags)
     if "editorial" in features:
@@ -526,6 +514,7 @@ def _activate_editorial(
 # ============================================================================
 # КООРДИНАТОР АКТИВАЦИИ ВСЕХ ФИЧ
 # ============================================================================
+
 
 def _activate_features_from_tags(
     result: FeatureResolutionResult,
@@ -664,19 +653,32 @@ def resolve_prompt_features(
     )
 
     effective_intent, effective_overlays, tags = _apply_domain_incompatibility(
-        result, domain, domain_config,
-        effective_intent, effective_overlays, tags,
-        suppressed_layers, warnings,
+        result,
+        domain,
+        domain_config,
+        effective_intent,
+        effective_overlays,
+        tags,
+        suppressed_layers,
+        warnings,
     )
 
     effective_overlays, tags = _apply_overlay_suppressions(
-        result, effective_overlays, overlay_configs, tags,
-        suppressed_layers, warnings,
+        result,
+        effective_overlays,
+        overlay_configs,
+        tags,
+        suppressed_layers,
+        warnings,
     )
 
     effective_overlays, tags = _resolve_overlay_conflicts(
-        result, effective_overlays, overlay_configs, tags,
-        suppressed_layers, warnings,
+        result,
+        effective_overlays,
+        overlay_configs,
+        tags,
+        suppressed_layers,
+        warnings,
     )
 
     _activate_features_from_tags(
@@ -686,8 +688,13 @@ def resolve_prompt_features(
     _apply_full_level_overrides(result, knowledge_level, domain_config)
 
     _apply_suppress_rules(
-        result, domain_config, intent_config, effective_overlays, overlay_configs,
-        suppressed_layers, warnings,
+        result,
+        domain_config,
+        intent_config,
+        effective_overlays,
+        overlay_configs,
+        suppressed_layers,
+        warnings,
     )
 
     final_tags = list(dict.fromkeys(tags))

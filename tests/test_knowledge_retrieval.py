@@ -536,18 +536,18 @@ def test_retrieval_without_case_study_does_not_load():
     from src.prompt_builder import load_knowledge_base
 
     kb = load_knowledge_base(KB_PATH, active_tags={"marketing"}, load_all=False)
-    assert not kb.get("case_study_templates"), (
-        "Блок case_study_templates не должен загружаться без тега casestudy"
-    )
+    assert not kb.get(
+        "case_study_templates"
+    ), "Блок case_study_templates не должен загружаться без тега casestudy"
     # Жанровые записи кейса не должны протекать и в чужие блоки
     for foreign_block in ("storytelling_frameworks", "marketing_templates"):
         block = kb.get(foreign_block)
         if not block:
             continue
         ids = [rec.get("id") for rec in block if isinstance(rec, dict)]
-        assert "case_study_composition" not in ids, (
-            f"Запись case_study_composition не должна попадать в {foreign_block}"
-        )
+        assert (
+            "case_study_composition" not in ids
+        ), f"Запись case_study_composition не должна попадать в {foreign_block}"
     # Если блок отсутствует или пуст, тест также проходит
 
 
@@ -585,9 +585,9 @@ class TestSemanticRerankOption:
 
         mock_rerank.assert_called_once()
         args, kwargs = mock_rerank.call_args
-        assert kwargs.get("semantic_weight") == 0.0, (
-            "semantic_weight должен быть 0.0 при semantic_rerank=False"
-        )
+        assert (
+            kwargs.get("semantic_weight") == 0.0
+        ), "semantic_weight должен быть 0.0 при semantic_rerank=False"
 
     def test_semantic_rerank_true_passes_weight_default(self, monkeypatch):
         """При semantic_rerank=True вес должен быть 0.35."""
@@ -615,9 +615,9 @@ class TestSemanticRerankOption:
 
         mock_rerank.assert_called_once()
         args, kwargs = mock_rerank.call_args
-        assert kwargs.get("semantic_weight") == 0.35, (
-            "semantic_weight должен быть 0.35 при semantic_rerank=True"
-        )
+        assert (
+            kwargs.get("semantic_weight") == 0.35
+        ), "semantic_weight должен быть 0.35 при semantic_rerank=True"
 
     def test_semantic_rerank_false_with_return_meta(self, monkeypatch):
         """То же самое, но с return_meta=True."""

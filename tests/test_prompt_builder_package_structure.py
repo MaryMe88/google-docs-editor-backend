@@ -89,13 +89,9 @@ def test_load_domain_config_is_callable():
 
 def test_resolve_prompt_features_is_callable():
     """resolve_prompt_features должна быть функцией."""
-    assert callable(pb.resolve_prompt_features), (
-        "resolve_prompt_features не является callable"
-    )
+    assert callable(pb.resolve_prompt_features), "resolve_prompt_features не является callable"
 
 
 def test_kb_block_registry_is_list():
     """KB_BLOCK_REGISTRY должен быть списком."""
-    assert isinstance(pb.KB_BLOCK_REGISTRY, list), (
-        "KB_BLOCK_REGISTRY не является списком"
-    )
+    assert isinstance(pb.KB_BLOCK_REGISTRY, list), "KB_BLOCK_REGISTRY не является списком"

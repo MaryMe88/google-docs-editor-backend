@@ -113,15 +113,14 @@ def test_stop_words_structure() -> None:
     def assert_list_payload(items: list, ctx: str) -> None:
         for item in items:
             assert isinstance(item, str | dict), (
-                f"Элемент в '{ctx}' должен быть строкой или словарём, "
-                f"получено: {type(item)}"
+                f"Элемент в '{ctx}' должен быть строкой или словарём, " f"получено: {type(item)}"
             )
             if isinstance(item, str):
                 assert len(item.strip()) > 0, f"Пустая строка в '{ctx}'"
             else:
-                assert "id" in item or "name" in item or "pattern" in item, (
-                    f"Объект в '{ctx}' должен иметь поле 'id', 'name' или 'pattern'"
-                )
+                assert (
+                    "id" in item or "name" in item or "pattern" in item
+                ), f"Объект в '{ctx}' должен иметь поле 'id', 'name' или 'pattern'"
 
     for category, value in data.items():
         # Пропускаем служебные мета-блоки (ключи вида _meta, _version и т.п.)
@@ -133,14 +132,12 @@ def test_stop_words_structure() -> None:
         elif isinstance(value, dict):
             assert len(value) > 0, f"Словарь '{category}' не должен быть пустым"
             for nested_category, nested_value in value.items():
-                assert isinstance(nested_value, list), (
-                    f"Подкатегория '{category}.{nested_category}' должна быть списком"
-                )
+                assert isinstance(
+                    nested_value, list
+                ), f"Подкатегория '{category}.{nested_category}' должна быть списком"
                 assert_list_payload(nested_value, f"{category}.{nested_category}")
         else:
-            raise AssertionError(
-                f"Категория '{category}' должна быть списком или словарём списков"
-            )
+            raise AssertionError(f"Категория '{category}' должна быть списком или словарём списков")
 
 
 # ============================================================================

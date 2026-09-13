@@ -85,9 +85,9 @@ def test_health_docstring_contains_warning() -> None:
     get_operation = path_item["get"]
     description = get_operation.get("description", "")
     assert "deep" in description, "Описание должно содержать упоминание 'deep'"
-    assert "ВНИМАНИЕ" in description or "потребляет реальные токены" in description, (
-        "Описание должно содержать предупреждение о затратах"
-    )
+    assert (
+        "ВНИМАНИЕ" in description or "потребляет реальные токены" in description
+    ), "Описание должно содержать предупреждение о затратах"
 
 
 # ---------- Шаг 3: CORS ----------
@@ -336,9 +336,7 @@ async def test_production_startup_requires_api_secret_key(
     monkeypatch.delenv("PYTEST_RUNNING", raising=False)  # убираем тестовый режим
 
     app_test = FastAPI()
-    with pytest.raises(
-        RuntimeError, match="API_SECRET_KEY is required in production mode."
-    ):
+    with pytest.raises(RuntimeError, match="API_SECRET_KEY is required in production mode."):
         async with lifespan(app_test):
             pass
 

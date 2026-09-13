@@ -100,9 +100,7 @@ def test_collect_semantic_entries_returns_empty_if_no_loaded_kb() -> None:
     with patch("src.main.logger.warning") as mock_warning:
         entries = _collect_semantic_entries(app)
         assert entries == []
-        mock_warning.assert_called_once_with(
-            "SemanticIndex: KB не загружена в PromptBuilder"
-        )
+        mock_warning.assert_called_once_with("SemanticIndex: KB не загружена в PromptBuilder")
 
 
 # ============================================================================
@@ -115,9 +113,7 @@ def test_semantic_index_build_caches_embeddings(
 ) -> None:
     """Проверяет, что SemanticIndex строит и кеширует эмбеддинги (без реальной модели)."""
     monkeypatch.setattr("src.semantic_index._CACHE_PATH", tmp_path / "embeddings.npy")
-    monkeypatch.setattr(
-        "src.semantic_index._CACHE_META_PATH", tmp_path / "embeddings_meta.json"
-    )
+    monkeypatch.setattr("src.semantic_index._CACHE_META_PATH", tmp_path / "embeddings_meta.json")
 
     with patch("src.semantic_index.SemanticIndex._get_model") as mock_get_model:
         mock_model = MagicMock()

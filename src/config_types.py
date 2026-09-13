@@ -473,9 +473,7 @@ class KnowledgeBudgetManager:
             1 токен ≈ 4 символа (heuristic). None = без ограничений.
         """
         self._token_budget = token_budget
-        self._char_budget: int | None = (
-            token_budget * 4 if token_budget is not None else None
-        )
+        self._char_budget: int | None = token_budget * 4 if token_budget is not None else None
 
     def allocate(
         self,
@@ -495,23 +493,17 @@ class KnowledgeBudgetManager:
         effective_active = active_blocks or set(KnowledgeBudget._BLOCK_NAMES)
 
         enabled_set = (
-            effective_active & allowed
-            if level != KnowledgeLevel.FULL
-            else effective_active
+            effective_active & allowed if level != KnowledgeLevel.FULL else effective_active
         )
 
         n_enabled = len(enabled_set) or 1
         per_block_chars: int | None = (
-            self._char_budget // n_enabled
-            if self._char_budget is not None
-            else None
+            self._char_budget // n_enabled if self._char_budget is not None else None
         )
 
         def _blk(name: str, entry_limit: int) -> BlockBudget:
             # Блок отключается, если его entry_limit равен нулю
-            is_enabled = (
-                level == KnowledgeLevel.FULL or name in allowed
-            ) and entry_limit > 0
+            is_enabled = (level == KnowledgeLevel.FULL or name in allowed) and entry_limit > 0
             return BlockBudget(
                 entry_limit=entry_limit,
                 char_budget=per_block_chars if is_enabled else None,
@@ -525,9 +517,7 @@ class KnowledgeBudgetManager:
                 "logic": _blk("logic", limits.logic),
                 "composition": _blk("composition", limits.composition),
                 "cohesion": _blk("cohesion", limits.cohesion),
-                "composition_errors": _blk(
-                    "composition_errors", limits.composition_errors
-                ),
+                "composition_errors": _blk("composition_errors", limits.composition_errors),
                 "storytelling": _blk("storytelling", limits.storytelling),
                 "marketing": _blk("marketing", limits.marketing),
                 "rhetoric": _blk("rhetoric", limits.rhetoric),
@@ -601,10 +591,7 @@ class FileCache:
         if self._policy.check_mtime and entry.path is not None:
             try:
                 current_mtime = entry.path.stat().st_mtime
-                if (
-                    entry.mtime_at_load is None
-                    or current_mtime != entry.mtime_at_load
-                ):
+                if entry.mtime_at_load is None or current_mtime != entry.mtime_at_load:
                     return False
             except OSError:
                 return False
@@ -661,24 +648,13 @@ class FileCache:
 
         if entry is not None:
             if self._policy.ttl_seconds is not None:
-                if (
-                    time.monotonic() - entry.loaded_at
-                    > self._policy.ttl_seconds
-                ):
+                if time.monotonic() - entry.loaded_at > self._policy.ttl_seconds:
                     entry = None
 
-            if (
-                entry is not None
-                and self._policy.check_mtime
-                and entry.mtime_at_load is not None
-            ):
+            if entry is not None and self._policy.check_mtime and entry.mtime_at_load is not None:
                 try:
                     current_max = max(
-                        (
-                            path.stat().st_mtime
-                            for path in paths
-                            if path.exists()
-                        ),
+                        (path.stat().st_mtime for path in paths if path.exists()),
                         default=0.0,
                     )
                     if current_max != entry.mtime_at_load:
@@ -769,9 +745,7 @@ def _build_known_tags_from_canonical() -> set[str]:
                 for tag_list in tag_data.values():
                     if isinstance(tag_list, list):
                         tags.update(
-                            _normalize_tag_local(tag)
-                            for tag in tag_list
-                            if isinstance(tag, str)
+                            _normalize_tag_local(tag) for tag in tag_list if isinstance(tag, str)
                         )
 
     return tags
@@ -792,9 +766,7 @@ def get_canonical_tags_for_category(category: str, value: str) -> list[str]:
     data = CANONICAL_TAGS.get(category, {}).get(norm_value)
 
     if isinstance(data, dict):
-        return normalize_tags(
-            data.get("primary", []) + data.get("expanded", [])
-        )
+        return normalize_tags(data.get("primary", []) + data.get("expanded", []))
     if isinstance(data, list):
         return normalize_tags(data)
     return normalize_tags([norm_value])

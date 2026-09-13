@@ -129,10 +129,7 @@ def has_placeholder_leak(text: str) -> bool:
     """
     if not text:
         return False
-    return bool(
-        _KNOWN_TOKEN_PATTERN.search(text)
-        or _GENERIC_TOKEN_PATTERN.search(text)
-    )
+    return bool(_KNOWN_TOKEN_PATTERN.search(text) or _GENERIC_TOKEN_PATTERN.search(text))
 
 
 # ---------------------------------------------------------------------------

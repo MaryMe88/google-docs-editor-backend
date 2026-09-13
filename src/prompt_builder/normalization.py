@@ -37,11 +37,7 @@ def normalize_overlays(
     используется внутри resolve_prompt_features, где overlay_configs
     уже переданы явно и являются доверенным источником.
     """
-    effective_allowed = (
-        ALLOWED_OVERLAYS
-        if allowed_overlays is None
-        else allowed_overlays
-    )
+    effective_allowed = ALLOWED_OVERLAYS if allowed_overlays is None else allowed_overlays
     result: list[str] = []
     for ov in overlays:
         norm = ov.lower().strip()
@@ -87,9 +83,7 @@ def _is_incompatible_intent(
     return False
 
 
-def _is_incompatible_overlay(
-    overlay: str, incompatible_overlays: tuple
-) -> bool:
+def _is_incompatible_overlay(overlay: str, incompatible_overlays: tuple) -> bool:
     """
     Проверяет, есть ли overlay в списке несовместимых оверлеев
     с учётом префикса overlay:.

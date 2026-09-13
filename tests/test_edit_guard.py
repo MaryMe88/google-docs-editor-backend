@@ -75,9 +75,7 @@ def _run(side_effect, payload: dict[str, Any]):
         from src.main import app
 
         with TestClient(app) as client:
-            resp = client.post(
-                "/api/edit", json=payload, headers={"X-API-Key": _TEST_API_KEY}
-            )
+            resp = client.post("/api/edit", json=payload, headers={"X-API-Key": _TEST_API_KEY})
         return resp, mock_call
     finally:
         for p in reversed(patches):

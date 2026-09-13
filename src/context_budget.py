@@ -138,9 +138,7 @@ class LLMContextLimitError(Exception):
 # ---------------------------------------------------------------------------
 
 
-def estimate_input_tokens(
-    prompt: str, chars_per_token: float = CHARS_PER_INPUT_TOKEN
-) -> int:
+def estimate_input_tokens(prompt: str, chars_per_token: float = CHARS_PER_INPUT_TOKEN) -> int:
     """
     Консервативно оценивает размер промпта в токенах.
 
@@ -246,9 +244,7 @@ def get_context_profile_from_env(
                     provider=provider,
                     model=model,
                     context_window=int(context_window),
-                    safety_margin=_get_safety_margin(
-                        provider_upper, model_norm
-                    ),
+                    safety_margin=_get_safety_margin(provider_upper, model_norm),
                     mode=_get_mode(provider_upper),
                 )
             except ValueError:

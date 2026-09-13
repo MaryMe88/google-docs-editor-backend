@@ -451,9 +451,7 @@ def test_collect_with_budget_applies_to_first_entry() -> None:
     }
     entries = [huge_entry]
     result, dropped = _collect_with_budget(entries, limit=1, char_budget=100)
-    assert result == [], (
-        "Первая запись не должна быть включена из-за превышения бюджета"
-    )
+    assert result == [], "Первая запись не должна быть включена из-за превышения бюджета"
     assert dropped == 1, "Одна запись должна быть отброшена"
 
 
@@ -607,9 +605,7 @@ def test_build_knowledge_block_order(builder: PromptBuilder) -> None:
         kb = make_mock_kb(data)
         with patch("src.prompt_builder.builder.load_knowledge_base", return_value=kb):
             budget_dict = {
-                block.budget_key: BlockBudget(
-                    entry_limit=10, char_budget=None, enabled=True
-                )
+                block.budget_key: BlockBudget(entry_limit=10, char_budget=None, enabled=True)
                 for block in KB_BLOCK_REGISTRY
             }
             budget = KnowledgeBudget(budget_dict)
@@ -633,12 +629,10 @@ def test_build_knowledge_block_order(builder: PromptBuilder) -> None:
             text, _, _ = builder._build_knowledge_block(req)
 
     expected_titles = [block.title for block in KB_BLOCK_REGISTRY if block.title]
-    titles_in_text = [
-        line.strip() for line in text.splitlines() if line.strip() in expected_titles
-    ]
-    assert titles_in_text == expected_titles, (
-        f"Порядок блоков нарушен: {titles_in_text} != {expected_titles}"
-    )
+    titles_in_text = [line.strip() for line in text.splitlines() if line.strip() in expected_titles]
+    assert (
+        titles_in_text == expected_titles
+    ), f"Порядок блоков нарушен: {titles_in_text} != {expected_titles}"
     assert mock_proc.call_count == len(KB_BLOCK_REGISTRY) - 1
 
 
@@ -664,10 +658,9 @@ def test_allow_storytelling_false(builder: PromptBuilder) -> None:
         ctx.lines.append(config.title)
         return ctx.total_few_shot_used
 
-    with patch(
-        "src.prompt_builder.builder.load_domain_config", return_value=domain_config
-    ), patch(
-        "src.prompt_builder.builder._process_kb_block", side_effect=mock_process
+    with (
+        patch("src.prompt_builder.builder.load_domain_config", return_value=domain_config),
+        patch("src.prompt_builder.builder._process_kb_block", side_effect=mock_process),
     ):
         builder.build(
             text="Тестовый текст.",
@@ -677,9 +670,9 @@ def test_allow_storytelling_false(builder: PromptBuilder) -> None:
             include_few_shot=False,
         )
 
-    assert "storytelling" not in called_blocks, (
-        "Блок storytelling был вызван, хотя должен быть отключён"
-    )
+    assert (
+        "storytelling" not in called_blocks
+    ), "Блок storytelling был вызван, хотя должен быть отключён"
     assert "grammar" in called_blocks
     assert "style" in called_blocks
 
@@ -953,9 +946,7 @@ def test_build_edit_level_block_contains_key_phrases(
         edit_level=level,
     )
     block = builder._build_edit_level_block(domain_config)
-    assert expected_phrase in block, (
-        f"Фраза '{expected_phrase}' не найдена для уровня {level}"
-    )
+    assert expected_phrase in block, f"Фраза '{expected_phrase}' не найдена для уровня {level}"
 
 
 def test_build_edit_level_block_integration(builder: PromptBuilder) -> None:
@@ -999,13 +990,10 @@ def test_prompt_includes_case_study_knowledge(builder: PromptBuilder) -> None:
         include_retrieval_meta=False,
     )
     expected_phrase = "Обязательные элементы структуры кейса"
-    assert expected_phrase in prompt, (
-        f"В промпте отсутствует фраза '{expected_phrase}'. Промпт (первые 1000 символов):\n{prompt[:1000]}"
-    )
     assert (
-        "контекст, проблема, решение, результат, вывод" in prompt
-        or "контекст" in prompt
-    )
+        expected_phrase in prompt
+    ), f"В промпте отсутствует фраза '{expected_phrase}'. Промпт (первые 1000 символов):\n{prompt[:1000]}"
+    assert "контекст, проблема, решение, результат, вывод" in prompt or "контекст" in prompt
     assert "case_study_composition" not in prompt
     assert "genre_knowledge" not in prompt
     count = prompt.count(expected_phrase)
@@ -1025,12 +1013,10 @@ def test_retrieval_meta_selects_case_study_template(builder: PromptBuilder) -> N
         include_retrieval_meta=True,
     )
     block_meta = meta.get("casestudy")
-    assert block_meta is not None, (
-        f"Блок casestudy отсутствует в retrieval_meta: {sorted(meta)}"
-    )
-    assert "case_study_composition" in block_meta["entry_ids"], (
-        f"Шаблон case_study_composition не выбран: {block_meta}"
-    )
+    assert block_meta is not None, f"Блок casestudy отсутствует в retrieval_meta: {sorted(meta)}"
+    assert (
+        "case_study_composition" in block_meta["entry_ids"]
+    ), f"Шаблон case_study_composition не выбран: {block_meta}"
 
 
 def test_prompt_without_casestudy_does_not_include_genre_block(
@@ -1059,9 +1045,9 @@ def test_existing_marketing_blocks_remain(builder: PromptBuilder) -> None:
         include_few_shot=False,
         knowledge_level=KnowledgeLevel.FULL,
     )
-    assert "Продуктовое письмо" in prompt or "Лендинг" in prompt, (
-        "Старые маркетинговые шаблоны отсутствуют в промпте"
-    )
+    assert (
+        "Продуктовое письмо" in prompt or "Лендинг" in prompt
+    ), "Старые маркетинговые шаблоны отсутствуют в промпте"
     assert "Базовая композиция бизнес-кейса" not in prompt
 
 
@@ -1123,9 +1109,7 @@ def test_process_stop_words_block(builder: PromptBuilder) -> None:
     """Проверяет _process_stop_words_block."""
     from src.config_types import BlockBudget, KnowledgeBudget
 
-    kb = make_mock_kb(
-        {"stop_words": {"category1": ["word1", "word2"], "category2": ["word3"]}}
-    )
+    kb = make_mock_kb({"stop_words": {"category1": ["word1", "word2"], "category2": ["word3"]}})
     req = KnowledgeBlockRequest(
         text="test",
         primary_tags=set(),
@@ -1170,9 +1154,7 @@ def test_process_glossary_block(builder: PromptBuilder) -> None:
     """Проверяет _process_glossary_block."""
     from src.config_types import BlockBudget, KnowledgeBudget
 
-    kb = make_mock_kb(
-        {"domain_glossary": {"term1": "definition1", "term2": "definition2"}}
-    )
+    kb = make_mock_kb({"domain_glossary": {"term1": "definition1", "term2": "definition2"}})
     req = KnowledgeBlockRequest(
         text="test",
         primary_tags=set(),
@@ -1287,9 +1269,7 @@ def test_process_registry_block_includes_block_when_eligible():
         return_trace=True,
         semantic_rerank=False,
     )
-    kb = make_mock_kb(
-        {"grammar_errors": [{"wrong": "x", "rule": "y", "tags": ["grammar"]}]}
-    )
+    kb = make_mock_kb({"grammar_errors": [{"wrong": "x", "rule": "y", "tags": ["grammar"]}]})
     block_cfg = KBBlockConfig(
         name="grammar",
         budget_key="grammar",
@@ -1361,9 +1341,7 @@ def test_process_registry_block_skips_block_when_budget_disabled():
         candidate_attr=None,
     )
     trace = AssemblyTrace()
-    builder._process_registry_block(
-        block_cfg, kb, req, lines, meta, 0, trace, LimitsConfig()
-    )
+    builder._process_registry_block(block_cfg, kb, req, lines, meta, 0, trace, LimitsConfig())
     assert len(lines) == 0
     assert trace.blocks[0].eligible is False
     assert ReasonCode.BLOCK_INELIGIBLE_BUDGET_DISABLED in trace.blocks[0].reason_codes

@@ -61,10 +61,13 @@ def test_tag_map_coverage_warns_on_missing():
     для отсутствующих записей, но не падает.
     """
     # Временно создаём словарь, где удалены некоторые ключи, чтобы проверить предупреждение
-    with patch(
-        "src.config_types.CANONICAL_TAGS",
-        {"domains": {}, "intents": {}, "overlays": {}},
-    ), patch("logging.Logger.warning") as mock_warning:
+    with (
+        patch(
+            "src.config_types.CANONICAL_TAGS",
+            {"domains": {}, "intents": {}, "overlays": {}},
+        ),
+        patch("logging.Logger.warning") as mock_warning,
+    ):
         _check_tag_map_coverage(
             config_path=Path("config"),
             allowed_domains=ALLOWED_DOMAINS,
@@ -108,9 +111,7 @@ def test_run_startup_checks_does_not_fail_due_to_tag_map():
             encoding="utf-8",
         )
         # Создаём core.json
-        (config_path / "core.json").write_text(
-            json.dumps({"role": "test"}), encoding="utf-8"
-        )
+        (config_path / "core.json").write_text(json.dumps({"role": "test"}), encoding="utf-8")
         (config_path / "intents").mkdir()
         (config_path / "overlays").mkdir()
 
@@ -181,9 +182,9 @@ def test_overlay_files_exist():
         if not file_path.is_file():
             missing.append(overlay)
 
-    assert not missing, (
-        f"Следующие оверлеи зарегистрированы, но файлы конфигов отсутствуют: {missing}"
-    )
+    assert (
+        not missing
+    ), f"Следующие оверлеи зарегистрированы, но файлы конфигов отсутствуют: {missing}"
 
 
 # ============================================================================
@@ -194,18 +195,16 @@ def test_overlay_files_exist():
 def test_case_study_tags_are_canonical():
     """Проверяет, что теги, используемые в case_study.json, зарегистрированы в tag_map.json."""
     # Тег casestudy присутствует в разделе overlays
-    assert "casestudy" in CANONICAL_TAGS.get("overlays", {}), (
-        "Тег 'casestudy' не найден в CANONICAL_TAGS['overlays']"
-    )
+    assert "casestudy" in CANONICAL_TAGS.get(
+        "overlays", {}
+    ), "Тег 'casestudy' не найден в CANONICAL_TAGS['overlays']"
     overlay_data = CANONICAL_TAGS["overlays"]["casestudy"]
     # Проверяем, что expanded содержит results и testimonial
     expanded = overlay_data.get("expanded", [])
-    assert "results" in expanded, (
-        "Тег 'results' отсутствует в expanded для оверлея casestudy"
-    )
-    assert "testimonial" in expanded, (
-        "Тег 'testimonial' отсутствует в expanded для оверлея casestudy"
-    )
+    assert "results" in expanded, "Тег 'results' отсутствует в expanded для оверлея casestudy"
+    assert (
+        "testimonial" in expanded
+    ), "Тег 'testimonial' отсутствует в expanded для оверлея casestudy"
 
     # Также проверяем, что они есть в KNOWN_TAGS
     from src.config_types import KNOWN_TAGS
@@ -239,9 +238,7 @@ def test_get_canonical_tag_names_returns_only_canonical():
     # Если какие-то из этих алиасов присутствуют в CANONICAL_TAGS как канонические имена, то они не должны быть алиасами.
     # Но мы ожидаем, что они не являются ключами второго уровня.
     # Проверим, что они не входят в множество канонических имён.
-    assert not (aliases & canonical), (
-        f"Алиасы попали в канонический список: {aliases & canonical}"
-    )
+    assert not (aliases & canonical), f"Алиасы попали в канонический список: {aliases & canonical}"
     # Проверяем, что основные канонические имена присутствуют (если они есть в CANONICAL_TAGS)
     expected = {
         "antiai",

@@ -57,9 +57,7 @@ def main() -> None:
         print(f"❌ Missing file or directory: {exc}")
         sys.exit(1)
 
-    print(
-        "✅ KB validation passed — all CANONICAL_TAGS are present in the knowledge base."
-    )
+    print("✅ KB validation passed — all CANONICAL_TAGS are present in the knowledge base.")
 
 
 if __name__ == "__main__":

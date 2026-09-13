@@ -20,12 +20,8 @@ import numpy as np
 logger = logging.getLogger(__name__)
 
 # Путь к кешу embeddings рядом с папкой knowledge_base
-_CACHE_PATH = (
-    Path(__file__).parent.parent / "knowledge_base" / "kb_embeddings.npy"
-)
-_CACHE_META_PATH = (
-    Path(__file__).parent.parent / "knowledge_base" / "kb_embeddings_meta.json"
-)
+_CACHE_PATH = Path(__file__).parent.parent / "knowledge_base" / "kb_embeddings.npy"
+_CACHE_META_PATH = Path(__file__).parent.parent / "knowledge_base" / "kb_embeddings_meta.json"
 
 # Type aliases
 SemanticEntry = dict[str, Any]
@@ -64,9 +60,7 @@ class SemanticIndex:
         self._is_built = False
 
         if not self.entries:
-            logger.warning(
-                "SemanticIndex: нет записей для индексации, индекс не строится"
-            )
+            logger.warning("SemanticIndex: нет записей для индексации, индекс не строится")
             return
 
         if not force_rebuild and self._load_cache(len(self.entries)):
@@ -123,9 +117,7 @@ class SemanticIndex:
             return []
 
         if not self._is_built or self.embeddings is None:
-            logger.warning(
-                "SemanticIndex.search вызван до build() — возвращаю пустой список"
-            )
+            logger.warning("SemanticIndex.search вызван до build() — возвращаю пустой список")
             return []
 
         self._validate_embeddings()
@@ -146,23 +138,18 @@ class SemanticIndex:
 
         if query_embedding.ndim != 2 or query_embedding.shape[0] != 1:
             raise ValueError(
-                "SemanticIndex query embedding must have shape "
-                "(1, embedding_dimension)."
+                "SemanticIndex query embedding must have shape " "(1, embedding_dimension)."
             )
 
         if query_embedding.shape[1] != self.embeddings.shape[1]:
             raise ValueError(
-                "SemanticIndex query embedding dimension does not match "
-                "indexed embeddings."
+                "SemanticIndex query embedding dimension does not match " "indexed embeddings."
             )
 
         scores = (self.embeddings @ query_embedding.T).ravel()
         top_indices = np.argsort(scores)[::-1][:top_k]
 
-        return [
-            (self.entries[index], float(scores[index]))
-            for index in top_indices
-        ]
+        return [(self.entries[index], float(scores[index])) for index in top_indices]
 
     def is_ready(self) -> bool:
         """Возвращает True, если индекс построен и готов к поиску."""
@@ -175,17 +162,14 @@ class SemanticIndex:
     def _validate_embeddings(self) -> None:
         """Проверяет согласованность embeddings и индексируемых записей."""
         if not isinstance(self.embeddings, np.ndarray):
-            raise ValueError(
-                "SemanticIndex embeddings must be a numpy.ndarray."
-            )
+            raise ValueError("SemanticIndex embeddings must be a numpy.ndarray.")
 
         if self.embeddings.dtype != np.float32:
             self.embeddings = self.embeddings.astype(np.float32, copy=False)
 
         if self.embeddings.ndim != 2:
             raise ValueError(
-                "SemanticIndex embeddings must have shape "
-                "(entry_count, embedding_dimension)."
+                "SemanticIndex embeddings must have shape " "(entry_count, embedding_dimension)."
             )
 
         if self.embeddings.shape[0] != len(self.entries):
@@ -195,9 +179,7 @@ class SemanticIndex:
             )
 
         if self.embeddings.shape[1] == 0:
-            raise ValueError(
-                "SemanticIndex embedding dimension must be greater than zero."
-            )
+            raise ValueError("SemanticIndex embedding dimension must be greater than zero.")
 
     def _get_model(self):
         """Ленивая загрузка модели — загружается один раз при первом обращении."""
@@ -205,9 +187,7 @@ class SemanticIndex:
             try:
                 from sentence_transformers import SentenceTransformer
 
-                logger.info(
-                    "SemanticIndex: загружаю модель %s…", self.model_name
-                )
+                logger.info("SemanticIndex: загружаю модель %s…", self.model_name)
                 self._model = SentenceTransformer(self.model_name)
                 logger.info("SemanticIndex: модель загружена")
             except ImportError:
@@ -230,9 +210,7 @@ class SemanticIndex:
             if isinstance(value, str) and value.strip():
                 parts.append(value.strip())
             elif isinstance(value, list):
-                parts.extend(
-                    v for v in value if isinstance(v, str) and v.strip()
-                )
+                parts.extend(v for v in value if isinstance(v, str) and v.strip())
         return " ".join(parts)
 
     def _load_cache(self, expected_count: int) -> bool:
@@ -253,9 +231,7 @@ class SemanticIndex:
                 return False
 
             if meta.get("model") != self.model_name:
-                logger.debug(
-                    "SemanticIndex: кеш от другой модели, пересчитываю"
-                )
+                logger.debug("SemanticIndex: кеш от другой модели, пересчитываю")
                 return False
 
             # SEC: явный allow_pickle=False — защита от исполнения
@@ -354,7 +330,5 @@ def init_semantic_index(
     index = SemanticIndex(model_name=model_name)
     index.build(all_entries, force_rebuild=force_rebuild)
     _global_index = index
-    logger.info(
-        "SemanticIndex: глобальный индекс готов (%d записей)", len(all_entries)
-    )
+    logger.info("SemanticIndex: глобальный индекс готов (%d записей)", len(all_entries))
     return index

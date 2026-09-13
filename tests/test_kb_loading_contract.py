@@ -50,18 +50,18 @@ def test_dict_blocks_are_dicts():
     kb = load_knowledge_base(KB_PATH, load_all=True)
     for block in ("stop_words", "nkrj_structure_patterns"):
         actual = kb.get(block)
-        assert isinstance(actual, dict), (
-            f"'{block}' должен быть dict, получили {type(actual).__name__}"
-        )
+        assert isinstance(
+            actual, dict
+        ), f"'{block}' должен быть dict, получили {type(actual).__name__}"
 
 
 def test_list_blocks_are_lists():
     kb = load_knowledge_base(KB_PATH, load_all=True)
     for block in ("grammar_errors", "stylistic_issues", "composition_principles"):
         actual = kb.get(block)
-        assert isinstance(actual, list), (
-            f"'{block}' должен быть list, получили {type(actual).__name__}"
-        )
+        assert isinstance(
+            actual, list
+        ), f"'{block}' должен быть list, получили {type(actual).__name__}"
 
 
 def test_stop_words_section_appears_in_prompt():
@@ -94,12 +94,12 @@ def test_knowledge_level_changes_prompt_despite_cache():
     )
 
     assert len(p_full) > len(p_core), "FULL-промпт должен быть длиннее CORE"
-    assert "Редакторские приёмы" in p_full, (
-        "При FULL и домене nora_gal должен быть блок 'Редакторские приёмы'"
-    )
-    assert "Редакторские приёмы" not in p_core, (
-        "При CORE не должно быть блока 'Редакторские приёмы'"
-    )
+    assert (
+        "Редакторские приёмы" in p_full
+    ), "При FULL и домене nora_gal должен быть блок 'Редакторские приёмы'"
+    assert (
+        "Редакторские приёмы" not in p_core
+    ), "При CORE не должно быть блока 'Редакторские приёмы'"
 
 
 def test_dedupe_keeps_distinct_structural():
@@ -133,15 +133,13 @@ def test_case_study_json_contract():
     # 2. Проверка загрузки через манифест с тегом casestudy
     manifest = load_manifest(KB_PATH / "kb_manifest.json")
     entries = [e for e in manifest if e.file == "genres/business/case_study.json"]
-    assert len(entries) == 1, (
-        "Манифест должен содержать ровно одну запись для case_study.json"
-    )
+    assert len(entries) == 1, "Манифест должен содержать ровно одну запись для case_study.json"
     entry = entries[0]
     assert entry.load_mode == "by_tags"
     assert "casestudy" in entry.tags
-    assert entry.block_name == "case_study_templates", (
-        "Жанровый файл кейса должен грузиться в собственный блок, а не в storytelling"
-    )
+    assert (
+        entry.block_name == "case_study_templates"
+    ), "Жанровый файл кейса должен грузиться в собственный блок, а не в storytelling"
 
     kb = load_knowledge_base(KB_PATH, active_tags={"casestudy"}, load_all=False)
     block = kb.get("case_study_templates")

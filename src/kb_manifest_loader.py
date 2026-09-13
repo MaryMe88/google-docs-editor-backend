@@ -32,12 +32,8 @@ class ManifestEntry:
     budget_weight: str  # "high" | "medium" | "low"
     status: str  # "active" | "disabled"
     priority: int  # порядок загрузки (меньше — раньше)
-    block_name: str | None = (
-        None  # имя блока для объединения нескольких файлов
-    )
-    block_type: str = (
-        "list"  # "list" | "dict" — структура данных блока (BUG-7)
-    )
+    block_name: str | None = None  # имя блока для объединения нескольких файлов
+    block_type: str = "list"  # "list" | "dict" — структура данных блока (BUG-7)
 
 
 def load_manifest(path: Path = DEFAULT_MANIFEST_PATH) -> list[ManifestEntry]:

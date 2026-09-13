@@ -166,8 +166,7 @@ def test_intent_suppresses_storytelling(builder: PromptBuilder) -> None:
     assert result["storytelling_enabled"] is False
     suppression_reasons = result["suppression_reasons"]
     assert any(
-        ReasonCode.SUPPRESSED_BY_INTENT_RULE in reasons
-        for reasons in suppression_reasons.values()
+        ReasonCode.SUPPRESSED_BY_INTENT_RULE in reasons for reasons in suppression_reasons.values()
     )
 
 
@@ -193,8 +192,7 @@ def test_intent_suppresses_marketing(builder: PromptBuilder) -> None:
     assert result["marketing_enabled"] is False
     suppression_reasons = result["suppression_reasons"]
     assert any(
-        ReasonCode.SUPPRESSED_BY_INTENT_RULE in reasons
-        for reasons in suppression_reasons.values()
+        ReasonCode.SUPPRESSED_BY_INTENT_RULE in reasons for reasons in suppression_reasons.values()
     )
 
 
@@ -420,8 +418,7 @@ def test_explicit_suppression_wins_over_priority(
     assert "high_priority" in result["effective_overlays"]
     assert "low_priority" not in result["effective_overlays"]
     assert any(
-        "low_priority" in layer and "suppressed" in layer
-        for layer in result["suppressed_layers"]
+        "low_priority" in layer and "suppressed" in layer for layer in result["suppressed_layers"]
     )
 
 
@@ -494,8 +491,7 @@ def test_real_genre_overlays_conflict_with_suppress() -> None:
     suppression_reasons = result["suppression_reasons"]
     assert "overlay:pressrelease" in suppression_reasons
     assert any(
-        ReasonCode.SUPPRESSED_BY_OVERLAY_RULE in reasons
-        for reasons in suppression_reasons.values()
+        ReasonCode.SUPPRESSED_BY_OVERLAY_RULE in reasons for reasons in suppression_reasons.values()
     )
 
 
@@ -510,9 +506,7 @@ def test_domain_incompatible_overlay_with_prefix() -> None:
     корректно подавляет оверлей infostyle.
     """
     builder = PromptBuilder(config_path=Path("config"), kb_path=Path("knowledge_base"))
-    domain_config = builder.get_domain_config(
-        "deai"
-    )  # deai.json содержит "overlay:infostyle"
+    domain_config = builder.get_domain_config("deai")  # deai.json содержит "overlay:infostyle"
     overlay_configs = [builder.get_overlay_config("infostyle")]
 
     result = resolve_prompt_features(
@@ -566,9 +560,7 @@ def test_domain_incompatible_overlay_without_prefix_still_works() -> None:
     Используем домен nora_gal, где incompatible_overlays: ["infostyle"] (без префикса).
     """
     builder = PromptBuilder(config_path=Path("config"), kb_path=Path("knowledge_base"))
-    domain_config = builder.get_domain_config(
-        "nora_gal"
-    )  # в nora_gal.json без префикса
+    domain_config = builder.get_domain_config("nora_gal")  # в nora_gal.json без префикса
     overlay_configs = [builder.get_overlay_config("infostyle")]
 
     result = resolve_prompt_features(

@@ -112,16 +112,10 @@ _ALLOWED_GOOGLE_ORIGINS: frozenset[str] = frozenset(
         "https://docs.google.com",
     }
 )
-_extra_origins = {
-    o.strip()
-    for o in os.getenv("CORS_ALLOWED_ORIGINS", "").split(",")
-    if o.strip()
-}
+_extra_origins = {o.strip() for o in os.getenv("CORS_ALLOWED_ORIGINS", "").split(",") if o.strip()}
 _unexpected = _extra_origins - _ALLOWED_GOOGLE_ORIGINS
 if _unexpected:
-    logger.warning(
-        "Игнорирую неожиданные CORS origins из ENV: %s", _unexpected
-    )
+    logger.warning("Игнорирую неожиданные CORS origins из ENV: %s", _unexpected)
 _CORS_ORIGINS: list[str] = sorted(_ALLOWED_GOOGLE_ORIGINS)
 
 
@@ -148,9 +142,7 @@ def _collect_semantic_entries(app: FastAPI) -> list[dict[str, Any]]:
     ):
         entries = getattr(knowledge_base, attribute_name, [])
         if isinstance(entries, list):
-            all_entries.extend(
-                entry for entry in entries if isinstance(entry, dict)
-            )
+            all_entries.extend(entry for entry in entries if isinstance(entry, dict))
 
     return all_entries
 
@@ -165,19 +157,13 @@ async def lifespan(app: FastAPI):
     _required_env = ["OPENROUTER_API_KEY"]
     _missing = [key for key in _required_env if not os.getenv(key)]
     if _missing:
-        logger.critical(
-            "Missing required env variables: %s. Refusing to start.", _missing
-        )
+        logger.critical("Missing required env variables: %s. Refusing to start.", _missing)
         raise RuntimeError(f"Missing required env variables: {_missing}")
 
     is_testing_now = os.getenv("PYTEST_RUNNING", "false").lower() == "true"
-    is_production = not (
-        os.getenv("ENV", "").lower() == "development" or is_testing_now
-    )
+    is_production = not (os.getenv("ENV", "").lower() == "development" or is_testing_now)
     if is_production and not os.getenv("API_SECRET_KEY"):
-        logger.critical(
-            "API_SECRET_KEY is required in production mode. Refusing to start."
-        )
+        logger.critical("API_SECRET_KEY is required in production mode. Refusing to start.")
         raise RuntimeError("API_SECRET_KEY is required in production mode.")
 
     prompt_builder = PromptBuilder()
@@ -212,9 +198,7 @@ async def lifespan(app: FastAPI):
             error,
             exc_info=True,
         )
-        raise RuntimeError(
-            "Failed to load knowledge base required for SemanticIndex."
-        ) from error
+        raise RuntimeError("Failed to load knowledge base required for SemanticIndex.") from error
 
     yield
 
@@ -265,12 +249,8 @@ async def add_security_headers(request: Request, call_next):
     response.headers["X-Content-Type-Options"] = "nosniff"
     response.headers["X-Frame-Options"] = "DENY"
     response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
-    response.headers["Permissions-Policy"] = (
-        "geolocation=(), microphone=(), camera=()"
-    )
-    response.headers["Strict-Transport-Security"] = (
-        "max-age=63072000; includeSubDomains"
-    )
+    response.headers["Permissions-Policy"] = "geolocation=(), microphone=(), camera=()"
+    response.headers["Strict-Transport-Security"] = "max-age=63072000; includeSubDomains"
     return response
 
 
@@ -359,9 +339,7 @@ async def health_check(request: Request, deep: bool = False) -> Response:
         )
 
     builder = get_prompt_builder()
-    any_available, provider_status = await _check_providers_availability(
-        deep=deep
-    )
+    any_available, provider_status = await _check_providers_availability(deep=deep)
 
     health = HealthResponse(
         status="ok" if any_available else "degraded",
@@ -369,28 +347,20 @@ async def health_check(request: Request, deep: bool = False) -> Response:
         available_domains=sorted(ALLOWED_DOMAINS),
         available_intents=list(builder.get_available_intents()),
         available_overlays=list(builder.get_available_overlays()),
-        available_providers=[
-            provider for provider, ok in provider_status.items() if ok
-        ],
+        available_providers=[provider for provider, ok in provider_status.items() if ok],
         provider_status=provider_status,
         deep_check=deep,
         contract_version=CONTRACT_VERSION,
     )
 
-    status_code = (
-        status.HTTP_200_OK
-        if any_available
-        else status.HTTP_503_SERVICE_UNAVAILABLE
-    )
+    status_code = status.HTTP_200_OK if any_available else status.HTTP_503_SERVICE_UNAVAILABLE
     return JSONResponse(
         content=health.model_dump(),
         status_code=status_code,
     )
 
 
-def _log_edit_request_meta(
-    body: EditRequest, retrieval_meta: dict | None = None
-) -> None:
+def _log_edit_request_meta(body: EditRequest, retrieval_meta: dict | None = None) -> None:
     log_data = {
         "event": "edit_request",
         "domain": body.domain,
@@ -414,9 +384,7 @@ class InvalidLLMOutputError(Exception):
         super().__init__(f"Invalid LLM output: {reasons}")
 
 
-def _split_edit_output(
-    raw: str, output_mode: str
-) -> tuple[str, str | None]:
+def _split_edit_output(raw: str, output_mode: str) -> tuple[str, str | None]:
     if output_mode == "text_and_report":
         return _parse_text_and_report(raw)
     return raw, None
@@ -459,9 +427,7 @@ def _validate_edit_output(
         if has_text_marker and not edited_text.strip():
             reasons.append("EMPTY_TEXT_BLOCK")
 
-        if not has_text_marker and _looks_like_report_instead_of_text(
-            edited_text
-        ):
+        if not has_text_marker and _looks_like_report_instead_of_text(edited_text):
             reasons.append("REPORT_INSTEAD_OF_TEXT")
 
         if has_placeholder_leak(report or ""):
@@ -483,9 +449,7 @@ async def _generate_clean_edit(
         max_retries_per_provider=2,
         source_text=body.text,
     )
-    edited_text, report = _split_edit_output(
-        response.content, body.output_mode
-    )
+    edited_text, report = _split_edit_output(response.content, body.output_mode)
 
     reasons = _validate_edit_output(
         raw_content=response.content,
@@ -518,9 +482,7 @@ async def _generate_clean_edit(
         max_retries_per_provider=2,
         source_text=body.text,
     )
-    edited_text, report = _split_edit_output(
-        response.content, body.output_mode
-    )
+    edited_text, report = _split_edit_output(response.content, body.output_mode)
 
     reasons = _validate_edit_output(
         raw_content=response.content,
@@ -549,14 +511,12 @@ def _llm_error_to_http_exception(error: LLMError) -> HTTPException:
         if kind == "context_limit":
             return HTTPException(
                 status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-                detail="The text or editing instructions are too large. "
-                "Please shorten them.",
+                detail="The text or editing instructions are too large. " "Please shorten them.",
             )
         if kind in ("timeout", "upstream_error"):
             return HTTPException(
                 status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-                detail="LLM service is temporarily unavailable. "
-                       "Please try again later.",
+                detail="LLM service is temporarily unavailable. " "Please try again later.",
             )
         if kind in ("authentication", "configuration"):
             return HTTPException(
@@ -567,23 +527,22 @@ def _llm_error_to_http_exception(error: LLMError) -> HTTPException:
             return HTTPException(
                 status_code=status.HTTP_502_BAD_GATEWAY,
                 detail="LLM service returned an empty or invalid response. "
-                       "Please try again later.",
+                "Please try again later.",
             )
         return HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
-            detail="LLM service returned an invalid response. "
-                   "Please try again later.",
+            detail="LLM service returned an invalid response. " "Please try again later.",
         )
     return HTTPException(
         status_code=status.HTTP_502_BAD_GATEWAY,
-        detail="LLM service returned an invalid response. "
-               "Please try again later.",
+        detail="LLM service returned an invalid response. " "Please try again later.",
     )
 
 
 # ============================================================================
 # ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ ДЛЯ edit_text (выделены)
 # ============================================================================
+
 
 def _build_audience_from_request(body: EditRequest) -> AudienceProfile | None:
     """Строит AudienceProfile из тела запроса, если он передан."""
@@ -620,6 +579,7 @@ def _build_dry_run_response(
 # Основной эндпоинт редактирования
 # ============================================================================
 
+
 @app.post(
     "/api/edit",
     response_model=EditResponse,
@@ -648,9 +608,7 @@ async def edit_text(request: Request, body: EditRequest) -> EditResponse:
             return _build_dry_run_response(body, prompt, retrieval_meta)
 
         providers_to_try = [body.provider] + [
-            provider
-            for provider in sorted(ALLOWED_PROVIDERS)
-            if provider != body.provider
+            provider for provider in sorted(ALLOWED_PROVIDERS) if provider != body.provider
         ]
 
         response, edited_text, report = await _generate_clean_edit(
@@ -670,19 +628,14 @@ async def edit_text(request: Request, body: EditRequest) -> EditResponse:
             raw_response={
                 "finish_reason": response.finish_reason,
             },
-            retrieval_meta=(
-                retrieval_meta if body.include_retrieval_meta else None
-            ),
+            retrieval_meta=(retrieval_meta if body.include_retrieval_meta else None),
         )
 
     except InvalidLLMOutputError as error:
         logger.error("Output guard blocked response: %s", error.reasons)
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
-            detail=(
-                "The editor could not produce a valid formatted result. "
-                "Please try again."
-            ),
+            detail=("The editor could not produce a valid formatted result. " "Please try again."),
         ) from error
     except LLMError as error:
         if isinstance(error, LLMFallbackError):
@@ -741,21 +694,21 @@ def _parse_text_and_report(raw: str) -> tuple[str, str | None]:
         return raw.strip(), None
 
     if report_match is None:
-        edited_text = raw[text_match.end():].strip()
+        edited_text = raw[text_match.end() :].strip()
         if not edited_text:
             logger.warning("Блок ТЕКСТ найден, но содержимое пустое.")
         return edited_text, None
 
     if text_match.start() < report_match.start():
-        edited_text = raw[text_match.end():report_match.start()].strip()
-        report = raw[report_match.end():].strip()
+        edited_text = raw[text_match.end() : report_match.start()].strip()
+        report = raw[report_match.end() :].strip()
     else:
         logger.warning(
             "Маркеры ТЕКСТ/ОТЧЁТ идут в перевёрнутом порядке — "
             "разбираем с учётом этого, отчёт сохраняется."
         )
-        edited_text = raw[text_match.end():].strip()
-        report = raw[report_match.end():text_match.start()].strip()
+        edited_text = raw[text_match.end() :].strip()
+        report = raw[report_match.end() : text_match.start()].strip()
 
     if not edited_text:
         logger.warning("Блок ТЕКСТ найден, но содержимое пустое.")
