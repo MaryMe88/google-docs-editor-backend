@@ -112,7 +112,7 @@ def test_stop_words_structure() -> None:
 
     def assert_list_payload(items: list, ctx: str) -> None:
         for item in items:
-            assert isinstance(item, (str, dict)), (
+            assert isinstance(item, str | dict), (
                 f"Элемент в '{ctx}' должен быть строкой или словарём, "
                 f"получено: {type(item)}"
             )

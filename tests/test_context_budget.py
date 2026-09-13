@@ -247,7 +247,7 @@ def test_resolve_budget_provider_model_fields() -> None:
     model = "claude-3-sonnet"
 
     # Нормальный случай (не должен выбрасывать)
-    budget = resolve_context_budget(
+    resolve_context_budget(
         provider=provider,
         model=model,
         prompt="а" * 100,
