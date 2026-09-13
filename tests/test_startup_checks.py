@@ -99,23 +99,22 @@ def test_check_tags_vs_kb_does_not_warn_for_aliases(tmp_path, caplog) -> None:
     kb_dir.mkdir()
     grammar_file = kb_dir / "grammar_errors.json"
     grammar_file.write_text(
-        json.dumps(
-            [{"wrong": "test", "correct": "test", "rule": "test", "tags": ["grammar"]}]
-        ),
+        json.dumps([{"wrong": "test", "correct": "test", "rule": "test", "tags": ["grammar"]}]),
         encoding="utf-8",
     )
 
-    with patch(
-        "src.startup_checks.get_canonical_tag_names",
-        return_value={"storytelling", "nkrj", "antiai"},
-    ), caplog.at_level("WARNING"):
+    with (
+        patch(
+            "src.startup_checks.get_canonical_tag_names",
+            return_value={"storytelling", "nkrj", "antiai"},
+        ),
+        caplog.at_level("WARNING"),
+    ):
         _check_tags_vs_kb(kb_dir)
         match = re.search(r"missing in KB: \[([^\]]+)\]", caplog.text)
         if match:
             missing_tags_str = match.group(1)
-            missing_tags = [
-                tag.strip().strip("'") for tag in missing_tags_str.split(",")
-            ]
+            missing_tags = [tag.strip().strip("'") for tag in missing_tags_str.split(",")]
             assert "story" not in missing_tags
             assert "taiga" not in missing_tags
             assert "antillm" not in missing_tags
@@ -129,15 +128,14 @@ def test_check_tags_vs_kb_warns_for_missing_canonical_tag(tmp_path, caplog) -> N
     kb_dir.mkdir()
     grammar_file = kb_dir / "grammar_errors.json"
     grammar_file.write_text(
-        json.dumps(
-            [{"wrong": "test", "correct": "test", "rule": "test", "tags": ["grammar"]}]
-        ),
+        json.dumps([{"wrong": "test", "correct": "test", "rule": "test", "tags": ["grammar"]}]),
         encoding="utf-8",
     )
 
-    with patch(
-        "src.startup_checks.get_canonical_tag_names", return_value={"storytelling"}
-    ), caplog.at_level("WARNING"):
+    with (
+        patch("src.startup_checks.get_canonical_tag_names", return_value={"storytelling"}),
+        caplog.at_level("WARNING"),
+    ):
         _check_tags_vs_kb(kb_dir)
         assert "Tags declared in CANONICAL_TAGS but missing in KB" in caplog.text
         assert "storytelling" in caplog.text
@@ -176,9 +174,7 @@ def test_run_startup_checks_does_not_fail_due_to_tag_map() -> None:
             encoding="utf-8",
         )
         # Создаём core.json (может потребоваться для некоторых проверок)
-        (config_path / "core.json").write_text(
-            json.dumps({"role": "test"}), encoding="utf-8"
-        )
+        (config_path / "core.json").write_text(json.dumps({"role": "test"}), encoding="utf-8")
         # Создаём папки intents и overlays (пустые, чтобы не было лишних файлов)
         (config_path / "intents").mkdir()
         (config_path / "overlays").mkdir()

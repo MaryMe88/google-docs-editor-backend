@@ -23,9 +23,7 @@ def builder_with_mock(monkeypatch: pytest.MonkeyPatch) -> PromptBuilder:
     def mock_normalize_overlays(overlays, **kwargs):
         return list(overlays)
 
-    monkeypatch.setattr(
-        "src.prompt_builder.normalize_overlays", mock_normalize_overlays
-    )
+    monkeypatch.setattr("src.prompt_builder.normalize_overlays", mock_normalize_overlays)
     return PromptBuilder(config_path=Path("config"), kb_path=Path("knowledge_base"))
 
 

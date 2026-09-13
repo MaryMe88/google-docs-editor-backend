@@ -70,6 +70,7 @@ class SelectionParams:
     """
     Параметры отбора записей из базы знаний.
     """
+
     require_text_match: bool = False
     scorer: Any = None
     candidate_limit: int | None = None
@@ -84,6 +85,7 @@ class SelectionParams:
 
 # ---------------------------------------------------------------------------
 # ---------------------------------------------------------------------------
+
 
 def normalize_text_for_match(text: str) -> str:
     text = text.replace("ё", "е").replace("Ё", "Е")
@@ -132,8 +134,14 @@ def _entry_info_score(entry: dict[str, Any]) -> int:
 def _estimate_entry_chars(entry: dict[str, Any]) -> int:
     total = 0
     for field in (
-        "wrong", "correct", "rule", "description", "name",
-        "example_wrong", "example_correct", "example_explanation",
+        "wrong",
+        "correct",
+        "rule",
+        "description",
+        "name",
+        "example_wrong",
+        "example_correct",
+        "example_explanation",
     ):
         value = entry.get(field)
         if isinstance(value, str):
@@ -275,9 +283,7 @@ def _make_dedupe_key(entry: dict[str, Any]) -> tuple[Any, ...]:
         parts: list[str] = []
         for item in container:
             if isinstance(item, dict):
-                parts.append(
-                    str(item.get("name", "")) + "|" + str(item.get("description", ""))
-                )
+                parts.append(str(item.get("name", "")) + "|" + str(item.get("description", "")))
         return tuple(parts)
 
     return (
@@ -380,13 +386,14 @@ def _log_stage_debug(
 ) -> None:
     if not logger.isEnabledFor(logging.DEBUG):
         return
-    preview = [
-        entry.get("name", entry.get("wrong", "?"))[:40]
-        for entry in selected[:5]
-    ]
+    preview = [entry.get("name", entry.get("wrong", "?"))[:40] for entry in selected[:5]]
     logger.debug(
         "[%s] stage=%s candidates=%s selected=%s preview=%s",
-        debug_context, stage.value, len(candidates), len(selected), preview,
+        debug_context,
+        stage.value,
+        len(candidates),
+        len(selected),
+        preview,
     )
 
 
@@ -429,18 +436,15 @@ def _semantic_rerank(
             get_semantic_index,
             init_semantic_index,
         )
+
         index = get_semantic_index()
         if index is None:
             if _entries_for_index:
-                logger.info(
-                    "SemanticIndex: ленивая инициализация индекса по первому запросу"
-                )
+                logger.info("SemanticIndex: ленивая инициализация индекса по первому запросу")
                 init_semantic_index(_entries_for_index)
                 index = get_semantic_index()
             else:
-                logger.warning(
-                    "SemanticIndex не инициализирован: нет записей для индексации"
-                )
+                logger.warning("SemanticIndex не инициализирован: нет записей для индексации")
                 return entries
         if index is None or not index.is_ready():
             return entries
@@ -450,9 +454,7 @@ def _semantic_rerank(
     n = len(entries)
     top_k = min(n * top_k_factor, 200)
     semantic_results = index.search(query.strip(), top_k=top_k)
-    sem_score_map: dict[int, float] = {
-        id(entry): score for entry, score in semantic_results
-    }
+    sem_score_map: dict[int, float] = {id(entry): score for entry, score in semantic_results}
 
     def keyword_rank_score(pos: int) -> float:
         return 1.0 - (pos / n) if n > 1 else 1.0
@@ -472,7 +474,8 @@ def _semantic_rerank(
         if before != after:
             logger.debug(
                 "Семантический re-ranking изменил порядок. До: %s. После: %s",
-                before, after,
+                before,
+                after,
             )
     return reranked
 
@@ -480,6 +483,7 @@ def _semantic_rerank(
 # ============================================================================
 # Стадии _select_ranked_entries
 # ============================================================================
+
 
 def _try_strong_stage(
     candidates: list[dict[str, Any]],
@@ -520,7 +524,9 @@ def _try_strong_stage(
     if dropped:
         logger.info(
             "[%s] char_budget truncated %d records (stage=%s)",
-            params.debug_context, dropped, FallbackStage.STRONG.value,
+            params.debug_context,
+            dropped,
+            FallbackStage.STRONG.value,
         )
     return result, dropped
 
@@ -555,7 +561,9 @@ def _try_text_only_stage(
     if dropped:
         logger.info(
             "[%s] char_budget truncated %d records (stage=%s)",
-            params.debug_context, dropped, FallbackStage.TEXT_ONLY.value,
+            params.debug_context,
+            dropped,
+            FallbackStage.TEXT_ONLY.value,
         )
     return result, dropped
 
@@ -596,7 +604,9 @@ def _try_tag_only_stage(
     if dropped:
         logger.info(
             "[%s] char_budget truncated %d records (stage=%s)",
-            params.debug_context, dropped, FallbackStage.TAG_ONLY.value,
+            params.debug_context,
+            dropped,
+            FallbackStage.TAG_ONLY.value,
         )
     return result, dropped
 
@@ -630,7 +640,9 @@ def _try_neutral_stage(
     if dropped:
         logger.info(
             "[%s] char_budget truncated %d records (stage=%s)",
-            params.debug_context, dropped, FallbackStage.NEUTRAL.value,
+            params.debug_context,
+            dropped,
+            FallbackStage.NEUTRAL.value,
         )
     return result, dropped
 
@@ -638,6 +650,7 @@ def _try_neutral_stage(
 # ============================================================================
 # Основная функция — координатор стадий
 # ============================================================================
+
 
 def _select_ranked_entries(
     entries: list[dict[str, Any]],
@@ -657,9 +670,7 @@ def _select_ranked_entries(
         return _ensure_return_type(result, params.return_meta)
 
     policy = params.fallback_policy or RULE_FALLBACK_POLICY
-    candidates = (
-        entries if params.candidate_limit is None else entries[:params.candidate_limit]
-    )
+    candidates = entries if params.candidate_limit is None else entries[: params.candidate_limit]
     wanted_set = _normalize_tag_set(wanted_tags)
 
     # Пробуем стадии по порядку
@@ -773,11 +784,7 @@ def select_entries(
 ) -> list[dict[str, Any]] | tuple[list[dict[str, Any]], FallbackStage, int]:
     if params is None:
         scorer = score_rule_entry if category != "structural" else score_structural_entry
-        fb_policy = (
-            STRUCTURAL_FALLBACK_POLICY
-            if category == "structural"
-            else RULE_FALLBACK_POLICY
-        )
+        fb_policy = STRUCTURAL_FALLBACK_POLICY if category == "structural" else RULE_FALLBACK_POLICY
         params = SelectionParams(
             require_text_match=False,
             scorer=scorer,
@@ -800,10 +807,7 @@ def select_entries(
         attr = config["attr"]
         entries_source = getattr(kb_or_entries, attr, [])
         if not entries_source:
-            logger.warning(
-                "select_entries: %s пустой. Блок %s не будет добавлен.",
-                attr, category
-            )
+            logger.warning("select_entries: %s пустой. Блок %s не будет добавлен.", attr, category)
             if params.return_meta:
                 return [], FallbackStage.EMPTY, 0
             return []
@@ -840,6 +844,7 @@ def select_entries(
 # Обёртки для обратной совместимости
 # ---------------------------------------------------------------------------
 
+
 def select_grammar_rules(
     kb: Any,
     text: str,
@@ -862,7 +867,10 @@ def select_grammar_rules(
         semantic_rerank=semantic_rerank,
     )
     return select_entries(
-        kb, text, tags, "grammar",
+        kb,
+        text,
+        tags,
+        "grammar",
         params=params,
         limit=limit,
         return_meta=return_meta,
@@ -892,7 +900,10 @@ def select_style_issues(
         semantic_rerank=semantic_rerank,
     )
     return select_entries(
-        kb, text, tags, "style",
+        kb,
+        text,
+        tags,
+        "style",
         params=params,
         limit=limit,
         return_meta=return_meta,
@@ -922,7 +933,10 @@ def select_logic_issues(
         semantic_rerank=semantic_rerank,
     )
     return select_entries(
-        kb, text, tags, "logic",
+        kb,
+        text,
+        tags,
+        "logic",
         params=params,
         limit=limit,
         return_meta=return_meta,
@@ -951,7 +965,10 @@ def select_structural_by_tags_or_all(
         semantic_rerank=False,
     )
     return select_entries(
-        entries, "", tags, "structural",
+        entries,
+        "",
+        tags,
+        "structural",
         params=params,
         limit=limit,
         return_meta=return_meta,

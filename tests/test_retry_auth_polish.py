@@ -42,9 +42,7 @@ async def test_no_sleep_after_last_attempt() -> None:
     client = _client(max_retries=3)
 
     with (
-        patch.object(
-            client, "call_api", AsyncMock(side_effect=LLMRateLimitError("429"))
-        ),
+        patch.object(client, "call_api", AsyncMock(side_effect=LLMRateLimitError("429"))),
         patch("src.llm_client.asyncio.sleep", AsyncMock()) as mock_sleep,
     ):
         with pytest.raises(LLMError, match="Failed after 3 attempts"):
@@ -59,9 +57,7 @@ async def test_single_attempt_no_sleep() -> None:
     client = _client(max_retries=1)
 
     with (
-        patch.object(
-            client, "call_api", AsyncMock(side_effect=LLMRateLimitError("429"))
-        ),
+        patch.object(client, "call_api", AsyncMock(side_effect=LLMRateLimitError("429"))),
         patch("src.llm_client.asyncio.sleep", AsyncMock()) as mock_sleep,
     ):
         with pytest.raises(LLMError):

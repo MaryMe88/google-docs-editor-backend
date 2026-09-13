@@ -45,9 +45,7 @@ def _load_kb_file(
     if expected_key and isinstance(data.get(expected_key), list):
         return data[expected_key]
     if not use_known_keys:
-        logger.debug(
-            "KB file %s treated as dict block (use_known_keys=False)", path
-        )
+        logger.debug("KB file %s treated as dict block (use_known_keys=False)", path)
         return data
     known_list_keys = (
         "items",
@@ -110,9 +108,7 @@ def load_knowledge_base(
                 )
                 selected.append(entry)
     else:
-        selected = select_files_for_request(
-            manifest, active_tags or set(), intent
-        )
+        selected = select_files_for_request(manifest, active_tags or set(), intent)
 
     block_data: dict[str, Any] = {}
     for entry in selected:
@@ -127,9 +123,7 @@ def load_knowledge_base(
         else:
             key = Path(entry.file).stem
         if getattr(entry, "block_type", "list") == "dict":
-            records = _load_kb_file(
-                full_path, expected_key=None, use_known_keys=False
-            )
+            records = _load_kb_file(full_path, expected_key=None, use_known_keys=False)
         else:
             records = _load_kb_file(
                 full_path,
@@ -142,8 +136,7 @@ def load_knowledge_base(
                 block_data[key].update(records)
             elif key in block_data:
                 logger.warning(
-                    "KB block '%s' type conflict: existing=%s, new=dict — "
-                    "skipping %s",
+                    "KB block '%s' type conflict: existing=%s, new=dict — " "skipping %s",
                     key,
                     type(block_data[key]).__name__,
                     entry.file,
@@ -157,8 +150,7 @@ def load_knowledge_base(
                 block_data[key].extend(records)
             else:
                 logger.warning(
-                    "KB block '%s' type conflict: existing=%s, new=list — "
-                    "skipping %s",
+                    "KB block '%s' type conflict: existing=%s, new=list — " "skipping %s",
                     key,
                     type(block_data[key]).__name__,
                     entry.file,
@@ -168,9 +160,7 @@ def load_knowledge_base(
         domain_glossary_path = kb_path / "domain_glossary.json"
         if domain_glossary_path.exists():
             try:
-                data = json.loads(
-                    domain_glossary_path.read_text(encoding="utf-8")
-                )
+                data = json.loads(domain_glossary_path.read_text(encoding="utf-8"))
                 if isinstance(data, dict):
                     block_data["domain_glossary"] = data
             except (json.JSONDecodeError, OSError) as e:

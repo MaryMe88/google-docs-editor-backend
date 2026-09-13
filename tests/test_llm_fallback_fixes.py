@@ -131,9 +131,7 @@ def test_client_ip_key_uses_remote_address() -> None:
     """Ключ rate-limit должен быть реальным IP клиента (request.client.host)."""
     from src.main import _client_ip_key
 
-    req = _fake_request(
-        {"X-Forwarded-For": "203.0.113.7, 10.0.0.1"}, client_host="10.0.0.1"
-    )
+    req = _fake_request({"X-Forwarded-For": "203.0.113.7, 10.0.0.1"}, client_host="10.0.0.1")
     assert _client_ip_key(req) == "10.0.0.1"
 
 

@@ -25,9 +25,7 @@ def _find_method(class_node: ast.ClassDef, method_name: str) -> ast.FunctionDef:
     for node in class_node.body:
         if isinstance(node, ast.FunctionDef) and node.name == method_name:
             return node
-    raise AssertionError(
-        f"Method {method_name!r} not found in class {class_node.name!r}"
-    )
+    raise AssertionError(f"Method {method_name!r} not found in class {class_node.name!r}")
 
 
 def _function_length(node: ast.FunctionDef) -> int:

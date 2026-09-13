@@ -152,9 +152,7 @@ def test_build_knowledge_block_uses_passed_limits():
     pb = PromptBuilder()
     # Создаём мок для budget, чтобы получить stop_words_budget с enabled=True
     mock_budget = patch("src.prompt_builder.KnowledgeBudget").start()
-    mock_budget.get.return_value = type(
-        "BlockBudget", (), {"enabled": True, "entry_limit": 5}
-    )()
+    mock_budget.get.return_value = type("BlockBudget", (), {"enabled": True, "entry_limit": 5})()
 
     # Мокаем kb.get так, чтобы он принимал два аргумента
     with patch.object(pb, "_kb_cache") as mock_cache:

@@ -123,8 +123,6 @@ class TestPromptBuilderCache:
         """reload_configs должен очищать _kb_cache."""
         builder.get_knowledge_base({"blog"}, None)
         # Подменяем метод clear
-        with patch.object(
-            builder._kb_cache, "clear", wraps=builder._kb_cache.clear
-        ) as mock_clear:
+        with patch.object(builder._kb_cache, "clear", wraps=builder._kb_cache.clear) as mock_clear:
             builder.reload_configs()
             mock_clear.assert_called_once()

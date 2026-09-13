@@ -36,12 +36,8 @@ class ReasonCode(str, Enum):
     SUPPRESSED_BY_OVERLAY_RULE = "suppressed_by_overlay_rule"
     SUPPRESSED_BY_INTENT_RULE = "suppressed_by_intent_rule"  # NEW
     SUPPRESSED_BY_OVERLAY_CONFLICT = "suppressed_by_overlay_conflict"
-    SUPPRESSED_BY_DOMAIN_INCOMPATIBLE_INTENT = (
-        "suppressed_by_domain_incompatible_intent"
-    )
-    SUPPRESSED_BY_DOMAIN_INCOMPATIBLE_OVERLAY = (
-        "suppressed_by_domain_incompatible_overlay"
-    )
+    SUPPRESSED_BY_DOMAIN_INCOMPATIBLE_INTENT = "suppressed_by_domain_incompatible_intent"
+    SUPPRESSED_BY_DOMAIN_INCOMPATIBLE_OVERLAY = "suppressed_by_domain_incompatible_overlay"
     DOMAIN_DENIES_STORYTELLING = "domain_denies_storytelling"
     DOMAIN_DENIES_MARKETING = "domain_denies_marketing"
     NO_RECOGNIZED_ALIAS = "no_recognized_alias"
@@ -71,9 +67,7 @@ class ReasonCode(str, Enum):
     # Validation / invariant reasons
     # ------------------------------------------------------------------
     VALIDATION_FEATURE_WITHOUT_REASON = "validation_feature_without_reason"
-    VALIDATION_SUPPRESSED_WITHOUT_REASON = (
-        "validation_suppressed_without_reason"
-    )
+    VALIDATION_SUPPRESSED_WITHOUT_REASON = "validation_suppressed_without_reason"
 
 
 # Множество всех activation reasons (для быстрой проверки)

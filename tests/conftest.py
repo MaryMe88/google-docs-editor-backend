@@ -154,9 +154,7 @@ def pytest_configure(config):
 def pytest_collection_modifyitems(config, items):
     """Пропускаем интеграционные тесты, если флаг не установлен."""
     enabled = config._integration_enabled
-    skip_integration = pytest.mark.skip(
-        reason="INTEGRATION_TESTS_ENABLED not set to true"
-    )
+    skip_integration = pytest.mark.skip(reason="INTEGRATION_TESTS_ENABLED not set to true")
     for item in items:
         if item.get_closest_marker("integration") and not enabled:
             item.add_marker(skip_integration)

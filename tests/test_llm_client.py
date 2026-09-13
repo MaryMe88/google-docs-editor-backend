@@ -124,10 +124,13 @@ async def test_fallback_primary_error_preserved_when_skipping_unconfigured() -> 
             return openrouter_client
         raise ValueError("provider not configured")
 
-    with patch(
-        "src.llm_client.create_llm_client",
-        side_effect=fake_create_llm_client,
-    ), pytest.raises(LLMFallbackError) as exc_info:
+    with (
+        patch(
+            "src.llm_client.create_llm_client",
+            side_effect=fake_create_llm_client,
+        ),
+        pytest.raises(LLMFallbackError) as exc_info,
+    ):
         await call_with_fallback(
             prompt="test",
             providers=["openrouter", "anthropic", "openai", "perplexity"],
@@ -154,10 +157,13 @@ async def test_fallback_all_providers_unconfigured_raises_configuration() -> Non
     def fake_create_llm_client(provider: LLMProvider, **kwargs):
         raise ValueError("Missing API key")
 
-    with patch(
-        "src.llm_client.create_llm_client",
-        side_effect=fake_create_llm_client,
-    ), pytest.raises(LLMFallbackError) as exc_info:
+    with (
+        patch(
+            "src.llm_client.create_llm_client",
+            side_effect=fake_create_llm_client,
+        ),
+        pytest.raises(LLMFallbackError) as exc_info,
+    ):
         await call_with_fallback(
             prompt="test",
             providers=["openrouter", "anthropic", "openai"],
@@ -183,10 +189,13 @@ async def test_fallback_http_429_classified_as_rate_limit() -> None:
             return rate_limit_client
         raise ValueError("Missing")
 
-    with patch(
-        "src.llm_client.create_llm_client",
-        side_effect=fake_create_llm_client,
-    ), pytest.raises(LLMFallbackError) as exc_info:
+    with (
+        patch(
+            "src.llm_client.create_llm_client",
+            side_effect=fake_create_llm_client,
+        ),
+        pytest.raises(LLMFallbackError) as exc_info,
+    ):
         await call_with_fallback(
             prompt="test",
             providers=["openrouter", "anthropic"],
@@ -208,10 +217,13 @@ async def test_fallback_timeout_classified_as_timeout() -> None:
             return timeout_client
         raise ValueError("Missing")
 
-    with patch(
-        "src.llm_client.create_llm_client",
-        side_effect=fake_create_llm_client,
-    ), pytest.raises(LLMFallbackError) as exc_info:
+    with (
+        patch(
+            "src.llm_client.create_llm_client",
+            side_effect=fake_create_llm_client,
+        ),
+        pytest.raises(LLMFallbackError) as exc_info,
+    ):
         await call_with_fallback(
             prompt="test",
             providers=["openrouter", "anthropic"],
@@ -233,10 +245,13 @@ async def test_fallback_http_413_classified_as_context_limit() -> None:
             return context_client
         raise ValueError("Missing")
 
-    with patch(
-        "src.llm_client.create_llm_client",
-        side_effect=fake_create_llm_client,
-    ), pytest.raises(LLMFallbackError) as exc_info:
+    with (
+        patch(
+            "src.llm_client.create_llm_client",
+            side_effect=fake_create_llm_client,
+        ),
+        pytest.raises(LLMFallbackError) as exc_info,
+    ):
         await call_with_fallback(
             prompt="test",
             providers=["openrouter", "anthropic"],
@@ -258,10 +273,13 @@ async def test_fallback_http_400_without_context_words_not_context_limit() -> No
             return bad_request_client
         raise ValueError("Missing")
 
-    with patch(
-        "src.llm_client.create_llm_client",
-        side_effect=fake_create_llm_client,
-    ), pytest.raises(LLMFallbackError) as exc_info:
+    with (
+        patch(
+            "src.llm_client.create_llm_client",
+            side_effect=fake_create_llm_client,
+        ),
+        pytest.raises(LLMFallbackError) as exc_info,
+    ):
         await call_with_fallback(
             prompt="test",
             providers=["openrouter", "anthropic"],
@@ -290,10 +308,13 @@ async def test_fallback_model_passed_only_to_first_provider() -> None:
             # Второй провайдер ненастроен
             raise ValueError("Missing key")
 
-    with patch(
-        "src.llm_client.create_llm_client",
-        side_effect=fake_create_llm_client,
-    ), pytest.raises(LLMFallbackError):
+    with (
+        patch(
+            "src.llm_client.create_llm_client",
+            side_effect=fake_create_llm_client,
+        ),
+        pytest.raises(LLMFallbackError),
+    ):
         await call_with_fallback(
             prompt="test",
             providers=["openrouter", "anthropic"],
@@ -437,9 +458,10 @@ async def test_try_provider_success():
 @pytest.mark.asyncio
 async def test_try_provider_value_error():
     """ValueError (нет ключа) пробрасывается дальше."""
-    with patch(
-        "src.llm_client.create_llm_client", side_effect=ValueError("Missing key")
-    ), pytest.raises(ValueError):
+    with (
+        patch("src.llm_client.create_llm_client", side_effect=ValueError("Missing key")),
+        pytest.raises(ValueError),
+    ):
         await _try_provider(
             provider_enum=LLMProvider.OPENROUTER,
             model=None,

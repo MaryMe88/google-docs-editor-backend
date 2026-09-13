@@ -35,24 +35,16 @@ def _load_golden_tests() -> list[dict[str, Any]]:
 GOLDEN_TESTS = _load_golden_tests()
 
 
-def find_entry_in_results(
-    entries: list[dict[str, Any]], expected: dict[str, Any]
-) -> bool:
+def find_entry_in_results(entries: list[dict[str, Any]], expected: dict[str, Any]) -> bool:
     """Проверяет, содержится ли ожидаемая запись среди результатов retrieval."""
     for entry in entries:
         if "expected_wrong" in expected:
             entry_wrong = entry.get("wrong", "")
-            if (
-                isinstance(entry_wrong, str)
-                and entry_wrong.strip() == expected["expected_wrong"]
-            ):
+            if isinstance(entry_wrong, str) and entry_wrong.strip() == expected["expected_wrong"]:
                 return True
         if "expected_name" in expected:
             entry_name = entry.get("name", "")
-            if (
-                isinstance(entry_name, str)
-                and entry_name.strip() == expected["expected_name"]
-            ):
+            if isinstance(entry_name, str) and entry_name.strip() == expected["expected_name"]:
                 return True
         if "expected_id" in expected:
             if entry.get("id") == expected["expected_id"]:
@@ -136,9 +128,9 @@ def test_golden_retrieval(knowledge_base, test_case):
         FallbackStage.NEUTRAL: 2,
         FallbackStage.EMPTY: 1,
     }
-    assert stage_order[stage] >= stage_order[expected_stage], (
-        f"Stage {stage.value} < {expected_stage.value} for text: {text[:60]}..."
-    )
+    assert (
+        stage_order[stage] >= stage_order[expected_stage]
+    ), f"Stage {stage.value} < {expected_stage.value} for text: {text[:60]}..."
 
     # Проверка, что ожидаемая запись найдена
     found = find_entry_in_results(entries, test_case)

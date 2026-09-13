@@ -31,8 +31,8 @@ def test_prepare_resolution_context_unknown_intent():
     Проверяет, что неизвестный intent нормализуется в None
     и попадает в ignored_unknown_values.
     """
-    result, effective_intent, effective_overlays, tags, _, _ = (
-        _prepare_resolution_context("blog", "unknown", [], [])
+    result, effective_intent, effective_overlays, tags, _, _ = _prepare_resolution_context(
+        "blog", "unknown", [], []
     )
     assert effective_intent is None
     assert "unknown" in result.ignored_unknown_values
@@ -87,8 +87,7 @@ def test_apply_domain_incompatibility_removes_intent():
     assert "analytical" not in new_tags
     assert len(result.suppressed_features) == 1
     assert (
-        ReasonCode.SUPPRESSED_BY_DOMAIN_INCOMPATIBLE_INTENT
-        in result.suppression_reasons["intent"]
+        ReasonCode.SUPPRESSED_BY_DOMAIN_INCOMPATIBLE_INTENT in result.suppression_reasons["intent"]
     )
 
 
@@ -289,9 +288,7 @@ def test_activate_marketing_disabled_by_domain():
     all_tags = ["blog", "marketing"]
     _activate_marketing(result, all_tags, domain_config)
     assert result.marketing_enabled is False
-    assert ReasonCode.DOMAIN_DENIES_MARKETING in result.suppression_reasons.get(
-        "marketing", []
-    )
+    assert ReasonCode.DOMAIN_DENIES_MARKETING in result.suppression_reasons.get("marketing", [])
 
 
 def test_activate_antiai_enabled():
@@ -343,9 +340,7 @@ def test_activate_rhetoric_no_tag():
     all_tags = ["blog"]
     _activate_rhetoric(result, all_tags)
     assert result.rhetoric_enabled is False
-    assert ReasonCode.NO_RECOGNIZED_ALIAS in result.suppression_reasons.get(
-        "rhetoric", []
-    )
+    assert ReasonCode.NO_RECOGNIZED_ALIAS in result.suppression_reasons.get("rhetoric", [])
 
 
 def test_activate_nkrj_enabled():

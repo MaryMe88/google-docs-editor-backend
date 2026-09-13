@@ -79,9 +79,9 @@ class TestFeatureResolutionExplainability:
             "recognized_aliases",
             "ignored_unknown_values",
         }
-        assert expected_keys.issubset(result.keys()), (
-            f"Missing keys: {expected_keys - result.keys()}"
-        )
+        assert expected_keys.issubset(
+            result.keys()
+        ), f"Missing keys: {expected_keys - result.keys()}"
 
     def test_resolve_prompt_features_storytelling_activation_reasons(self, builder):
         domain = "blog"
@@ -235,27 +235,15 @@ class TestAssemblyDiagnostics:
                 "grammar": BlockBudget(entry_limit=5, char_budget=None, enabled=True),
                 "style": BlockBudget(entry_limit=5, char_budget=None, enabled=True),
                 "logic": BlockBudget(entry_limit=5, char_budget=None, enabled=False),
-                "composition": BlockBudget(
-                    entry_limit=5, char_budget=None, enabled=False
-                ),
-                "composition_errors": BlockBudget(
-                    entry_limit=5, char_budget=None, enabled=False
-                ),
+                "composition": BlockBudget(entry_limit=5, char_budget=None, enabled=False),
+                "composition_errors": BlockBudget(entry_limit=5, char_budget=None, enabled=False),
                 "cohesion": BlockBudget(entry_limit=5, char_budget=None, enabled=False),
-                "storytelling": BlockBudget(
-                    entry_limit=5, char_budget=None, enabled=False
-                ),
-                "marketing": BlockBudget(
-                    entry_limit=5, char_budget=None, enabled=False
-                ),
+                "storytelling": BlockBudget(entry_limit=5, char_budget=None, enabled=False),
+                "marketing": BlockBudget(entry_limit=5, char_budget=None, enabled=False),
                 "rhetoric": BlockBudget(entry_limit=5, char_budget=None, enabled=False),
-                "editorial": BlockBudget(
-                    entry_limit=5, char_budget=None, enabled=False
-                ),
+                "editorial": BlockBudget(entry_limit=5, char_budget=None, enabled=False),
                 "glossary": BlockBudget(entry_limit=5, char_budget=None, enabled=False),
-                "stop_words": BlockBudget(
-                    entry_limit=5, char_budget=None, enabled=False
-                ),
+                "stop_words": BlockBudget(entry_limit=5, char_budget=None, enabled=False),
                 "nkrj": BlockBudget(entry_limit=5, char_budget=None, enabled=False),
             }
         )
@@ -304,23 +292,15 @@ class TestAssemblyDiagnostics:
                 "grammar": BlockBudget(entry_limit=5, char_budget=None, enabled=True),
                 "style": BlockBudget(entry_limit=5, char_budget=None, enabled=True),
                 "logic": BlockBudget(entry_limit=5, char_budget=None, enabled=True),
-                "composition": BlockBudget(
-                    entry_limit=5, char_budget=None, enabled=True
-                ),
-                "composition_errors": BlockBudget(
-                    entry_limit=5, char_budget=None, enabled=True
-                ),
+                "composition": BlockBudget(entry_limit=5, char_budget=None, enabled=True),
+                "composition_errors": BlockBudget(entry_limit=5, char_budget=None, enabled=True),
                 "cohesion": BlockBudget(entry_limit=5, char_budget=None, enabled=True),
-                "storytelling": BlockBudget(
-                    entry_limit=5, char_budget=None, enabled=True
-                ),
+                "storytelling": BlockBudget(entry_limit=5, char_budget=None, enabled=True),
                 "marketing": BlockBudget(entry_limit=5, char_budget=None, enabled=True),
                 "rhetoric": BlockBudget(entry_limit=5, char_budget=None, enabled=True),
                 "editorial": BlockBudget(entry_limit=5, char_budget=None, enabled=True),
                 "glossary": BlockBudget(entry_limit=5, char_budget=None, enabled=True),
-                "stop_words": BlockBudget(
-                    entry_limit=5, char_budget=None, enabled=True
-                ),
+                "stop_words": BlockBudget(entry_limit=5, char_budget=None, enabled=True),
                 "nkrj": BlockBudget(entry_limit=5, char_budget=None, enabled=True),
             }
         )
@@ -368,14 +348,10 @@ class TestAssemblyDiagnostics:
             for code in diag.reason_codes:
                 assert isinstance(code, str)
 
-    def test_build_knowledge_block_feature_gated_blocks_not_included_when_disabled(
-        self, builder
-    ):
+    def test_build_knowledge_block_feature_gated_blocks_not_included_when_disabled(self, builder):
         budget = KnowledgeBudget(
             {
-                "storytelling": BlockBudget(
-                    entry_limit=5, char_budget=None, enabled=True
-                ),
+                "storytelling": BlockBudget(entry_limit=5, char_budget=None, enabled=True),
                 "marketing": BlockBudget(entry_limit=5, char_budget=None, enabled=True),
                 "rhetoric": BlockBudget(entry_limit=5, char_budget=None, enabled=True),
                 "editorial": BlockBudget(entry_limit=5, char_budget=None, enabled=True),

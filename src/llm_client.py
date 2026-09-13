@@ -126,11 +126,7 @@ def _extract_upstream_status(error: LLMError) -> int | None:
     if hasattr(error, "status_code") and isinstance(error.status_code, int):
         return error.status_code
     cause = error.__cause__
-    if (
-        cause is not None
-        and hasattr(cause, "status_code")
-        and isinstance(cause.status_code, int)
-    ):
+    if cause is not None and hasattr(cause, "status_code") and isinstance(cause.status_code, int):
         return cause.status_code
     return None
 
@@ -322,8 +318,7 @@ class BaseLLMClient(ABC):
                 delay = self._sleep_delay_for(attempt)
                 if delay is not None:
                     logger.warning(
-                        "Invalid response (empty or malformed), retrying "
-                        "in %.2f seconds",
+                        "Invalid response (empty or malformed), retrying " "in %.2f seconds",
                         delay,
                         extra={"attempt": attempt + 1, "reason": error.reason_code},
                     )
@@ -569,9 +564,7 @@ def create_llm_client(
 
     if not api_key:
         env_key = env_keys.get(provider, "UNKNOWN_API_KEY")
-        raise ValueError(
-            f"API key not provided and not found in environment variable {env_key}"
-        )
+        raise ValueError(f"API key not provided and not found in environment variable {env_key}")
 
     config = LLMConfig(
         provider=provider,
@@ -600,6 +593,7 @@ def create_llm_client(
 # ============================================================================
 # Хелперы для call_with_fallback
 # ============================================================================
+
 
 def _resolve_provider_max_tokens(
     provider_name: str,
@@ -754,6 +748,7 @@ def _build_fallback_error(
 # call_with_fallback
 # ============================================================================
 
+
 async def call_with_fallback(
     prompt: str,
     providers: list[str],
@@ -823,8 +818,7 @@ async def call_with_fallback(
 
         except ValueError:
             logger.warning(
-                "call_with_fallback: provider=%s unavailable "
-                "(missing key or model), skipping",
+                "call_with_fallback: provider=%s unavailable " "(missing key or model), skipping",
                 provider_name,
             )
             skipped_providers.append(provider_name)

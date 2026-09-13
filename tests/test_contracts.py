@@ -97,23 +97,19 @@ class TestPromptBuilderContract:
         intents = pb.get_available_intents()
         assert isinstance(intents, set)
         for item in intents:
-            assert isinstance(item, str), (
-                f"intent должен быть str, получили {type(item)}"
-            )
+            assert isinstance(item, str), f"intent должен быть str, получили {type(item)}"
 
     def test_get_available_overlays_returns_set_of_str(self, pb):
         overlays = pb.get_available_overlays()
         assert isinstance(overlays, set)
         for item in overlays:
-            assert isinstance(item, str), (
-                f"overlay должен быть str, получили {type(item)}"
-            )
+            assert isinstance(item, str), f"overlay должен быть str, получили {type(item)}"
 
     def test_reload_configs_exists_and_callable(self, pb):
         # Проверяем наличие метода; вызов не должен бросать исключений
-        assert callable(getattr(pb, "reload_configs", None)), (
-            "PromptBuilder должен иметь метод reload_configs()"
-        )
+        assert callable(
+            getattr(pb, "reload_configs", None)
+        ), "PromptBuilder должен иметь метод reload_configs()"
         pb.reload_configs()
 
     def test_build_with_audience(self, pb):
@@ -347,9 +343,9 @@ class TestFastAPIContractHealth:
         Это предотвращает бесплатную инвентаризацию провайдеров и DoS через deep=true.
         """
         r = api_client.get("/health")
-        assert r.status_code == 401, (
-            f"/health без ключа должен возвращать 401, получили {r.status_code}: {r.text}"
-        )
+        assert (
+            r.status_code == 401
+        ), f"/health без ключа должен возвращать 401, получили {r.status_code}: {r.text}"
 
     def test_health_with_auth_returns_200_or_503(self, api_client, auth_headers):
         """
@@ -358,9 +354,10 @@ class TestFastAPIContractHealth:
         Проверяем структуру ответа.
         """
         r = api_client.get("/health", headers=auth_headers)
-        assert r.status_code in (200, 503), (
-            f"/health вернул неожиданный код {r.status_code}: {r.text}"
-        )
+        assert r.status_code in (
+            200,
+            503,
+        ), f"/health вернул неожиданный код {r.status_code}: {r.text}"
         data = r.json()
         assert "status" in data, "Поле 'status' обязательно в ответе /health"
         assert "version" in data, "Поле 'version' обязательно в ответе /health"
@@ -371,9 +368,9 @@ class TestFastAPIContractHealth:
         deep=true потребляет реальные токены — доступ без аутентификации недопустим.
         """
         r = api_client.get("/health?deep=true")
-        assert r.status_code == 401, (
-            f"/health?deep=true без ключа должен давать 401, получили {r.status_code}"
-        )
+        assert (
+            r.status_code == 401
+        ), f"/health?deep=true без ключа должен давать 401, получили {r.status_code}"
 
     def test_livez_does_not_require_auth(self, api_client):
         """
@@ -423,9 +420,9 @@ class TestFastAPIContractEdit:
         Любой, кто знает URL, не должен иметь возможность отправить текст на обработку.
         """
         r = api_client.post("/api/edit", json=self.BASE_PAYLOAD)
-        assert r.status_code == 401, (
-            f"/api/edit без ключа должен давать 401, получили {r.status_code}"
-        )
+        assert (
+            r.status_code == 401
+        ), f"/api/edit без ключа должен давать 401, получили {r.status_code}"
 
     def test_edit_rejects_invalid_api_key(self, api_client):
         """SEC: неверный ключ → 401, не 403 или 200."""
@@ -465,25 +462,19 @@ class TestFastAPIContractEdit:
         payload = {**self.BASE_PAYLOAD, "intent": "nonexistent_intent_xyz"}
         r = api_client.post("/api/edit", json=payload, headers=auth_headers)
         # Валидация выполняется в Pydantic (contracts.py), которая возвращает 422
-        assert r.status_code == 422, (
-            "Неизвестный intent должен давать 422 Unprocessable Entity"
-        )
+        assert r.status_code == 422, "Неизвестный intent должен давать 422 Unprocessable Entity"
 
     def test_edit_rejects_unknown_overlay(self, api_client, auth_headers):
         payload = {**self.BASE_PAYLOAD, "overlays": ["unknown_overlay_xyz"]}
         r = api_client.post("/api/edit", json=payload, headers=auth_headers)
         # Валидация выполняется в Pydantic (contracts.py), которая возвращает 422
-        assert r.status_code == 422, (
-            "Неизвестный overlay должен давать 422 Unprocessable Entity"
-        )
+        assert r.status_code == 422, "Неизвестный overlay должен давать 422 Unprocessable Entity"
 
     def test_edit_rejects_unknown_provider(self, api_client, auth_headers):
         payload = {**self.BASE_PAYLOAD, "provider": "unknown_provider"}
         r = api_client.post("/api/edit", json=payload, headers=auth_headers)
         # Валидация Pydantic (через field_validator) возвращает 422
-        assert r.status_code == 422, (
-            "Неизвестный provider должен давать 422 Unprocessable Entity"
-        )
+        assert r.status_code == 422, "Неизвестный provider должен давать 422 Unprocessable Entity"
 
     def test_edit_with_storytelling_intent(self, api_client, auth_headers):
         payload = {**self.BASE_PAYLOAD, "intent": "storytelling"}
@@ -546,9 +537,7 @@ class TestFastAPIContractEdit:
             "Если тест падает — убедись, что в contracts.py задан max_length=10000"
         )
 
-    def test_edit_rejects_oversized_audience_description(
-        self, api_client, auth_headers
-    ):
+    def test_edit_rejects_oversized_audience_description(self, api_client, auth_headers):
         """
         SEC: поле audience.description ограничено max_length=500 (contracts.py).
         Поле попадает в LLM-промпт через _build_audience_block без санитизации —
@@ -578,9 +567,9 @@ class TestFastAPIContractEdit:
         assert r.status_code == 200
         data = r.json()
         assert data.get("dry_run") is True, "Поле dry_run должно быть True в ответе"
-        assert data["edited_text"] == original, (
-            "При dry_run=True edited_text должен совпадать с исходным текстом"
-        )
+        assert (
+            data["edited_text"] == original
+        ), "При dry_run=True edited_text должен совпадать с исходным текстом"
 
     # ------------------------------------------------------------------
     # SEC: response contract — чувствительные данные не раскрываются

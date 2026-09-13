@@ -39,9 +39,7 @@ class AudienceRequest(BaseModel):
     def validate_kind(cls, value: str) -> str:
         normalized = value.strip().lower()
         if normalized not in ALLOWED_KIND:
-            raise ValueError(
-                f"kind must be one of {sorted(ALLOWED_KIND)}"
-            )
+            raise ValueError(f"kind must be one of {sorted(ALLOWED_KIND)}")
         return normalized
 
     @field_validator("expertise")
@@ -49,9 +47,7 @@ class AudienceRequest(BaseModel):
     def validate_expertise(cls, value: str) -> str:
         normalized = value.strip().lower()
         if normalized not in ALLOWED_EXPERTISE:
-            raise ValueError(
-                f"expertise must be one of {sorted(ALLOWED_EXPERTISE)}"
-            )
+            raise ValueError(f"expertise must be one of {sorted(ALLOWED_EXPERTISE)}")
         return normalized
 
     @field_validator("formality")
@@ -59,9 +55,7 @@ class AudienceRequest(BaseModel):
     def validate_formality(cls, value: str) -> str:
         normalized = value.strip().lower()
         if normalized not in ALLOWED_FORMALITY:
-            raise ValueError(
-                f"formality must be one of {sorted(ALLOWED_FORMALITY)}"
-            )
+            raise ValueError(f"formality must be one of {sorted(ALLOWED_FORMALITY)}")
         return normalized
 
 
@@ -97,9 +91,7 @@ class EditRequest(BaseModel):
         """
         normalized = v.strip().lower()
         if normalized not in ALLOWED_DOMAINS:
-            raise ValueError(
-                f"Unknown domain: {v!r}. Allowed: {sorted(ALLOWED_DOMAINS)}"
-            )
+            raise ValueError(f"Unknown domain: {v!r}. Allowed: {sorted(ALLOWED_DOMAINS)}")
         return normalized
 
     @field_validator("intent")
@@ -114,9 +106,7 @@ class EditRequest(BaseModel):
             return None
         normalized = v.strip().lower()
         if normalized not in ALLOWED_INTENTS:
-            raise ValueError(
-                f"Unknown intent: {v!r}. Allowed: {sorted(ALLOWED_INTENTS)}"
-            )
+            raise ValueError(f"Unknown intent: {v!r}. Allowed: {sorted(ALLOWED_INTENTS)}")
         return normalized
 
     @field_validator("overlays", mode="before")
@@ -133,8 +123,7 @@ class EditRequest(BaseModel):
             normalized = normalize_tag(str(item))
             if normalized not in ALLOWED_OVERLAYS:
                 raise ValueError(
-                    f"Unknown overlay: {item!r}. "
-                    f"Allowed: {sorted(ALLOWED_OVERLAYS)}"
+                    f"Unknown overlay: {item!r}. " f"Allowed: {sorted(ALLOWED_OVERLAYS)}"
                 )
             if normalized not in seen:
                 seen.add(normalized)
@@ -146,9 +135,7 @@ class EditRequest(BaseModel):
     def validate_output_mode(cls, value: str) -> str:
         normalized = value.strip().lower()
         if normalized not in ALLOWED_OUTPUT_MODES:
-            raise ValueError(
-                f"output_mode must be one of {sorted(ALLOWED_OUTPUT_MODES)}"
-            )
+            raise ValueError(f"output_mode must be one of {sorted(ALLOWED_OUTPUT_MODES)}")
         return normalized
 
     @field_validator("provider")
@@ -156,9 +143,7 @@ class EditRequest(BaseModel):
     def validate_provider(cls, value: str) -> str:
         normalized = value.strip().lower()
         if normalized not in ALLOWED_PROVIDERS:
-            raise ValueError(
-                f"provider must be one of {sorted(ALLOWED_PROVIDERS)}"
-            )
+            raise ValueError(f"provider must be one of {sorted(ALLOWED_PROVIDERS)}")
         return normalized
 
     # SEC-патч 3.3: Allowlist для поля model.
@@ -184,9 +169,7 @@ class EditResponse(BaseModel):
     """
 
     edited_text: str
-    report: str | None = (
-        None  # PR-2 (НП-2): добавлено для режима text_and_report
-    )
+    report: str | None = None  # PR-2 (НП-2): добавлено для режима text_and_report
     # prompt: str  # УДАЛЕНО: не возвращаем промпт клиенту
     provider: str | None = None
     model: str | None = None

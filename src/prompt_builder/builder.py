@@ -66,6 +66,7 @@ logger = logging.getLogger(__name__)
 @dataclass(frozen=True)
 class KnowledgeBlockRequest:
     """Параметры для сборки блока знаний."""
+
     text: str
     primary_tags: set[str]
     expanded_tags: set[str]
@@ -132,44 +133,30 @@ class PromptBuilder:
 
     def get_domain_config(self, domain: str) -> DomainConfig:
         if domain not in self._domain_cache:
-            self._domain_cache[domain] = load_domain_config(
-                domain, self.config_path
-            )
+            self._domain_cache[domain] = load_domain_config(domain, self.config_path)
         return self._domain_cache[domain]
 
-    def get_intent_config(
-        self, intent: str | None
-    ) -> IntentConfig | None:
+    def get_intent_config(self, intent: str | None) -> IntentConfig | None:
         if intent is None or intent == "neutral":
             return None
         if intent not in self._intent_cache:
-            self._intent_cache[intent] = load_intent_config(
-                intent, self.config_path
-            )
+            self._intent_cache[intent] = load_intent_config(intent, self.config_path)
         return self._intent_cache[intent]
 
     def get_overlay_config(self, overlay: str) -> OverlayConfig:
         if overlay not in self._overlay_cache:
-            self._overlay_cache[overlay] = load_overlay_config(
-                overlay, self.config_path
-            )
+            self._overlay_cache[overlay] = load_overlay_config(overlay, self.config_path)
         return self._overlay_cache[overlay]
 
-    def get_overlay_configs(
-        self, overlays: Sequence[str]
-    ) -> list[OverlayConfig]:
+    def get_overlay_configs(self, overlays: Sequence[str]) -> list[OverlayConfig]:
         return [self.get_overlay_config(ov) for ov in overlays]
 
     def get_output_format(self, mode: str) -> str:
         if mode not in self._output_format_cache:
-            self._output_format_cache[mode] = load_output_format(
-                mode, self.config_path
-            )
+            self._output_format_cache[mode] = load_output_format(mode, self.config_path)
         return self._output_format_cache[mode]
 
-    def get_knowledge_base(
-        self, primary_tags: set[str], intent: str | None
-    ) -> KnowledgeBase:
+    def get_knowledge_base(self, primary_tags: set[str], intent: str | None) -> KnowledgeBase:
         cache_key = f"kb:{','.join(sorted(primary_tags))}:{intent or 'none'}"
         manifest_path = self.kb_path / "kb_manifest.json"
         kb_files = [manifest_path]
@@ -198,9 +185,7 @@ class PromptBuilder:
             intent=None,
             load_all=True,
         )
-        logger.info(
-            "Full KB loaded with %d blocks", len(self._loaded_kb._blocks)
-        )
+        logger.info("Full KB loaded with %d blocks", len(self._loaded_kb._blocks))
         return self._loaded_kb
 
     def _invalidate_caches(self) -> None:
@@ -263,8 +248,7 @@ class PromptBuilder:
     def _validate_domain(self, domain: str) -> str:
         if domain not in ALLOWED_DOMAINS:
             raise ValueError(
-                f"Unknown domain: {domain!r}. Available: "
-                f"{sorted(ALLOWED_DOMAINS)}"
+                f"Unknown domain: {domain!r}. Available: " f"{sorted(ALLOWED_DOMAINS)}"
             )
         return domain
 
@@ -273,8 +257,7 @@ class PromptBuilder:
             return None
         if intent not in ALLOWED_INTENTS:
             raise ValueError(
-                f"Unknown intent: {intent!r}. Available: "
-                f"{sorted(ALLOWED_INTENTS)}"
+                f"Unknown intent: {intent!r}. Available: " f"{sorted(ALLOWED_INTENTS)}"
             )
         return intent
 
@@ -283,8 +266,7 @@ class PromptBuilder:
         for o in normalized:
             if o not in ALLOWED_OVERLAYS:
                 raise ValueError(
-                    f"Unknown overlay: {o!r}. Available: "
-                    f"{sorted(ALLOWED_OVERLAYS)}"
+                    f"Unknown overlay: {o!r}. Available: " f"{sorted(ALLOWED_OVERLAYS)}"
                 )
         overlay_configs = self.get_overlay_configs(normalized)
         for ov_cfg in overlay_configs:
@@ -305,9 +287,7 @@ class PromptBuilder:
             )
         return normalized
 
-    def _build_audience_block(
-        self, audience: AudienceProfile | None
-    ) -> str:
+    def _build_audience_block(self, audience: AudienceProfile | None) -> str:
         if audience is None:
             return ""
         parts = [
@@ -321,9 +301,7 @@ class PromptBuilder:
             parts.append(f"Описание аудитории: {wrapped}")
         return "\n".join(parts)
 
-    def _build_mode_constraints_block(
-        self, domain_config: DomainConfig
-    ) -> str:
+    def _build_mode_constraints_block(self, domain_config: DomainConfig) -> str:
         lines = []
         if not domain_config.allow_storytelling:
             lines.append(
@@ -382,9 +360,7 @@ class PromptBuilder:
             "Если ИП превышает целевое значение — предупреди и предложи второй проход."
         )
 
-    def _merge_domain_limits(
-        self, domain_config: DomainConfig
-    ) -> LimitsConfig:
+    def _merge_domain_limits(self, domain_config: DomainConfig) -> LimitsConfig:
         overrides = domain_config.kb_limits or {}
         base = self._limits
         return LimitsConfig(
@@ -392,43 +368,25 @@ class PromptBuilder:
             style=overrides.get("style", base.style),
             logic=overrides.get("logic", base.logic),
             composition=overrides.get("composition", base.composition),
-            cohesion=overrides.get(
-                "cohesion", overrides.get("local_cohesion", base.cohesion)
-            ),
-            composition_errors=overrides.get(
-                "composition_errors", base.composition_errors
-            ),
+            cohesion=overrides.get("cohesion", overrides.get("local_cohesion", base.cohesion)),
+            composition_errors=overrides.get("composition_errors", base.composition_errors),
             storytelling=overrides.get("storytelling", base.storytelling),
             marketing=overrides.get("marketing", base.marketing),
             rhetoric=overrides.get("rhetoric", base.rhetoric),
             editorial=overrides.get("editorial", base.editorial),
             glossary=overrides.get("glossary", base.glossary),
-            stop_words_category=overrides.get(
-                "stop_words", base.stop_words_category
-            ),
-            stop_words_items=overrides.get(
-                "stop_words_items", base.stop_words_items
-            ),
+            stop_words_category=overrides.get("stop_words", base.stop_words_category),
+            stop_words_items=overrides.get("stop_words_items", base.stop_words_items),
             nkrj=overrides.get("nkrj", base.nkrj),
             casestudy=overrides.get("casestudy", base.casestudy),
-            grammar_candidates=overrides.get(
-                "grammar_candidates", base.grammar_candidates
-            ),
-            style_candidates=overrides.get(
-                "style_candidates", base.style_candidates
-            ),
-            logic_candidates=overrides.get(
-                "logic_candidates", base.logic_candidates
-            ),
+            grammar_candidates=overrides.get("grammar_candidates", base.grammar_candidates),
+            style_candidates=overrides.get("style_candidates", base.style_candidates),
+            logic_candidates=overrides.get("logic_candidates", base.logic_candidates),
             storytelling_candidates=overrides.get(
                 "storytelling_candidates", base.storytelling_candidates
             ),
-            marketing_candidates=overrides.get(
-                "marketing_candidates", base.marketing_candidates
-            ),
-            rhetoric_candidates=overrides.get(
-                "rhetoric_candidates", base.rhetoric_candidates
-            ),
+            marketing_candidates=overrides.get("marketing_candidates", base.marketing_candidates),
+            rhetoric_candidates=overrides.get("rhetoric_candidates", base.rhetoric_candidates),
             evaluation_techniques=overrides.get(
                 "evaluation_techniques", base.evaluation_techniques
             ),
@@ -491,14 +449,10 @@ class PromptBuilder:
             return
 
         lines.append("Стоп-слова и нежелательные формулировки:")
-        category_limit = (
-            stop_words_budget.entry_limit or effective_limits.stop_words_category
-        )
+        category_limit = stop_words_budget.entry_limit or effective_limits.stop_words_category
         for category, words in list(stop_words.items())[:category_limit]:
             if isinstance(words, list) and words:
-                joined = ", ".join(
-                    str(w) for w in words[: effective_limits.stop_words_items]
-                )
+                joined = ", ".join(str(w) for w in words[: effective_limits.stop_words_items])
                 lines.append(f"- {category}: {joined}")
 
         self._add_trace_diagnostic(
@@ -508,9 +462,7 @@ class PromptBuilder:
             included=True,
             reason_codes=[ReasonCode.BLOCK_INCLUDED],
             empty=False,
-            char_count=sum(
-                len(line) for line in lines[-len(stop_words) - 1:]
-            ),
+            char_count=sum(len(line) for line in lines[-len(stop_words) - 1 :]),
             entries_count=len(stop_words),
         )
 
@@ -562,11 +514,7 @@ class PromptBuilder:
         after_len = len("".join(lines))
         included = after_len > before_len
 
-        reason_code = (
-            ReasonCode.BLOCK_INCLUDED
-            if included
-            else ReasonCode.BLOCK_EMPTY_AFTER_BUILD
-        )
+        reason_code = ReasonCode.BLOCK_INCLUDED if included else ReasonCode.BLOCK_EMPTY_AFTER_BUILD
         self._add_trace_diagnostic(
             trace,
             "evaluation_techniques",
@@ -695,7 +643,12 @@ class PromptBuilder:
 
         # Feature-gating: блоки включаются, только если соответствующая фича активна
         feature_gated = False
-        if (block_cfg.name == "storytelling" and not req.storytelling_enabled) or (block_cfg.name == "marketing" and not req.marketing_enabled) or (block_cfg.name == "rhetoric" and not req.rhetoric_enabled) or (block_cfg.name == "editorial" and not req.editorial_enabled):
+        if (
+            (block_cfg.name == "storytelling" and not req.storytelling_enabled)
+            or (block_cfg.name == "marketing" and not req.marketing_enabled)
+            or (block_cfg.name == "rhetoric" and not req.rhetoric_enabled)
+            or (block_cfg.name == "editorial" and not req.editorial_enabled)
+        ):
             feature_gated = True
             reason = ReasonCode.BLOCK_INELIGIBLE_FEATURE_DISABLED
 
@@ -754,11 +707,7 @@ class PromptBuilder:
         char_count = after_len - before_len
         entries_added = current_total - before_entries
 
-        reason_code = (
-            ReasonCode.BLOCK_INCLUDED
-            if included
-            else ReasonCode.BLOCK_SKIPPED
-        )
+        reason_code = ReasonCode.BLOCK_INCLUDED if included else ReasonCode.BLOCK_SKIPPED
         self._add_trace_diagnostic(
             trace,
             block_cfg.name,
@@ -886,10 +835,7 @@ class PromptBuilder:
         legacy_output_mode = legacy_kwargs.pop("outputmode", None)
         legacy_include_knowledge = legacy_kwargs.pop("includeknowledge", None)
         if legacy_kwargs:
-            raise TypeError(
-                f"Unexpected keyword arguments: "
-                f"{', '.join(sorted(legacy_kwargs))}"
-            )
+            raise TypeError(f"Unexpected keyword arguments: " f"{', '.join(sorted(legacy_kwargs))}")
         if legacy_output_mode is not None:
             output_mode = legacy_output_mode
         if legacy_include_knowledge is not None:
@@ -931,9 +877,7 @@ class PromptBuilder:
         for warn in warnings_list:
             logger.warning("PromptBuilder feature resolution: %s", warn)
 
-        tag_sets = _collect_retrieval_tags(
-            validated_domain, validated_intent, effective_overlays
-        )
+        tag_sets = _collect_retrieval_tags(validated_domain, validated_intent, effective_overlays)
 
         if editorial_enabled:
             tag_sets["primary"].add("editorial")
@@ -967,30 +911,20 @@ class PromptBuilder:
             blocks.append(edit_level_block)
 
         if domain_config.tasks:
-            blocks.append(
-                "Задачи редактора в этом домене:\n- "
-                + "\n- ".join(domain_config.tasks)
-            )
+            blocks.append("Задачи редактора в этом домене:\n- " + "\n- ".join(domain_config.tasks))
         if domain_config.constraints:
-            blocks.append(
-                "Ограничения домена:\n- "
-                + "\n- ".join(domain_config.constraints)
-            )
+            blocks.append("Ограничения домена:\n- " + "\n- ".join(domain_config.constraints))
 
         if self.core_config.basic_audit_instructions:
             blocks.append(
-                "Базовые инструкции:\n- "
-                + "\n- ".join(self.core_config.basic_audit_instructions)
+                "Базовые инструкции:\n- " + "\n- ".join(self.core_config.basic_audit_instructions)
             )
         if self.core_config.forbidden:
-            blocks.append(
-                "Запрещено:\n- " + "\n- ".join(self.core_config.forbidden)
-            )
+            blocks.append("Запрещено:\n- " + "\n- ".join(self.core_config.forbidden))
 
         if intent_config and intent_config.instructions:
             blocks.append(
-                f"Intent: {intent_config.name}\n- "
-                + "\n- ".join(intent_config.instructions)
+                f"Intent: {intent_config.name}\n- " + "\n- ".join(intent_config.instructions)
             )
 
         effective_overlay_configs = [
@@ -1000,13 +934,9 @@ class PromptBuilder:
             overlay_lines = []
             for overlay in effective_overlay_configs:
                 if overlay.instructions:
-                    overlay_lines.append(
-                        f"[{overlay.name}] " + " | ".join(overlay.instructions)
-                    )
+                    overlay_lines.append(f"[{overlay.name}] " + " | ".join(overlay.instructions))
             if overlay_lines:
-                blocks.append(
-                    "Overlay-инструкции:\n- " + "\n- ".join(overlay_lines)
-                )
+                blocks.append("Overlay-инструкции:\n- " + "\n- ".join(overlay_lines))
 
         audience_block = self._build_audience_block(audience)
         if audience_block:
@@ -1024,11 +954,7 @@ class PromptBuilder:
             if not marketing_enabled:
                 budget.disable("marketing")
 
-            effective_seed = (
-                few_shot_seed
-                if few_shot_seed is not None
-                else _derive_seed(text)
-            )
+            effective_seed = few_shot_seed if few_shot_seed is not None else _derive_seed(text)
 
             req = KnowledgeBlockRequest(
                 text=text,
@@ -1061,9 +987,7 @@ class PromptBuilder:
         blocks.append(self._build_ip_ceiling_block(domain_config))
         blocks.append("Формат ответа:\n" + output_format)
         # SEC-патч 2.2: оборачиваем пользовательский текст в маркеры
-        blocks.append(
-            "Исходный текст:\n" + _wrap_user_content("USER_TEXT", text.strip())
-        )
+        blocks.append("Исходный текст:\n" + _wrap_user_content("USER_TEXT", text.strip()))
 
         prompt = self._assemble_prompt(blocks)
         if include_retrieval_meta:
