@@ -1,0 +1,123 @@
+# pyproject.toml
+#
+# Единый конфиг инструментов качества: Ruff, mypy, pytest.
+# Создан в рамках итерации 2 дорожной карты (quality gates).
+# На данном этапе содержит только настройки линтера и форматтера;
+# mypy/pytest-секции добавляются позже отдельными PR.
+
+# ---------------------------------------------------------------------------
+# Ruff: линтер + форматтер
+# ---------------------------------------------------------------------------
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+# Какие файлы исключить из проверки полностью
+exclude = [
+    ".git",
+    ".venv",
+    "venv",
+    "__pycache__",
+    "build",
+    "dist",
+    "*.egg-info",
+]
+
+[tool.ruff.lint]
+# Набор правил: E/W — pycodestyle, F — pyflakes, I — isort,
+# UP — pyupgrade, B — bugbear, SIM — simplify, RUF — ruff-specific,
+# PIE — flake8-pie.
+select = ["E", "F", "W", "I", "UP", "B", "SIM", "RUF", "PIE"]
+
+# Что осознанно отключено:
+#   E501     — длина строки контролируется форматтером, не линтером.
+#   SIM102   — вложенные if часто читаемее одного длинного условия.
+#   SIM108   — тернарник в retrieval хуже ветвления по читаемости.
+#   SIM117   — nested with в тестах нагляднее одного длинного.
+#   RUF001   — проект русскоязычный; кириллица в строках — намеренно.
+#   RUF002   — кириллица в docstring — намеренно.
+#   RUF003   — кириллица в комментариях — намеренно.
+#   TRY004   — смена ValueError→TypeError требует ревизии тестов.
+#   B904     — raise ... from err — косметика, отложено.
+#   B905     — zip strict= — косметика, отложено.
+#   RUF012   — mutable default в тестовых BASE_PAYLOAD — не баг.
+#   RUF043   — match= без raw — косметика, отложено.
+#   UP042    — StrEnum vs (str, Enum) — нужен Py3.11+, отложено.
+#   E402     — импорты после reload в conftest/test_kb_loading — намеренно.
+ignore = [
+    "E501",
+    "SIM102",
+    "SIM108",
+    "SIM117",
+    "RUF001",
+    "RUF002",
+    "RUF003",
+    "TRY004",
+    "B904",
+    "B905",
+    "RUF012",
+    "RUF043",
+    "UP042",
+    "E402",
+]
+
+# BLE001 (blind except) пока не отключён глобально — подавляется
+# точечными `# noqa: BLE001` там, где перехват осознанно широкий
+# (диагностические проверки в startup_checks и т.п.).
+
+[tool.ruff.lint.per-file-ignores]
+# Миграция typing.Dict → dict и Optional[X] → X | None отложена:
+# в этих модулях нет `from __future__ import annotations`,
+# автоматическая замена небезопасна для runtime-аннотаций Pydantic.
+"src/config_types.py"     = ["UP006", "UP035", "UP045"]
+"src/contracts.py"        = ["UP006", "UP035", "UP045"]
+"src/knowledge_retrieval.py" = ["UP006", "UP035", "UP045"]
+"src/llm_client.py"       = ["UP006", "UP035", "UP045"]
+"src/main.py"             = ["UP006", "UP035", "UP045"]
+"src/output_guard.py"     = ["UP035"]
+"src/startup_checks.py"   = ["UP006", "UP035", "UP045"]
+"src/kb_manifest_loader.py" = ["UP035"]
+"src/prompt_builder/builder.py"     = ["UP006", "UP035", "UP045"]
+"src/prompt_builder/kb_rendering.py" = ["UP006", "UP035", "UP045"]
+"src/prompt_builder/kb_loading.py"   = ["UP006", "UP035", "UP045"]
+"src/prompt_builder/feature_resolution.py" = ["UP006", "UP035", "UP045"]
+"src/prompt_builder/config_loaders.py"     = ["UP035"]
+"src/prompt_builder/normalization.py"      = ["UP035"]
+"src/reason_codes.py"     = ["UP035"]
+"src/registry.py"         = ["UP006", "UP035"]
+"src/scoring_weights.py"  = ["UP035"]
+"src/shared_contracts.py" = ["UP035"]
+"src/tag_registry.py"     = ["UP006", "UP035"]
+"scripts/audit_tags.py"   = ["UP035"]
+"scripts/fix_tag_map.py"  = ["UP035"]
+"tests/conftest.py"       = ["UP035"]
+"tests/test_client_sync.py" = ["UP035"]
+"tests/test_contracts.py"   = ["UP035"]
+"tests/test_edit_guard.py"  = ["UP035"]
+"tests/test_golden_retrieval.py" = ["UP035"]
+"tests/test_knowledge_retrieval.py" = ["UP035"]
+"tests/test_knowledge_retrieval_fallback.py" = ["UP035"]
+"tests/test_prompt_builder_architecture.py"  = ["UP035"]
+
+# ---------------------------------------------------------------------------
+# Ruff formatter — настройки совпадают с линтером
+# ---------------------------------------------------------------------------
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"
+line-ending = "lf"
+
+# ---------------------------------------------------------------------------
+# mypy — на будущее (итерация 2B), пока закомментировано
+# ---------------------------------------------------------------------------
+# [tool.mypy]
+# python_version = "3.11"
+# ignore_missing_imports = true
+# warn_unused_ignores = true
+# warn_redundant_casts = true
+
+# ---------------------------------------------------------------------------
+# pytest — переносим сюда постепенно, пока оставляем pytest.ini
+# ---------------------------------------------------------------------------
+# [tool.pytest.ini_options]
+# testpaths = ["tests"]
+# addopts = "-ra -q"
