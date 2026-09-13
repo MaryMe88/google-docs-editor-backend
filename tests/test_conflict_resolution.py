@@ -6,9 +6,9 @@ from pathlib import Path
 
 import pytest
 
+from src.config_types import IntentConfig, OverlayConfig
 from src.prompt_builder import PromptBuilder, resolve_prompt_features
 from src.reason_codes import ReasonCode
-from src.config_types import IntentConfig, OverlayConfig
 
 
 @pytest.fixture
@@ -20,13 +20,18 @@ def builder() -> PromptBuilder:
 def builder_with_mock(monkeypatch: pytest.MonkeyPatch) -> PromptBuilder:
     def mock_normalize_overlays(overlays, **kwargs):
         return list(overlays)
-    monkeypatch.setattr("src.prompt_builder.feature_resolution.normalize_overlays", mock_normalize_overlays)
+
+    monkeypatch.setattr(
+        "src.prompt_builder.feature_resolution.normalize_overlays",
+        mock_normalize_overlays,
+    )
     return PromptBuilder(config_path=Path("config"), kb_path=Path("knowledge_base"))
 
 
 # ============================================================================
 # Тесты из Итерации 3 (domain.incompatible_*)
 # ============================================================================
+
 
 def test_deai_removes_infostyle(builder: PromptBuilder) -> None:
     """Домен deai должен удалять оверлей infostyle."""
@@ -113,10 +118,15 @@ def test_fiction_allows_storytelling_intent(builder: PromptBuilder) -> None:
     assert result["effective_intent"] == "storytelling"
 
 
-def test_domain_incompatibility_does_not_affect_other_overlays(builder: PromptBuilder) -> None:
+def test_domain_incompatibility_does_not_affect_other_overlays(
+    builder: PromptBuilder,
+) -> None:
     """Проверка, что deai не удаляет другие оверлеи (например, base)."""
     domain_config = builder.get_domain_config("deai")
-    overlay_configs = [builder.get_overlay_config("infostyle"), builder.get_overlay_config("base")]
+    overlay_configs = [
+        builder.get_overlay_config("infostyle"),
+        builder.get_overlay_config("base"),
+    ]
     result = resolve_prompt_features(
         domain="deai",
         intent=None,
@@ -132,6 +142,7 @@ def test_domain_incompatibility_does_not_affect_other_overlays(builder: PromptBu
 # ============================================================================
 # Тесты из Итерации 4 (intent.suppresses)
 # ============================================================================
+
 
 def test_intent_suppresses_storytelling(builder: PromptBuilder) -> None:
     """Intent может подавлять storytelling через suppresses."""
@@ -232,13 +243,19 @@ def test_intent_suppresses_multiple_features(builder: PromptBuilder) -> None:
     assert result["storytelling_enabled"] is False
     assert result["marketing_enabled"] is False
     suppression_reasons = result["suppression_reasons"]
-    assert any(ReasonCode.SUPPRESSED_BY_INTENT_RULE in reasons
-               for reasons in suppression_reasons.get("storytelling", []))
-    assert any(ReasonCode.SUPPRESSED_BY_INTENT_RULE in reasons
-               for reasons in suppression_reasons.get("marketing", []))
+    assert any(
+        ReasonCode.SUPPRESSED_BY_INTENT_RULE in reasons
+        for reasons in suppression_reasons.get("storytelling", [])
+    )
+    assert any(
+        ReasonCode.SUPPRESSED_BY_INTENT_RULE in reasons
+        for reasons in suppression_reasons.get("marketing", [])
+    )
 
 
-def test_intent_suppresses_does_not_affect_other_features(builder: PromptBuilder) -> None:
+def test_intent_suppresses_does_not_affect_other_features(
+    builder: PromptBuilder,
+) -> None:
     """Подавление storytelling не должно влиять на marketing, если не указано."""
     intent_config = IntentConfig(
         name="test_intent",
@@ -265,7 +282,10 @@ def test_intent_suppresses_does_not_affect_other_features(builder: PromptBuilder
 # Тесты для Итерации 5 (overlay conflicts и priority)
 # ============================================================================
 
-def test_overlay_conflict_higher_priority_wins(builder_with_mock: PromptBuilder) -> None:
+
+def test_overlay_conflict_higher_priority_wins(
+    builder_with_mock: PromptBuilder,
+) -> None:
     """При конфликте оверлеев побеждает тот, у кого выше priority."""
     overlay_high = OverlayConfig(
         name="high_priority",
@@ -295,7 +315,9 @@ def test_overlay_conflict_higher_priority_wins(builder_with_mock: PromptBuilder)
     assert any("low_priority" in layer for layer in result["suppressed_layers"])
 
 
-def test_overlay_conflict_resolution_independent_of_input_order(builder_with_mock: PromptBuilder) -> None:
+def test_overlay_conflict_resolution_independent_of_input_order(
+    builder_with_mock: PromptBuilder,
+) -> None:
     """Порядок overlays во входном списке не влияет на результат."""
     overlay_high = OverlayConfig(
         name="high_priority",
@@ -334,7 +356,9 @@ def test_overlay_conflict_resolution_independent_of_input_order(builder_with_moc
     assert "low_priority" not in result2["effective_overlays"]
 
 
-def test_overlay_conflict_equal_priority_uses_deterministic_fallback(builder_with_mock: PromptBuilder) -> None:
+def test_overlay_conflict_equal_priority_uses_deterministic_fallback(
+    builder_with_mock: PromptBuilder,
+) -> None:
     """При конфликте с равными приоритетами и без явного победителя — детерминированный fallback."""
     overlay_a = OverlayConfig(
         name="overlay_a",
@@ -366,7 +390,9 @@ def test_overlay_conflict_equal_priority_uses_deterministic_fallback(builder_wit
     assert any("equal priority" in w for w in result["warnings"])
 
 
-def test_explicit_suppression_wins_over_priority(builder_with_mock: PromptBuilder) -> None:
+def test_explicit_suppression_wins_over_priority(
+    builder_with_mock: PromptBuilder,
+) -> None:
     """Явное suppresses (domain или overlay) побеждает сравнение priority."""
     overlay_high = OverlayConfig(
         name="high_priority",
@@ -393,10 +419,15 @@ def test_explicit_suppression_wins_over_priority(builder_with_mock: PromptBuilde
     )
     assert "high_priority" in result["effective_overlays"]
     assert "low_priority" not in result["effective_overlays"]
-    assert any("low_priority" in layer and "suppressed" in layer for layer in result["suppressed_layers"])
+    assert any(
+        "low_priority" in layer and "suppressed" in layer
+        for layer in result["suppressed_layers"]
+    )
 
 
-def test_equal_priority_conflict_uses_deterministic_fallback_with_mock_overlays(builder_with_mock: PromptBuilder) -> None:
+def test_equal_priority_conflict_uses_deterministic_fallback_with_mock_overlays(
+    builder_with_mock: PromptBuilder,
+) -> None:
     """Искусственные оверлеи с равными приоритетами (70) — детерминированный fallback."""
     overlay_a = OverlayConfig(
         name="overlay_a",
@@ -431,6 +462,7 @@ def test_equal_priority_conflict_uses_deterministic_fallback_with_mock_overlays(
 # ============================================================================
 # Тест с реальными оверлеями (с принудительной перезагрузкой)
 # ============================================================================
+
 
 def test_real_genre_overlays_conflict_with_suppress() -> None:
     """Реальные жанровые оверлеи с равным priority (70) и явным suppress должны разрешаться без ошибки."""
@@ -471,13 +503,16 @@ def test_real_genre_overlays_conflict_with_suppress() -> None:
 # НОВЫЕ ТЕСТЫ: префиксованный формат incompatible_* (Итерация 5)
 # ============================================================================
 
+
 def test_domain_incompatible_overlay_with_prefix() -> None:
     """
     Проверяет, что домен с incompatible_overlays: ["overlay:infostyle"]
     корректно подавляет оверлей infostyle.
     """
     builder = PromptBuilder(config_path=Path("config"), kb_path=Path("knowledge_base"))
-    domain_config = builder.get_domain_config("deai")  # deai.json содержит "overlay:infostyle"
+    domain_config = builder.get_domain_config(
+        "deai"
+    )  # deai.json содержит "overlay:infostyle"
     overlay_configs = [builder.get_overlay_config("infostyle")]
 
     result = resolve_prompt_features(
@@ -503,7 +538,9 @@ def test_domain_incompatible_intent_with_prefix() -> None:
     корректно подавляет интент analytical.
     """
     builder = PromptBuilder(config_path=Path("config"), kb_path=Path("knowledge_base"))
-    domain_config = builder.get_domain_config("fiction")  # fiction.json содержит "intent:analytical"
+    domain_config = builder.get_domain_config(
+        "fiction"
+    )  # fiction.json содержит "intent:analytical"
     overlay_configs = [builder.get_overlay_config("base")]
 
     result = resolve_prompt_features(
@@ -529,7 +566,9 @@ def test_domain_incompatible_overlay_without_prefix_still_works() -> None:
     Используем домен nora_gal, где incompatible_overlays: ["infostyle"] (без префикса).
     """
     builder = PromptBuilder(config_path=Path("config"), kb_path=Path("knowledge_base"))
-    domain_config = builder.get_domain_config("nora_gal")  # в nora_gal.json без префикса
+    domain_config = builder.get_domain_config(
+        "nora_gal"
+    )  # в nora_gal.json без префикса
     overlay_configs = [builder.get_overlay_config("infostyle")]
 
     result = resolve_prompt_features(

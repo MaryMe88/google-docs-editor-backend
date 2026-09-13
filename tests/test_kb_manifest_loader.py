@@ -2,13 +2,10 @@ import json
 import tempfile
 from pathlib import Path
 
-import pytest
-
 from src.kb_manifest_loader import (
+    ManifestEntry,
     load_manifest,
     select_files_for_request,
-    ManifestEntry,
-    DEFAULT_MANIFEST_PATH,
 )
 
 
@@ -52,7 +49,7 @@ def test_load_manifest_valid():
 
     entries = load_manifest(path)
     assert len(entries) == 2
-    assert entries[0].file == "b.json"   # priority 1 first
+    assert entries[0].file == "b.json"  # priority 1 first
     assert entries[1].file == "a.json"
     Path.unlink(path)
 
@@ -99,8 +96,12 @@ def test_select_files_for_request():
         ManifestEntry("a.json", "s1", "always", [], [], "medium", "active", 1),
         ManifestEntry("b.json", "s1", "by_tags", ["tag1"], [], "medium", "active", 2),
         ManifestEntry("c.json", "s1", "by_tags", ["tag2"], [], "medium", "active", 3),
-        ManifestEntry("d.json", "s1", "by_intent", [], ["intent1"], "medium", "active", 4),
-        ManifestEntry("e.json", "s1", "by_intent", [], ["intent2"], "medium", "active", 5),
+        ManifestEntry(
+            "d.json", "s1", "by_intent", [], ["intent1"], "medium", "active", 4
+        ),
+        ManifestEntry(
+            "e.json", "s1", "by_intent", [], ["intent2"], "medium", "active", 5
+        ),
     ]
 
     # active_tags = {"tag1"}, intent = "intent1"
@@ -120,10 +121,13 @@ def test_select_files_for_request():
 # NEW: Тесты для пилотного реорганизации (case_study)
 # ============================================================================
 
+
 def test_case_study_entry_in_manifest():
     """Проверяет, что манифест содержит запись для genres/business/case_study.json."""
     manifest = load_manifest()
-    entry = next((e for e in manifest if e.file == "genres/business/case_study.json"), None)
+    entry = next(
+        (e for e in manifest if e.file == "genres/business/case_study.json"), None
+    )
     assert entry is not None, "Запись для case_study.json не найдена в манифесте"
     assert entry.load_mode == "by_tags"
     assert "casestudy" in entry.tags

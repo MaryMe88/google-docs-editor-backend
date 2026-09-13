@@ -6,28 +6,30 @@ tests/test_llm_client.py
 Запуск:
     pytest tests/test_llm_client.py -v
 """
+
 from __future__ import annotations
 
-import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import pytest
+
+from src.context_budget import LLMContextLimitError
 from src.llm_client import (
+    _CHARS_PER_TOKEN,
+    _MAX_MAX_TOKENS,
+    _MIN_MAX_TOKENS,
+    LLMAPIError,
     LLMError,
     LLMFallbackError,
-    LLMAPIError,
-    LLMTimeoutError,
-    LLMResponse,
-    call_with_fallback,
-    estimate_max_tokens,
-    _MIN_MAX_TOKENS,
-    _MAX_MAX_TOKENS,
-    _CHARS_PER_TOKEN,
     LLMProvider,
+    LLMResponse,
+    LLMTimeoutError,
+    _build_fallback_error,
     _resolve_provider_max_tokens,
     _try_provider,
-    _build_fallback_error,
+    call_with_fallback,
+    estimate_max_tokens,
 )
-from src.context_budget import LLMContextLimitError
 
 
 # ---------------------------------------------------------------------------
@@ -105,6 +107,7 @@ async def test_call_with_fallback_mixed_unknown_and_known() -> None:
 # Исправленные тесты для fallback с сохранением первичной ошибки
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.asyncio
 async def test_fallback_primary_error_preserved_when_skipping_unconfigured() -> None:
     """
@@ -124,14 +127,13 @@ async def test_fallback_primary_error_preserved_when_skipping_unconfigured() -> 
     with patch(
         "src.llm_client.create_llm_client",
         side_effect=fake_create_llm_client,
-    ):
-        with pytest.raises(LLMFallbackError) as exc_info:
-            await call_with_fallback(
-                prompt="test",
-                providers=["openrouter", "anthropic", "openai", "perplexity"],
-                model="some-model",
-                max_retries_per_provider=1,
-            )
+    ), pytest.raises(LLMFallbackError) as exc_info:
+        await call_with_fallback(
+            prompt="test",
+            providers=["openrouter", "anthropic", "openai", "perplexity"],
+            model="some-model",
+            max_retries_per_provider=1,
+        )
 
     error = exc_info.value
     assert error.provider == "openrouter"
@@ -148,19 +150,19 @@ async def test_fallback_all_providers_unconfigured_raises_configuration() -> Non
     """
     Все провайдеры ненастроены → primary_error None → kind = "configuration".
     """
+
     def fake_create_llm_client(provider: LLMProvider, **kwargs):
         raise ValueError("Missing API key")
 
     with patch(
         "src.llm_client.create_llm_client",
         side_effect=fake_create_llm_client,
-    ):
-        with pytest.raises(LLMFallbackError) as exc_info:
-            await call_with_fallback(
-                prompt="test",
-                providers=["openrouter", "anthropic", "openai"],
-                max_retries_per_provider=1,
-            )
+    ), pytest.raises(LLMFallbackError) as exc_info:
+        await call_with_fallback(
+            prompt="test",
+            providers=["openrouter", "anthropic", "openai"],
+            max_retries_per_provider=1,
+        )
 
     error = exc_info.value
     assert error.provider is None
@@ -184,13 +186,12 @@ async def test_fallback_http_429_classified_as_rate_limit() -> None:
     with patch(
         "src.llm_client.create_llm_client",
         side_effect=fake_create_llm_client,
-    ):
-        with pytest.raises(LLMFallbackError) as exc_info:
-            await call_with_fallback(
-                prompt="test",
-                providers=["openrouter", "anthropic"],
-                max_retries_per_provider=1,
-            )
+    ), pytest.raises(LLMFallbackError) as exc_info:
+        await call_with_fallback(
+            prompt="test",
+            providers=["openrouter", "anthropic"],
+            max_retries_per_provider=1,
+        )
 
     assert exc_info.value.kind == "rate_limit"
     assert rate_limit_client.generate.await_count == 1
@@ -210,13 +211,12 @@ async def test_fallback_timeout_classified_as_timeout() -> None:
     with patch(
         "src.llm_client.create_llm_client",
         side_effect=fake_create_llm_client,
-    ):
-        with pytest.raises(LLMFallbackError) as exc_info:
-            await call_with_fallback(
-                prompt="test",
-                providers=["openrouter", "anthropic"],
-                max_retries_per_provider=1,
-            )
+    ), pytest.raises(LLMFallbackError) as exc_info:
+        await call_with_fallback(
+            prompt="test",
+            providers=["openrouter", "anthropic"],
+            max_retries_per_provider=1,
+        )
 
     assert exc_info.value.kind == "timeout"
     assert timeout_client.generate.await_count == 1
@@ -236,13 +236,12 @@ async def test_fallback_http_413_classified_as_context_limit() -> None:
     with patch(
         "src.llm_client.create_llm_client",
         side_effect=fake_create_llm_client,
-    ):
-        with pytest.raises(LLMFallbackError) as exc_info:
-            await call_with_fallback(
-                prompt="test",
-                providers=["openrouter", "anthropic"],
-                max_retries_per_provider=1,
-            )
+    ), pytest.raises(LLMFallbackError) as exc_info:
+        await call_with_fallback(
+            prompt="test",
+            providers=["openrouter", "anthropic"],
+            max_retries_per_provider=1,
+        )
 
     assert exc_info.value.kind == "context_limit"
     assert context_client.generate.await_count == 1
@@ -262,13 +261,12 @@ async def test_fallback_http_400_without_context_words_not_context_limit() -> No
     with patch(
         "src.llm_client.create_llm_client",
         side_effect=fake_create_llm_client,
-    ):
-        with pytest.raises(LLMFallbackError) as exc_info:
-            await call_with_fallback(
-                prompt="test",
-                providers=["openrouter", "anthropic"],
-                max_retries_per_provider=1,
-            )
+    ), pytest.raises(LLMFallbackError) as exc_info:
+        await call_with_fallback(
+            prompt="test",
+            providers=["openrouter", "anthropic"],
+            max_retries_per_provider=1,
+        )
 
     assert exc_info.value.kind == "upstream_error"
     assert bad_request_client.generate.await_count == 1
@@ -295,14 +293,13 @@ async def test_fallback_model_passed_only_to_first_provider() -> None:
     with patch(
         "src.llm_client.create_llm_client",
         side_effect=fake_create_llm_client,
-    ):
-        with pytest.raises(LLMFallbackError):
-            await call_with_fallback(
-                prompt="test",
-                providers=["openrouter", "anthropic"],
-                model="gpt-4",
-                max_retries_per_provider=0,
-            )
+    ), pytest.raises(LLMFallbackError):
+        await call_with_fallback(
+            prompt="test",
+            providers=["openrouter", "anthropic"],
+            model="gpt-4",
+            max_retries_per_provider=0,
+        )
 
     # Первый вызов должен получить model="gpt-4"
     assert calls[0]["model"] == "gpt-4"
@@ -313,6 +310,7 @@ async def test_fallback_model_passed_only_to_first_provider() -> None:
 # ---------------------------------------------------------------------------
 # НОВЫЕ ТЕСТЫ ДЛЯ ХЕЛПЕРОВ call_with_fallback
 # ---------------------------------------------------------------------------
+
 
 def test_resolve_provider_max_tokens_explicit():
     """Явно переданный max_tokens возвращается без вычислений."""
@@ -328,10 +326,16 @@ def test_resolve_provider_max_tokens_explicit():
 
 def test_resolve_provider_max_tokens_with_source():
     """При наличии source_text вычисляется бюджет."""
-    with patch("src.llm_client.get_context_profile_from_env") as mock_profile, \
-         patch("src.llm_client.resolve_context_budget") as mock_budget:
-        mock_profile.return_value = MagicMock(context_window=8192, safety_margin=512, mode="observe")
-        mock_budget.return_value = MagicMock(effective_output_tokens=768, was_capped=False, mode="observe")
+    with (
+        patch("src.llm_client.get_context_profile_from_env") as mock_profile,
+        patch("src.llm_client.resolve_context_budget") as mock_budget,
+    ):
+        mock_profile.return_value = MagicMock(
+            context_window=8192, safety_margin=512, mode="observe"
+        )
+        mock_budget.return_value = MagicMock(
+            effective_output_tokens=768, was_capped=False, mode="observe"
+        )
 
         result = _resolve_provider_max_tokens(
             provider_name="openrouter",
@@ -345,9 +349,13 @@ def test_resolve_provider_max_tokens_with_source():
 
 def test_resolve_provider_max_tokens_zero_budget_skips():
     """Если effective_output_tokens <= 0, возвращается None."""
-    with patch("src.llm_client.get_context_profile_from_env") as mock_profile, \
-         patch("src.llm_client.resolve_context_budget") as mock_budget:
-        mock_profile.return_value = MagicMock(context_window=8192, safety_margin=512, mode="enforce")
+    with (
+        patch("src.llm_client.get_context_profile_from_env") as mock_profile,
+        patch("src.llm_client.resolve_context_budget") as mock_budget,
+    ):
+        mock_profile.return_value = MagicMock(
+            context_window=8192, safety_margin=512, mode="enforce"
+        )
         mock_budget.return_value = MagicMock(effective_output_tokens=0)
 
         result = _resolve_provider_max_tokens(
@@ -362,9 +370,13 @@ def test_resolve_provider_max_tokens_zero_budget_skips():
 
 def test_resolve_provider_max_tokens_context_limit_skips():
     """LLMContextLimitError приводит к пропуску провайдера (None)."""
-    with patch("src.llm_client.get_context_profile_from_env") as mock_profile, \
-         patch("src.llm_client.resolve_context_budget") as mock_budget:
-        mock_profile.return_value = MagicMock(context_window=8192, safety_margin=512, mode="enforce")
+    with (
+        patch("src.llm_client.get_context_profile_from_env") as mock_profile,
+        patch("src.llm_client.resolve_context_budget") as mock_budget,
+    ):
+        mock_profile.return_value = MagicMock(
+            context_window=8192, safety_margin=512, mode="enforce"
+        )
         # Правильное создание исключения со всеми обязательными аргументами
         error = LLMContextLimitError(
             provider="openrouter",
@@ -374,7 +386,7 @@ def test_resolve_provider_max_tokens_context_limit_skips():
             available_output_tokens=0,
             context_window=8192,
             reason="insufficient_output_budget",
-            mode="enforce"
+            mode="enforce",
         )
         mock_budget.side_effect = error
 
@@ -425,16 +437,17 @@ async def test_try_provider_success():
 @pytest.mark.asyncio
 async def test_try_provider_value_error():
     """ValueError (нет ключа) пробрасывается дальше."""
-    with patch("src.llm_client.create_llm_client", side_effect=ValueError("Missing key")):
-        with pytest.raises(ValueError):
-            await _try_provider(
-                provider_enum=LLMProvider.OPENROUTER,
-                model=None,
-                prompt="test",
-                temperature=0.3,
-                max_retries=1,
-                max_tokens=100,
-            )
+    with patch(
+        "src.llm_client.create_llm_client", side_effect=ValueError("Missing key")
+    ), pytest.raises(ValueError):
+        await _try_provider(
+            provider_enum=LLMProvider.OPENROUTER,
+            model=None,
+            prompt="test",
+            temperature=0.3,
+            max_retries=1,
+            max_tokens=100,
+        )
 
 
 @pytest.mark.asyncio

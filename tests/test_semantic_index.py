@@ -11,23 +11,19 @@
 
 from __future__ import annotations
 
-import asyncio
-import json
-import os
 from pathlib import Path
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import MagicMock, patch
 
 import numpy as np
 import pytest
-from fastapi import FastAPI
 
 from src.prompt_builder import PromptBuilder
-from src.semantic_index import SemanticIndex, init_semantic_index, get_semantic_index
-
+from src.semantic_index import SemanticIndex
 
 # ============================================================================
 # Фикстуры
 # ============================================================================
+
 
 @pytest.fixture
 def mock_semantic_index() -> MagicMock:
@@ -42,6 +38,7 @@ def mock_semantic_index() -> MagicMock:
 # ============================================================================
 # Тесты для PromptBuilder.load_full_kb()
 # ============================================================================
+
 
 def test_load_full_kb_loads_kb(builder: PromptBuilder) -> None:
     """Проверяет, что load_full_kb загружает KB и сохраняет в _loaded_kb."""
@@ -67,6 +64,7 @@ def test_reload_configs_clears_loaded_kb(builder: PromptBuilder) -> None:
 # ============================================================================
 # Тесты для _collect_semantic_entries (перенесены из test_main, чтобы не дублировать)
 # ============================================================================
+
 
 def test_collect_semantic_entries_uses_loaded_kb() -> None:
     """Проверяет, что _collect_semantic_entries использует _loaded_kb, а не устаревший 'kb'."""
@@ -102,17 +100,24 @@ def test_collect_semantic_entries_returns_empty_if_no_loaded_kb() -> None:
     with patch("src.main.logger.warning") as mock_warning:
         entries = _collect_semantic_entries(app)
         assert entries == []
-        mock_warning.assert_called_once_with("SemanticIndex: KB не загружена в PromptBuilder")
+        mock_warning.assert_called_once_with(
+            "SemanticIndex: KB не загружена в PromptBuilder"
+        )
 
 
 # ============================================================================
 # Тесты для самого SemanticIndex (лёгкие, без реальной модели)
 # ============================================================================
 
-def test_semantic_index_build_caches_embeddings(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+
+def test_semantic_index_build_caches_embeddings(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """Проверяет, что SemanticIndex строит и кеширует эмбеддинги (без реальной модели)."""
     monkeypatch.setattr("src.semantic_index._CACHE_PATH", tmp_path / "embeddings.npy")
-    monkeypatch.setattr("src.semantic_index._CACHE_META_PATH", tmp_path / "embeddings_meta.json")
+    monkeypatch.setattr(
+        "src.semantic_index._CACHE_META_PATH", tmp_path / "embeddings_meta.json"
+    )
 
     with patch("src.semantic_index.SemanticIndex._get_model") as mock_get_model:
         mock_model = MagicMock()
@@ -120,7 +125,10 @@ def test_semantic_index_build_caches_embeddings(tmp_path: Path, monkeypatch: pyt
         mock_get_model.return_value = mock_model
 
         index = SemanticIndex()
-        entries = [{"name": "test1", "description": "desc1"}, {"name": "test2", "description": "desc2"}]
+        entries = [
+            {"name": "test1", "description": "desc1"},
+            {"name": "test2", "description": "desc2"},
+        ]
         index.build(entries)
 
         mock_model.encode.assert_called_once()
@@ -144,9 +152,7 @@ def test_semantic_index_search_returns_results(
         tmp_path / "embeddings_meta.json",
     )
 
-    with patch(
-        "src.semantic_index.SemanticIndex._get_model"
-    ) as mock_get_model:
+    with patch("src.semantic_index.SemanticIndex._get_model") as mock_get_model:
         mock_model = MagicMock()
 
         record_embeddings = np.asarray(
@@ -200,12 +206,15 @@ def test_semantic_index_is_ready() -> None:
 # Тесты для глобального индекса (get_semantic_index, init_semantic_index)
 # ============================================================================
 
+
 def test_get_semantic_index_returns_none_if_not_initialized() -> None:
     """Проверяет, что get_semantic_index возвращает None, если индекс не инициализирован."""
     from src.semantic_index import _global_index, get_semantic_index
+
     old_global = _global_index
     try:
         import src.semantic_index as si
+
         si._global_index = None
         assert get_semantic_index() is None
     finally:
@@ -214,7 +223,7 @@ def test_get_semantic_index_returns_none_if_not_initialized() -> None:
 
 def test_init_semantic_index_sets_global_index() -> None:
     """Проверяет, что init_semantic_index создаёт и сохраняет глобальный индекс."""
-    from src.semantic_index import init_semantic_index, get_semantic_index
+    from src.semantic_index import get_semantic_index, init_semantic_index
 
     with patch("src.semantic_index.SemanticIndex.build") as mock_build:
         with patch("src.semantic_index.SemanticIndex._get_model") as mock_get_model:
@@ -231,15 +240,17 @@ def test_init_semantic_index_sets_global_index() -> None:
 # Тесты для set_semantic_entries (новая функция)
 # ============================================================================
 
+
 def test_set_semantic_entries_stores_entries() -> None:
     """Проверяет, что set_semantic_entries сохраняет записи в глобальную переменную."""
-    from src.semantic_index import set_semantic_entries, _entries_for_index
+    from src.semantic_index import _entries_for_index, set_semantic_entries
 
     # Сохраняем старое значение, чтобы восстановить после теста
     old = _entries_for_index
     try:
         # Устанавливаем явно None, чтобы избежать влияния других тестов
         import src.semantic_index as si
+
         si._entries_for_index = None
 
         test_entries = [{"id": "test"}]

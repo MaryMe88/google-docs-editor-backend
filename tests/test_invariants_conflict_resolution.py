@@ -6,9 +6,9 @@ from pathlib import Path
 
 import pytest
 
-from src.prompt_builder import PromptBuilder, resolve_prompt_features
-from src.reason_codes import ACTIVATION_REASONS, SUPPRESSION_REASONS, ReasonCode
 from src.config_types import IntentConfig, OverlayConfig
+from src.prompt_builder import PromptBuilder, resolve_prompt_features
+from src.reason_codes import ACTIVATION_REASONS, SUPPRESSION_REASONS
 
 
 @pytest.fixture
@@ -19,9 +19,13 @@ def builder() -> PromptBuilder:
 @pytest.fixture
 def builder_with_mock(monkeypatch: pytest.MonkeyPatch) -> PromptBuilder:
     """Builder с подменой normalize_overlays для искусственных оверлеев."""
+
     def mock_normalize_overlays(overlays, **kwargs):
         return list(overlays)
-    monkeypatch.setattr("src.prompt_builder.normalize_overlays", mock_normalize_overlays)
+
+    monkeypatch.setattr(
+        "src.prompt_builder.normalize_overlays", mock_normalize_overlays
+    )
     return PromptBuilder(config_path=Path("config"), kb_path=Path("knowledge_base"))
 
 
@@ -68,7 +72,9 @@ def test_every_activated_feature_has_activation_reason(builder: PromptBuilder) -
     assert any(r in ACTIVATION_REASONS for r in reasons)
 
 
-def test_effective_overlays_do_not_contain_suppressed_overlays(builder: PromptBuilder) -> None:
+def test_effective_overlays_do_not_contain_suppressed_overlays(
+    builder: PromptBuilder,
+) -> None:
     """effective_overlays не должны содержать подавленные оверлеи."""
     domain_config = builder.get_domain_config("deai")
     overlay_configs = [builder.get_overlay_config("infostyle")]
@@ -100,7 +106,9 @@ def test_final_tags_do_not_contain_suppressed_layers(builder: PromptBuilder) -> 
     assert "deai" in result["tags"]
 
 
-def test_resolution_independent_of_overlay_order(builder_with_mock: PromptBuilder) -> None:
+def test_resolution_independent_of_overlay_order(
+    builder_with_mock: PromptBuilder,
+) -> None:
     """Порядок оверлеев во входном списке не влияет на результат."""
     overlay_high = OverlayConfig(
         name="high",

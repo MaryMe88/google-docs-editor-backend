@@ -11,19 +11,20 @@ tests/test_knowledge_retrieval.py
 Запуск:
     pytest tests/test_knowledge_retrieval.py -v
 """
+
 from __future__ import annotations
 
 from types import SimpleNamespace
-from typing import Any, Dict, List
+from typing import Any
 from unittest.mock import MagicMock
 
 import pytest
 
 from src.knowledge_retrieval import (
-    FallbackPolicy,
-    FallbackStage,
     RULE_FALLBACK_POLICY,
     STRUCTURAL_FALLBACK_POLICY,
+    FallbackPolicy,
+    FallbackStage,
     SelectionParams,
     _collect_with_budget,
     _select_ranked_entries,
@@ -40,10 +41,10 @@ def make_rule_entry(
     correct: str = "",
     rule: str = "",
     description: str = "",
-    tags: List[str] | None = None,
+    tags: list[str] | None = None,
     entry_id: str | None = None,
-) -> Dict[str, Any]:
-    entry: Dict[str, Any] = {
+) -> dict[str, Any]:
+    entry: dict[str, Any] = {
         "wrong": wrong,
         "correct": correct,
         "rule": rule,
@@ -58,11 +59,11 @@ def make_rule_entry(
 def make_structural_entry(
     name: str = "",
     description: str = "",
-    when_to_use: List[str] | None = None,
-    tags: List[str] | None = None,
+    when_to_use: list[str] | None = None,
+    tags: list[str] | None = None,
     entry_id: str | None = None,
-) -> Dict[str, Any]:
-    entry: Dict[str, Any] = {
+) -> dict[str, Any]:
+    entry: dict[str, Any] = {
         "name": name,
         "description": description,
         "when_to_use": when_to_use or [],
@@ -514,6 +515,7 @@ class TestReturnTypesAndEdgeCases:
 # NEW: Тесты для пилотного реорганизации (case_study)
 # ============================================================================
 
+
 def test_retrieval_with_case_study_overlay():
     """Проверяет, что при теге casestudy извлекаются записи из нового файла."""
     from src.prompt_builder import load_knowledge_base
@@ -534,22 +536,25 @@ def test_retrieval_without_case_study_does_not_load():
     from src.prompt_builder import load_knowledge_base
 
     kb = load_knowledge_base(KB_PATH, active_tags={"marketing"}, load_all=False)
-    assert not kb.get("case_study_templates"), \
+    assert not kb.get("case_study_templates"), (
         "Блок case_study_templates не должен загружаться без тега casestudy"
+    )
     # Жанровые записи кейса не должны протекать и в чужие блоки
     for foreign_block in ("storytelling_frameworks", "marketing_templates"):
         block = kb.get(foreign_block)
         if not block:
             continue
         ids = [rec.get("id") for rec in block if isinstance(rec, dict)]
-        assert "case_study_composition" not in ids, \
+        assert "case_study_composition" not in ids, (
             f"Запись case_study_composition не должна попадать в {foreign_block}"
+        )
     # Если блок отсутствует или пуст, тест также проходит
 
 
 # ============================================================================
 # NEW: Тесты для опционального семантического re-ranking (deep_semantic_search)
 # ============================================================================
+
 
 class TestSemanticRerankOption:
     """Проверяем, что параметр semantic_rerank управляет весом в _semantic_rerank."""
@@ -580,7 +585,9 @@ class TestSemanticRerankOption:
 
         mock_rerank.assert_called_once()
         args, kwargs = mock_rerank.call_args
-        assert kwargs.get('semantic_weight') == 0.0, "semantic_weight должен быть 0.0 при semantic_rerank=False"
+        assert kwargs.get("semantic_weight") == 0.0, (
+            "semantic_weight должен быть 0.0 при semantic_rerank=False"
+        )
 
     def test_semantic_rerank_true_passes_weight_default(self, monkeypatch):
         """При semantic_rerank=True вес должен быть 0.35."""
@@ -608,7 +615,9 @@ class TestSemanticRerankOption:
 
         mock_rerank.assert_called_once()
         args, kwargs = mock_rerank.call_args
-        assert kwargs.get('semantic_weight') == 0.35, "semantic_weight должен быть 0.35 при semantic_rerank=True"
+        assert kwargs.get("semantic_weight") == 0.35, (
+            "semantic_weight должен быть 0.35 при semantic_rerank=True"
+        )
 
     def test_semantic_rerank_false_with_return_meta(self, monkeypatch):
         """То же самое, но с return_meta=True."""
@@ -637,7 +646,7 @@ class TestSemanticRerankOption:
 
         mock_rerank.assert_called_once()
         args, kwargs = mock_rerank.call_args
-        assert kwargs.get('semantic_weight') == 0.0
+        assert kwargs.get("semantic_weight") == 0.0
 
     def test_semantic_rerank_true_with_return_meta(self, monkeypatch):
         kb = SimpleNamespace(
@@ -665,7 +674,7 @@ class TestSemanticRerankOption:
 
         mock_rerank.assert_called_once()
         args, kwargs = mock_rerank.call_args
-        assert kwargs.get('semantic_weight') == 0.35
+        assert kwargs.get("semantic_weight") == 0.35
 
     def test_semantic_rerank_works_with_style_issues(self, monkeypatch):
         """Проверяем, что параметр работает и для select_style_issues."""
@@ -695,7 +704,7 @@ class TestSemanticRerankOption:
 
         mock_rerank.assert_called_once()
         args, kwargs = mock_rerank.call_args
-        assert kwargs.get('semantic_weight') == 0.0
+        assert kwargs.get("semantic_weight") == 0.0
 
     def test_semantic_rerank_works_with_logic_issues(self, monkeypatch):
         """Проверяем, что параметр работает и для select_logic_issues."""
@@ -725,7 +734,7 @@ class TestSemanticRerankOption:
 
         mock_rerank.assert_called_once()
         args, kwargs = mock_rerank.call_args
-        assert kwargs.get('semantic_weight') == 0.35
+        assert kwargs.get("semantic_weight") == 0.35
 
     def test_semantic_rerank_not_passed_to_structural(self):
         """Структурные вызовы не принимают semantic_rerank, поэтому проверяем, что ошибки нет."""

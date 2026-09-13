@@ -1,14 +1,13 @@
 from __future__ import annotations
 
 from types import SimpleNamespace
-from typing import Any, Dict, List, Set
+from typing import Any
 
 import pytest
 
 from src.knowledge_retrieval import (
-    FallbackPolicy,
     RULE_FALLBACK_POLICY,
-    STRUCTURAL_FALLBACK_POLICY,
+    FallbackPolicy,
     SelectionParams,
     _select_ranked_entries,
     normalize_text_for_match,
@@ -24,9 +23,9 @@ def make_rule_entry(
     wrong: str = "",
     rule: str = "",
     description: str = "",
-    tags: List[str] | None = None,
+    tags: list[str] | None = None,
     name: str = "",
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     return {
         "wrong": wrong,
         "rule": rule,
@@ -40,12 +39,12 @@ def make_structural_entry(
     *,
     name: str,
     description: str = "",
-    when_to_use: List[str] | None = None,
+    when_to_use: list[str] | None = None,
     rule: str = "",
-    tags: List[str] | None = None,
-    steps: List[Dict[str, Any]] | None = None,
-    sections: List[Dict[str, Any]] | None = None,
-) -> Dict[str, Any]:
+    tags: list[str] | None = None,
+    steps: list[dict[str, Any]] | None = None,
+    sections: list[dict[str, Any]] | None = None,
+) -> dict[str, Any]:
     return {
         "name": name,
         "description": description,
@@ -132,7 +131,9 @@ def test_text_only_fallback_beats_tag_only() -> None:
     )
     result = _select_ranked_entries(
         entries=entries,
-        normalized_text=normalize_text_for_match("Нам нужны краткие фразы и проще подача."),
+        normalized_text=normalize_text_for_match(
+            "Нам нужны краткие фразы и проще подача."
+        ),
         wanted_tags=["style"],
         limit=1,
         params=params,

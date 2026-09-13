@@ -3,34 +3,31 @@
 Тесты для third-итерации: explainability и диагностика.
 Обновлены для четвёртой итерации: используют registry и новые проверки startup_checks.
 """
+
 from __future__ import annotations
 
-import pytest
 from pathlib import Path
-from unittest.mock import patch, MagicMock
 
+import pytest
+
+from src.config_types import (
+    AssemblyTrace,
+    BlockBudget,
+    KnowledgeBudget,
+    LimitsConfig,
+)
 from src.prompt_builder import (
+    KnowledgeBlockRequest,
     PromptBuilder,
-    resolve_prompt_features,
     load_domain_config,
     load_intent_config,
-    KnowledgeBlockRequest,  # добавлен импорт
+    resolve_prompt_features,
 )
-from src.config_types import (
-    FeatureResolutionResult,
-    AssemblyTrace,
-    AssemblyBlockDiagnostics,
-    KnowledgeLevel,
-    KnowledgeBudget,
-    BlockBudget,
-    LimitsConfig,
-    DomainConfig,
-)
-from src.reason_codes import ReasonCode, ACTIVATION_REASONS, SUPPRESSION_REASONS
+from src.reason_codes import ReasonCode
 from src.registry import check_alias_consistency
 from src.startup_checks import (
-    _check_feature_resolution_invariants,
     _check_assembly_diagnostics_invariants,
+    _check_feature_resolution_invariants,
     _check_registry_consistency,
 )
 
@@ -64,14 +61,27 @@ class TestFeatureResolutionExplainability:
         )
 
         expected_keys = {
-            "tags", "effective_intent", "effective_overlays", "suppressed_layers", "warnings",
-            "storytelling_enabled", "marketing_enabled", "antiai_enabled", "rhetoric_enabled",
-            "nkrj_enabled", "editorial_enabled",
-            "activated_features", "suppressed_features",
-            "activation_reasons", "suppression_reasons",
-            "recognized_aliases", "ignored_unknown_values",
+            "tags",
+            "effective_intent",
+            "effective_overlays",
+            "suppressed_layers",
+            "warnings",
+            "storytelling_enabled",
+            "marketing_enabled",
+            "antiai_enabled",
+            "rhetoric_enabled",
+            "nkrj_enabled",
+            "editorial_enabled",
+            "activated_features",
+            "suppressed_features",
+            "activation_reasons",
+            "suppression_reasons",
+            "recognized_aliases",
+            "ignored_unknown_values",
         }
-        assert expected_keys.issubset(result.keys()), f"Missing keys: {expected_keys - result.keys()}"
+        assert expected_keys.issubset(result.keys()), (
+            f"Missing keys: {expected_keys - result.keys()}"
+        )
 
     def test_resolve_prompt_features_storytelling_activation_reasons(self, builder):
         domain = "blog"
@@ -184,6 +194,7 @@ class TestFeatureResolutionExplainability:
 
     def test_resolve_prompt_features_suppression_by_incompatible_intent(self):
         from src.config_types import DomainConfig
+
         mock_domain = DomainConfig(
             name="blog",
             system_rules="",
@@ -209,28 +220,45 @@ class TestFeatureResolutionExplainability:
 
         assert result["effective_intent"] is None
         assert "intent" in result["suppression_reasons"]
-        assert ReasonCode.SUPPRESSED_BY_DOMAIN_INCOMPATIBLE_INTENT in result["suppression_reasons"]["intent"]
+        assert (
+            ReasonCode.SUPPRESSED_BY_DOMAIN_INCOMPATIBLE_INTENT
+            in result["suppression_reasons"]["intent"]
+        )
 
 
 class TestAssemblyDiagnostics:
     """Тесты для диагностики сборки knowledge blocks."""
 
     def test_build_knowledge_block_with_diagnostics_returns_trace(self, builder):
-        budget = KnowledgeBudget({
-            "grammar": BlockBudget(entry_limit=5, char_budget=None, enabled=True),
-            "style": BlockBudget(entry_limit=5, char_budget=None, enabled=True),
-            "logic": BlockBudget(entry_limit=5, char_budget=None, enabled=False),
-            "composition": BlockBudget(entry_limit=5, char_budget=None, enabled=False),
-            "composition_errors": BlockBudget(entry_limit=5, char_budget=None, enabled=False),
-            "cohesion": BlockBudget(entry_limit=5, char_budget=None, enabled=False),
-            "storytelling": BlockBudget(entry_limit=5, char_budget=None, enabled=False),
-            "marketing": BlockBudget(entry_limit=5, char_budget=None, enabled=False),
-            "rhetoric": BlockBudget(entry_limit=5, char_budget=None, enabled=False),
-            "editorial": BlockBudget(entry_limit=5, char_budget=None, enabled=False),
-            "glossary": BlockBudget(entry_limit=5, char_budget=None, enabled=False),
-            "stop_words": BlockBudget(entry_limit=5, char_budget=None, enabled=False),
-            "nkrj": BlockBudget(entry_limit=5, char_budget=None, enabled=False),
-        })
+        budget = KnowledgeBudget(
+            {
+                "grammar": BlockBudget(entry_limit=5, char_budget=None, enabled=True),
+                "style": BlockBudget(entry_limit=5, char_budget=None, enabled=True),
+                "logic": BlockBudget(entry_limit=5, char_budget=None, enabled=False),
+                "composition": BlockBudget(
+                    entry_limit=5, char_budget=None, enabled=False
+                ),
+                "composition_errors": BlockBudget(
+                    entry_limit=5, char_budget=None, enabled=False
+                ),
+                "cohesion": BlockBudget(entry_limit=5, char_budget=None, enabled=False),
+                "storytelling": BlockBudget(
+                    entry_limit=5, char_budget=None, enabled=False
+                ),
+                "marketing": BlockBudget(
+                    entry_limit=5, char_budget=None, enabled=False
+                ),
+                "rhetoric": BlockBudget(entry_limit=5, char_budget=None, enabled=False),
+                "editorial": BlockBudget(
+                    entry_limit=5, char_budget=None, enabled=False
+                ),
+                "glossary": BlockBudget(entry_limit=5, char_budget=None, enabled=False),
+                "stop_words": BlockBudget(
+                    entry_limit=5, char_budget=None, enabled=False
+                ),
+                "nkrj": BlockBudget(entry_limit=5, char_budget=None, enabled=False),
+            }
+        )
         text = "Тест."
         primary_tags = {"grammar", "style"}
         expanded_tags = set()
@@ -271,21 +299,31 @@ class TestAssemblyDiagnostics:
 
     def test_build_knowledge_block_diagnostics_block_fields(self, builder):
         effective_limits = LimitsConfig()
-        budget = KnowledgeBudget({
-            "grammar": BlockBudget(entry_limit=5, char_budget=None, enabled=True),
-            "style": BlockBudget(entry_limit=5, char_budget=None, enabled=True),
-            "logic": BlockBudget(entry_limit=5, char_budget=None, enabled=True),
-            "composition": BlockBudget(entry_limit=5, char_budget=None, enabled=True),
-            "composition_errors": BlockBudget(entry_limit=5, char_budget=None, enabled=True),
-            "cohesion": BlockBudget(entry_limit=5, char_budget=None, enabled=True),
-            "storytelling": BlockBudget(entry_limit=5, char_budget=None, enabled=True),
-            "marketing": BlockBudget(entry_limit=5, char_budget=None, enabled=True),
-            "rhetoric": BlockBudget(entry_limit=5, char_budget=None, enabled=True),
-            "editorial": BlockBudget(entry_limit=5, char_budget=None, enabled=True),
-            "glossary": BlockBudget(entry_limit=5, char_budget=None, enabled=True),
-            "stop_words": BlockBudget(entry_limit=5, char_budget=None, enabled=True),
-            "nkrj": BlockBudget(entry_limit=5, char_budget=None, enabled=True),
-        })
+        budget = KnowledgeBudget(
+            {
+                "grammar": BlockBudget(entry_limit=5, char_budget=None, enabled=True),
+                "style": BlockBudget(entry_limit=5, char_budget=None, enabled=True),
+                "logic": BlockBudget(entry_limit=5, char_budget=None, enabled=True),
+                "composition": BlockBudget(
+                    entry_limit=5, char_budget=None, enabled=True
+                ),
+                "composition_errors": BlockBudget(
+                    entry_limit=5, char_budget=None, enabled=True
+                ),
+                "cohesion": BlockBudget(entry_limit=5, char_budget=None, enabled=True),
+                "storytelling": BlockBudget(
+                    entry_limit=5, char_budget=None, enabled=True
+                ),
+                "marketing": BlockBudget(entry_limit=5, char_budget=None, enabled=True),
+                "rhetoric": BlockBudget(entry_limit=5, char_budget=None, enabled=True),
+                "editorial": BlockBudget(entry_limit=5, char_budget=None, enabled=True),
+                "glossary": BlockBudget(entry_limit=5, char_budget=None, enabled=True),
+                "stop_words": BlockBudget(
+                    entry_limit=5, char_budget=None, enabled=True
+                ),
+                "nkrj": BlockBudget(entry_limit=5, char_budget=None, enabled=True),
+            }
+        )
         text = "Короткий текст для теста."
         primary_tags = {"grammar", "style", "editing", "clarity"}
         expanded_tags = set()
@@ -319,25 +357,31 @@ class TestAssemblyDiagnostics:
 
         assert len(trace.blocks) > 0
         for diag in trace.blocks:
-            assert hasattr(diag, 'name')
-            assert hasattr(diag, 'eligible')
-            assert hasattr(diag, 'included')
-            assert hasattr(diag, 'reason_codes')
-            assert hasattr(diag, 'empty')
-            assert hasattr(diag, 'char_count')
-            assert hasattr(diag, 'entries_count')
+            assert hasattr(diag, "name")
+            assert hasattr(diag, "eligible")
+            assert hasattr(diag, "included")
+            assert hasattr(diag, "reason_codes")
+            assert hasattr(diag, "empty")
+            assert hasattr(diag, "char_count")
+            assert hasattr(diag, "entries_count")
             assert isinstance(diag.reason_codes, list)
             for code in diag.reason_codes:
                 assert isinstance(code, str)
 
-    def test_build_knowledge_block_feature_gated_blocks_not_included_when_disabled(self, builder):
-        budget = KnowledgeBudget({
-            "storytelling": BlockBudget(entry_limit=5, char_budget=None, enabled=True),
-            "marketing": BlockBudget(entry_limit=5, char_budget=None, enabled=True),
-            "rhetoric": BlockBudget(entry_limit=5, char_budget=None, enabled=True),
-            "editorial": BlockBudget(entry_limit=5, char_budget=None, enabled=True),
-            "nkrj": BlockBudget(entry_limit=5, char_budget=None, enabled=True),
-        })
+    def test_build_knowledge_block_feature_gated_blocks_not_included_when_disabled(
+        self, builder
+    ):
+        budget = KnowledgeBudget(
+            {
+                "storytelling": BlockBudget(
+                    entry_limit=5, char_budget=None, enabled=True
+                ),
+                "marketing": BlockBudget(entry_limit=5, char_budget=None, enabled=True),
+                "rhetoric": BlockBudget(entry_limit=5, char_budget=None, enabled=True),
+                "editorial": BlockBudget(entry_limit=5, char_budget=None, enabled=True),
+                "nkrj": BlockBudget(entry_limit=5, char_budget=None, enabled=True),
+            }
+        )
         text = "Тест."
         primary_tags = {"storytelling", "marketing", "rhetoric", "editorial", "nkrj"}
         expanded_tags = set()
@@ -369,16 +413,24 @@ class TestAssemblyDiagnostics:
 
         _, _, _, trace = builder._build_knowledge_block(req)
 
-        gated_block_names = {"storytelling", "marketing", "rhetoric", "editorial", "nkrj"}
+        gated_block_names = {
+            "storytelling",
+            "marketing",
+            "rhetoric",
+            "editorial",
+            "nkrj",
+        }
         for diag in trace.blocks:
             if diag.name in gated_block_names:
                 assert diag.included is False
                 assert ReasonCode.BLOCK_INELIGIBLE_FEATURE_DISABLED in diag.reason_codes
 
     def test_build_knowledge_block_ineligible_if_budget_disabled(self, builder):
-        budget = KnowledgeBudget({
-            "grammar": BlockBudget(entry_limit=5, char_budget=None, enabled=False),
-        })
+        budget = KnowledgeBudget(
+            {
+                "grammar": BlockBudget(entry_limit=5, char_budget=None, enabled=False),
+            }
+        )
         text = "Тест."
         primary_tags = {"grammar"}
         expanded_tags = set()

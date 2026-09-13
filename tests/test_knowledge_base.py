@@ -7,11 +7,58 @@ test_knowledge_base.py
 from __future__ import annotations
 
 import json
-from pathlib import Path
 
 import pytest
 
+from src.config_types import KnowledgeBase
 from tests.conftest import KB_PATH, load_json
+
+# ============================================================================
+# KnowledgeBase.get() — контракт falsy default (FIX 3.1)
+# ============================================================================
+
+
+class TestKnowledgeBaseGet:
+    """Контракт KnowledgeBase.get(): falsy default возвращается как есть."""
+
+    @pytest.mark.parametrize(
+        "falsy",
+        [None, False, 0, "", {}, (), set()],
+        ids=["None", "False", "0", "empty_str", "empty_dict", "empty_tuple", "empty_set"],
+    )
+    def test_get_returns_explicit_falsy_default(self, falsy):
+        """Явно переданный falsy default не подменяется на []."""
+        kb = KnowledgeBase()
+        result = kb.get("missing", falsy)
+        assert result == falsy
+        assert type(result) is type(falsy)
+
+    def test_get_without_default_returns_empty_list(self):
+        """Обратная совместимость: kb.get('missing') → []."""
+        kb = KnowledgeBase()
+        assert kb.get("missing") == []
+
+    def test_get_existing_key_ignores_default(self):
+        """Существующий блок возвращается, default не используется."""
+        kb = KnowledgeBase(grammar_errors=["x"])
+        assert kb.get("grammar_errors", "fallback") == ["x"]
+
+    def test_get_existing_falsy_block_returns_it(self):
+        """Существующий пустой блок возвращается как есть, не подменяется."""
+        kb = KnowledgeBase(grammar_errors=[])
+        assert kb.get("grammar_errors", "fallback") == []
+
+    def test_get_existing_none_block_returns_none(self):
+        """Существующий None-блок возвращается как None, не подменяется на []."""
+        kb = KnowledgeBase(grammar_errors=None)
+        assert kb.get("grammar_errors", "fallback") is None
+
+    def test_get_non_falsy_default_unchanged(self):
+        """Truthy default возвращается как есть (регрессия)."""
+        kb = KnowledgeBase()
+        assert kb.get("missing", "fallback") == "fallback"
+        assert kb.get("missing", 42) == 42
+        assert kb.get("missing", ["a"]) == ["a"]
 
 
 # ============================================================================
@@ -56,6 +103,7 @@ def test_json_is_valid(filename: str) -> None:
 # stop_words.json
 # ============================================================================
 
+
 def test_stop_words_structure() -> None:
     """stop_words.json поддерживает смешанную структуру: списки и словари списков."""
     data = load_json(KB_PATH / "stop_words.json")
@@ -85,9 +133,9 @@ def test_stop_words_structure() -> None:
         elif isinstance(value, dict):
             assert len(value) > 0, f"Словарь '{category}' не должен быть пустым"
             for nested_category, nested_value in value.items():
-                assert isinstance(
-                    nested_value, list
-                ), f"Подкатегория '{category}.{nested_category}' должна быть списком"
+                assert isinstance(nested_value, list), (
+                    f"Подкатегория '{category}.{nested_category}' должна быть списком"
+                )
                 assert_list_payload(nested_value, f"{category}.{nested_category}")
         else:
             raise AssertionError(

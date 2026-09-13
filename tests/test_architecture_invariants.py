@@ -7,26 +7,26 @@ tests/test_architecture_invariants.py
 
 from __future__ import annotations
 
-import json
 import sys
 from pathlib import Path
 
 import pytest
-
-from src.prompt_builder import PromptBuilder, KnowledgeLevel
-from src.shared_contracts import ALLOWED_DOMAINS, ALLOWED_INTENTS, ALLOWED_OVERLAYS
-from src.config_types import DomainConfig
-from src.reason_codes import ReasonCode
 
 # Новые импорты для тестов-инвариантов
 from src.kb_manifest_loader import load_manifest
 from src.prompt_builder import (
     KB_BLOCK_REGISTRY,
     KnowledgeBudgetManager,
+    KnowledgeLevel,
     LimitsConfig,
+    PromptBuilder,
+)
+from src.prompt_builder import (
     KnowledgeLevel as KBLevel,
 )
 from src.prompt_builder.kb_loading import _load_kb_file
+from src.reason_codes import ReasonCode
+from src.shared_contracts import ALLOWED_DOMAINS, ALLOWED_INTENTS, ALLOWED_OVERLAYS
 
 # Импортируем FILE_RULES из генератора манифеста (scripts/generate_kb_manifest.py)
 try:
@@ -51,7 +51,9 @@ def builder() -> PromptBuilder:
 class TestKnowledgeLevelOverrides:
     """Проверяет, что при FULL уровне блоки storytelling/marketing включаются принудительно."""
 
-    def test_storytelling_included_at_full_without_tag(self, builder: PromptBuilder) -> None:
+    def test_storytelling_included_at_full_without_tag(
+        self, builder: PromptBuilder
+    ) -> None:
         """При FULL и allow_storytelling=True storytelling появляется даже без тега."""
         prompt = builder.build(
             text="Тестовый текст для проверки сторителлинга.",
@@ -64,7 +66,9 @@ class TestKnowledgeLevelOverrides:
             "При FULL уровне и allow_storytelling=True блок storytelling должен быть включён"
         )
 
-    def test_marketing_included_at_full_without_tag(self, builder: PromptBuilder) -> None:
+    def test_marketing_included_at_full_without_tag(
+        self, builder: PromptBuilder
+    ) -> None:
         """При FULL и allow_marketing=True marketing появляется даже без тега."""
         prompt = builder.build(
             text="Тестовый текст для проверки маркетинга.",
@@ -77,7 +81,9 @@ class TestKnowledgeLevelOverrides:
             "При FULL уровне и allow_marketing=True блок marketing должен быть включён"
         )
 
-    def test_storytelling_not_included_at_standard_without_tag(self, builder: PromptBuilder) -> None:
+    def test_storytelling_not_included_at_standard_without_tag(
+        self, builder: PromptBuilder
+    ) -> None:
         """При STANDARD уровне storytelling не включается без тега."""
         prompt = builder.build(
             text="Тестовый текст.",
@@ -90,7 +96,9 @@ class TestKnowledgeLevelOverrides:
             "При STANDARD уровне без тега storytelling не должен быть включён"
         )
 
-    def test_storytelling_included_at_full_even_if_domain_forbids(self, builder: PromptBuilder) -> None:
+    def test_storytelling_included_at_full_even_if_domain_forbids(
+        self, builder: PromptBuilder
+    ) -> None:
         """Если домен запрещает storytelling, FULL не переопределяет."""
         prompt = builder.build(
             text="Тестовый текст.",
@@ -103,9 +111,11 @@ class TestKnowledgeLevelOverrides:
             "Если allow_storytelling=False, даже при FULL storytelling не включается"
         )
 
-    def test_knowledge_level_changes_prompt_despite_cache(self, builder: PromptBuilder) -> None:
+    def test_knowledge_level_changes_prompt_despite_cache(
+        self, builder: PromptBuilder
+    ) -> None:
         """
-        Тест из kb_loading_contract, но теперь должен проходить.
+        Тест изменения промпта при смене KnowledgeLevel (аналог kb_loading_contract).
         Проверяет, что смена knowledge_level меняет промпт.
         """
         text = "Короткий тестовый текст для проверки состава блоков."
@@ -123,14 +133,20 @@ class TestKnowledgeLevelOverrides:
         )
 
         assert len(p_full) > len(p_core), "FULL-промпт должен быть длиннее CORE"
-        assert "Редакторские приёмы" in p_full, "При FULL и домене nora_gal должен быть блок 'Редакторские приёмы'"
-        assert "Редакторские приёмы" not in p_core, "При CORE не должно быть блока 'Редакторские приёмы'"
+        assert "Редакторские приёмы" in p_full, (
+            "При FULL и домене nora_gal должен быть блок 'Редакторские приёмы'"
+        )
+        assert "Редакторские приёмы" not in p_core, (
+            "При CORE не должно быть блока 'Редакторские приёмы'"
+        )
 
 
 class TestExplainabilityOverrides:
     """Проверяет, что explainability корректно отражает принудительное включение при FULL."""
 
-    def test_explainability_has_full_level_reason_for_storytelling(self, builder: PromptBuilder) -> None:
+    def test_explainability_has_full_level_reason_for_storytelling(
+        self, builder: PromptBuilder
+    ) -> None:
         """При FULL и включении storytelling должен быть reason 'full_level_override'."""
         _ = builder.build(
             text="Тест.",
@@ -148,11 +164,16 @@ class TestExplainabilityOverrides:
                 storytelling_diag = diag
                 break
 
-        assert storytelling_diag is not None, "Блок storytelling должен присутствовать в trace"
-        assert storytelling_diag.included is True, "Блок storytelling должен быть включён"
-        assert ReasonCode.BLOCK_INELIGIBLE_FEATURE_DISABLED not in storytelling_diag.reason_codes, (
-            "Storytelling не должен быть отключён по feature при FULL"
+        assert storytelling_diag is not None, (
+            "Блок storytelling должен присутствовать в trace"
         )
+        assert storytelling_diag.included is True, (
+            "Блок storytelling должен быть включён"
+        )
+        assert (
+            ReasonCode.BLOCK_INELIGIBLE_FEATURE_DISABLED
+            not in storytelling_diag.reason_codes
+        ), "Storytelling не должен быть отключён по feature при FULL"
 
 
 class TestConfigSync:
@@ -209,6 +230,7 @@ class TestConfigSync:
 # ============================================================================
 # НОВЫЕ ТЕСТЫ-ИНВАРИАНТЫ ДЛЯ БАЗЫ ЗНАНИЙ
 # ============================================================================
+
 
 class TestManifestConsistency:
     """

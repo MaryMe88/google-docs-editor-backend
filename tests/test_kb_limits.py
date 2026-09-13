@@ -5,16 +5,14 @@ import logging
 from pathlib import Path
 from unittest.mock import patch
 
-import pytest
-
 from src.prompt_builder import (
+    KB_LIMIT_MAX,
+    KB_LIMIT_MIN,
+    DomainConfig,
+    KnowledgeBlockRequest,
+    LimitsConfig,
     PromptBuilder,
     load_domain_config,
-    LimitsConfig,
-    DomainConfig,
-    KB_LIMIT_MIN,
-    KB_LIMIT_MAX,
-    KnowledgeBlockRequest,  # добавлен импорт
 )
 
 
@@ -40,11 +38,14 @@ def test_merge_overrides_top_level_limits():
 
 def test_merge_overrides_candidates_and_stop_words_items():
     pb = PromptBuilder()
-    m = _merged(pb, {
-        "grammar_candidates": 20,
-        "stop_words_items": 3,
-        "logic_candidates": 15,
-    })
+    m = _merged(
+        pb,
+        {
+            "grammar_candidates": 20,
+            "stop_words_items": 3,
+            "logic_candidates": 15,
+        },
+    )
     assert m.grammar_candidates == 20
     assert m.stop_words_items == 3
     assert m.logic_candidates == 15
@@ -131,8 +132,10 @@ def test_load_domain_config_bool_value_rejected(tmp_path, caplog):
 # ------------------------------------------------------------------
 def test_build_knowledge_block_accepts_limits_param():
     """Проверяем, что KnowledgeBlockRequest имеет поле limits."""
-    from src.prompt_builder import KnowledgeBlockRequest
     import dataclasses
+
+    from src.prompt_builder import KnowledgeBlockRequest
+
     fields = {f.name for f in dataclasses.fields(KnowledgeBlockRequest)}
     assert "limits" in fields, "KnowledgeBlockRequest должен иметь поле 'limits'"
 

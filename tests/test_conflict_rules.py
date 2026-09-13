@@ -6,21 +6,22 @@ Unit-тесты для хелперов _check_conflict_rules.
 from __future__ import annotations
 
 import json
-import pytest
 from unittest.mock import patch
 
-from src.config_types import DomainConfig, IntentConfig, OverlayConfig
+import pytest
+
+from src.config_types import DomainConfig, OverlayConfig
+from src.registry import CANONICAL_FEATURE_ALIASES
 from src.startup_checks import (
-    _normalize_ref_name,
-    _normalize_reference,
-    _is_valid_feature,
+    _check_equal_priority_conflicts,
     _check_self_conflicts,
     _check_suppression_cycles,
-    _check_equal_priority_conflicts,
+    _is_valid_feature,
     _load_all_configs,
+    _normalize_ref_name,
+    _normalize_reference,
     _validate_references_in_configs,
 )
-from src.registry import CANONICAL_FEATURE_ALIASES
 
 
 def test_normalize_ref_name():
@@ -39,7 +40,7 @@ def test_normalize_reference():
 def test_is_valid_feature():
     assert _is_valid_feature("storytelling") is True
     assert _is_valid_feature("nonexistent") is False
-    assert _is_valid_feature(list(CANONICAL_FEATURE_ALIASES.keys())[0]) is True
+    assert _is_valid_feature(next(iter(CANONICAL_FEATURE_ALIASES))) is True
 
 
 def test_check_self_conflicts_valid():
@@ -159,6 +160,7 @@ def test_check_equal_priority_conflicts_invalid():
 # Тесты для _load_all_configs и _validate_references_in_configs
 # ---------------------------------------------------------------------------
 
+
 def test_load_all_configs_success(tmp_path):
     """Проверяет загрузку всех конфигов из временной директории."""
     config_dir = tmp_path / "config"
@@ -171,21 +173,30 @@ def test_load_all_configs_success(tmp_path):
     # Создаём минимальные конфиги
     (domains_dir / "blog.json").write_text(
         json.dumps({"name": "blog", "system_rules": "", "tone": "neutral"}),
-        encoding="utf-8"
+        encoding="utf-8",
     )
     (intents_dir / "analytical.json").write_text(
-        json.dumps({"name": "analytical", "instructions": []}),
-        encoding="utf-8"
+        json.dumps({"name": "analytical", "instructions": []}), encoding="utf-8"
     )
     (overlays_dir / "base.json").write_text(
-        json.dumps({"name": "base", "instructions": [], "priority": 1, "conflicts_with": [], "suppresses": []}),
-        encoding="utf-8"
+        json.dumps(
+            {
+                "name": "base",
+                "instructions": [],
+                "priority": 1,
+                "conflicts_with": [],
+                "suppresses": [],
+            }
+        ),
+        encoding="utf-8",
     )
 
     # Подменяем ALLOWED_DOMAINS и т.д. на наши временные значения
-    with patch("src.startup_checks.ALLOWED_DOMAINS", {"blog"}), \
-         patch("src.startup_checks.ALLOWED_INTENTS", {"neutral", "analytical"}), \
-         patch("src.startup_checks.ALLOWED_OVERLAYS", {"base"}):
+    with (
+        patch("src.startup_checks.ALLOWED_DOMAINS", {"blog"}),
+        patch("src.startup_checks.ALLOWED_INTENTS", {"neutral", "analytical"}),
+        patch("src.startup_checks.ALLOWED_OVERLAYS", {"base"}),
+    ):
         domains, intents, overlays = _load_all_configs(config_dir)
         assert "blog" in domains
         assert "analytical" in intents

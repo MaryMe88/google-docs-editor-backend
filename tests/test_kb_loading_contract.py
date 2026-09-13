@@ -14,12 +14,13 @@ import pytest
 
 # Перезагружаем модуль, чтобы сбросить любые глобальные моки
 import src.prompt_builder
+
 importlib.reload(src.prompt_builder)
 
-from src.prompt_builder import load_knowledge_base, PromptBuilder
 from src.config_types import KnowledgeLevel
 from src.knowledge_retrieval import _make_dedupe_key
-from tests.conftest import KB_PATH   # <-- FIX: импорт из conftest
+from src.prompt_builder import PromptBuilder, load_knowledge_base
+from tests.conftest import KB_PATH  # <-- FIX: импорт из conftest
 
 CONFIG_PATH = Path("config")
 
@@ -93,8 +94,12 @@ def test_knowledge_level_changes_prompt_despite_cache():
     )
 
     assert len(p_full) > len(p_core), "FULL-промпт должен быть длиннее CORE"
-    assert "Редакторские приёмы" in p_full, "При FULL и домене nora_gal должен быть блок 'Редакторские приёмы'"
-    assert "Редакторские приёмы" not in p_core, "При CORE не должно быть блока 'Редакторские приёмы'"
+    assert "Редакторские приёмы" in p_full, (
+        "При FULL и домене nora_gal должен быть блок 'Редакторские приёмы'"
+    )
+    assert "Редакторские приёмы" not in p_core, (
+        "При CORE не должно быть блока 'Редакторские приёмы'"
+    )
 
 
 def test_dedupe_keeps_distinct_structural():
@@ -128,7 +133,9 @@ def test_case_study_json_contract():
     # 2. Проверка загрузки через манифест с тегом casestudy
     manifest = load_manifest(KB_PATH / "kb_manifest.json")
     entries = [e for e in manifest if e.file == "genres/business/case_study.json"]
-    assert len(entries) == 1, "Манифест должен содержать ровно одну запись для case_study.json"
+    assert len(entries) == 1, (
+        "Манифест должен содержать ровно одну запись для case_study.json"
+    )
     entry = entries[0]
     assert entry.load_mode == "by_tags"
     assert "casestudy" in entry.tags

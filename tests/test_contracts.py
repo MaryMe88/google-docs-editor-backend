@@ -7,19 +7,20 @@ tests/test_contracts.py
 Правило: пока эти тесты зелёные — файлы согласованы между собой.
 Запуск: pytest tests/test_contracts.py -v
 """
+
 from __future__ import annotations
 
 import os
-from typing import Any, Dict
+from typing import Any
 from unittest.mock import AsyncMock, patch
 
 import pytest
 from fastapi.testclient import TestClient
 
-
 # ---------------------------------------------------------------------------
 # Контракт 1: PromptBuilder публичный API
 # ---------------------------------------------------------------------------
+
 
 class TestPromptBuilderContract:
     """
@@ -37,6 +38,7 @@ class TestPromptBuilderContract:
     @pytest.fixture(scope="class")
     def pb(self):
         from src.prompt_builder import PromptBuilder
+
         return PromptBuilder()
 
     def test_class_importable(self):
@@ -95,22 +97,28 @@ class TestPromptBuilderContract:
         intents = pb.get_available_intents()
         assert isinstance(intents, set)
         for item in intents:
-            assert isinstance(item, str), f"intent должен быть str, получили {type(item)}"
+            assert isinstance(item, str), (
+                f"intent должен быть str, получили {type(item)}"
+            )
 
     def test_get_available_overlays_returns_set_of_str(self, pb):
         overlays = pb.get_available_overlays()
         assert isinstance(overlays, set)
         for item in overlays:
-            assert isinstance(item, str), f"overlay должен быть str, получили {type(item)}"
+            assert isinstance(item, str), (
+                f"overlay должен быть str, получили {type(item)}"
+            )
 
     def test_reload_configs_exists_and_callable(self, pb):
         # Проверяем наличие метода; вызов не должен бросать исключений
-        assert callable(getattr(pb, "reload_configs", None)), \
+        assert callable(getattr(pb, "reload_configs", None)), (
             "PromptBuilder должен иметь метод reload_configs()"
+        )
         pb.reload_configs()
 
     def test_build_with_audience(self, pb):
         from src.prompt_builder import AudienceProfile
+
         audience = AudienceProfile(
             kind="b2b",
             expertise="pro",
@@ -133,6 +141,7 @@ class TestPromptBuilderContract:
 # Контракт 2: tag_registry публичный API
 # ---------------------------------------------------------------------------
 
+
 class TestTagRegistryContract:
     """
     Функции, которые импортирует prompt_builder.py:
@@ -152,6 +161,7 @@ class TestTagRegistryContract:
 
     def test_normalize_tag_returns_str(self):
         from src.tag_registry import normalize_tag
+
         result = normalize_tag("Marketing")
         assert isinstance(result, str)
         assert result == result.lower()
@@ -159,23 +169,27 @@ class TestTagRegistryContract:
     def test_normalize_tag_aliases(self):
         """Все алиасы из TAG_ALIASES должны разрешаться в канонические значения."""
         from src.tag_registry import normalize_tag
+
         # Примеры алиасов из текущего tag_registry.py
         assert normalize_tag("anti-ai") == normalize_tag("antiai")
         assert normalize_tag("info-style") == normalize_tag("infostyle")
 
     def test_normalize_tags_deduplicates(self):
         from src.tag_registry import normalize_tags
+
         result = normalize_tags(["marketing", "marketing", "Marketing"])
         assert result.count("marketing") == 1
 
     def test_normalize_tags_skips_non_strings(self):
         from src.tag_registry import normalize_tags
+
         result = normalize_tags(["marketing", None, 42, "blog"])  # type: ignore[list-item]
         assert None not in result
         assert 42 not in result
 
     def test_build_known_tags_returns_set(self):
         from src.tag_registry import build_known_tags
+
         sample = {
             "domains": {
                 "marketing": {"primary": ["marketing"], "expanded": ["sales"]},
@@ -190,6 +204,7 @@ class TestTagRegistryContract:
 # Контракт 3: llm_client публичный API
 # ---------------------------------------------------------------------------
 
+
 class TestLLMClientContract:
     """
     Публичный интерфейс, который использует main.py:
@@ -203,9 +218,9 @@ class TestLLMClientContract:
 
     def test_llm_provider_has_required_values(self):
         from src.llm_client import LLMProvider
+
         for name in ("PERPLEXITY", "OPENAI", "OPENROUTER", "ANTHROPIC"):
-            assert hasattr(LLMProvider, name), \
-                f"LLMProvider должен содержать {name}"
+            assert hasattr(LLMProvider, name), f"LLMProvider должен содержать {name}"
 
     def test_create_llm_client_importable(self):
         from src.llm_client import create_llm_client  # noqa: F401
@@ -216,7 +231,9 @@ class TestLLMClientContract:
     def test_create_llm_client_raises_on_missing_key(self):
         """Фабрика должна бросить ValueError (не AttributeError), если нет ключа."""
         import os
+
         from src.llm_client import LLMProvider, create_llm_client
+
         # Временно убираем ключ из окружения
         key = os.environ.pop("OPENROUTER_API_KEY", None)
         try:
@@ -229,6 +246,7 @@ class TestLLMClientContract:
     def test_create_llm_client_is_async_context_manager(self):
         """Результат create_llm_client должен поддерживать async with."""
         import os
+
         from src.llm_client import LLMProvider, create_llm_client
 
         # Убираем системный прокси из окружения на время теста —
@@ -247,6 +265,7 @@ class TestLLMClientContract:
     def test_llm_response_fields(self):
         """LLMResponse должен содержать поля content, model, provider, tokens_used."""
         from src.llm_client import LLMResponse
+
         resp = LLMResponse(
             content="text",
             model="openrouter/auto",
@@ -294,16 +313,19 @@ def api_client():
     mock_client.__aexit__ = AsyncMock(return_value=False)
 
     # Отключаем проверку тегов базы знаний, так как в тестовой среде KB может не содержать всех канонических тегов
-    with patch("src.llm_client.create_llm_client", return_value=mock_client), \
-         patch("src.startup_checks._check_tags_vs_kb"), \
-         patch.dict(os.environ, {"API_SECRET_KEY": _TEST_API_KEY}):
+    with (
+        patch("src.llm_client.create_llm_client", return_value=mock_client),
+        patch("src.startup_checks._check_tags_vs_kb"),
+        patch.dict(os.environ, {"API_SECRET_KEY": _TEST_API_KEY}),
+    ):
         from src.main import app
+
         with TestClient(app) as client:
             yield client
 
 
 @pytest.fixture(scope="module")
-def auth_headers() -> Dict[str, str]:
+def auth_headers() -> dict[str, str]:
     """Заголовок аутентификации для защищённых эндпоинтов."""
     return {"X-API-Key": _TEST_API_KEY}
 
@@ -374,7 +396,7 @@ class TestFastAPIContractEdit:
     Тесты без ключа проверяют, что эндпоинт действительно защищён.
     """
 
-    BASE_PAYLOAD: Dict[str, Any] = {
+    BASE_PAYLOAD: dict[str, Any] = {
         "text": "Тестовый текст для редактирования.",
         "domain": "marketing",
         "intent": None,
@@ -443,19 +465,25 @@ class TestFastAPIContractEdit:
         payload = {**self.BASE_PAYLOAD, "intent": "nonexistent_intent_xyz"}
         r = api_client.post("/api/edit", json=payload, headers=auth_headers)
         # Валидация выполняется в Pydantic (contracts.py), которая возвращает 422
-        assert r.status_code == 422, "Неизвестный intent должен давать 422 Unprocessable Entity"
+        assert r.status_code == 422, (
+            "Неизвестный intent должен давать 422 Unprocessable Entity"
+        )
 
     def test_edit_rejects_unknown_overlay(self, api_client, auth_headers):
         payload = {**self.BASE_PAYLOAD, "overlays": ["unknown_overlay_xyz"]}
         r = api_client.post("/api/edit", json=payload, headers=auth_headers)
         # Валидация выполняется в Pydantic (contracts.py), которая возвращает 422
-        assert r.status_code == 422, "Неизвестный overlay должен давать 422 Unprocessable Entity"
+        assert r.status_code == 422, (
+            "Неизвестный overlay должен давать 422 Unprocessable Entity"
+        )
 
     def test_edit_rejects_unknown_provider(self, api_client, auth_headers):
         payload = {**self.BASE_PAYLOAD, "provider": "unknown_provider"}
         r = api_client.post("/api/edit", json=payload, headers=auth_headers)
         # Валидация Pydantic (через field_validator) возвращает 422
-        assert r.status_code == 422, "Неизвестный provider должен давать 422 Unprocessable Entity"
+        assert r.status_code == 422, (
+            "Неизвестный provider должен давать 422 Unprocessable Entity"
+        )
 
     def test_edit_with_storytelling_intent(self, api_client, auth_headers):
         payload = {**self.BASE_PAYLOAD, "intent": "storytelling"}
@@ -518,7 +546,9 @@ class TestFastAPIContractEdit:
             "Если тест падает — убедись, что в contracts.py задан max_length=10000"
         )
 
-    def test_edit_rejects_oversized_audience_description(self, api_client, auth_headers):
+    def test_edit_rejects_oversized_audience_description(
+        self, api_client, auth_headers
+    ):
         """
         SEC: поле audience.description ограничено max_length=500 (contracts.py).
         Поле попадает в LLM-промпт через _build_audience_block без санитизации —

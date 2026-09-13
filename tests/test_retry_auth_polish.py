@@ -41,9 +41,12 @@ async def test_no_sleep_after_last_attempt() -> None:
     """При N попытках sleep вызывается ровно N-1 раз (не N)."""
     client = _client(max_retries=3)
 
-    with patch.object(
-        client, "call_api", AsyncMock(side_effect=LLMRateLimitError("429"))
-    ), patch("src.llm_client.asyncio.sleep", AsyncMock()) as mock_sleep:
+    with (
+        patch.object(
+            client, "call_api", AsyncMock(side_effect=LLMRateLimitError("429"))
+        ),
+        patch("src.llm_client.asyncio.sleep", AsyncMock()) as mock_sleep,
+    ):
         with pytest.raises(LLMError, match="Failed after 3 attempts"):
             await client.generate("prompt")
 
@@ -55,9 +58,12 @@ async def test_single_attempt_no_sleep() -> None:
     """При max_retries=1 sleep не вызывается вовсе."""
     client = _client(max_retries=1)
 
-    with patch.object(
-        client, "call_api", AsyncMock(side_effect=LLMRateLimitError("429"))
-    ), patch("src.llm_client.asyncio.sleep", AsyncMock()) as mock_sleep:
+    with (
+        patch.object(
+            client, "call_api", AsyncMock(side_effect=LLMRateLimitError("429"))
+        ),
+        patch("src.llm_client.asyncio.sleep", AsyncMock()) as mock_sleep,
+    ):
         with pytest.raises(LLMError):
             await client.generate("prompt")
 

@@ -2,8 +2,6 @@ from __future__ import annotations
 
 import ast
 from pathlib import Path
-from typing import Optional, Set, Tuple
-
 
 PROMPT_BUILDER_PATH = Path("src/prompt_builder/builder.py")
 
@@ -33,7 +31,7 @@ def _find_method(class_node: ast.ClassDef, method_name: str) -> ast.FunctionDef:
 
 
 def _function_length(node: ast.FunctionDef) -> int:
-    end_lineno: Optional[int] = getattr(node, "end_lineno", None)
+    end_lineno: int | None = getattr(node, "end_lineno", None)
     if end_lineno is None:
         raise AssertionError("Python 3.8+ is required for end_lineno support")
     return end_lineno - node.lineno + 1
@@ -42,8 +40,8 @@ def _function_length(node: ast.FunctionDef) -> int:
 class _BuildMetrics(ast.NodeVisitor):
     def __init__(self) -> None:
         self.branch_nodes = 0
-        self.self_helper_calls: Set[str] = set()
-        self.external_calls: Set[str] = set()
+        self.self_helper_calls: set[str] = set()
+        self.external_calls: set[str] = set()
         self.return_count = 0
 
     def visit_If(self, node: ast.If) -> None:
@@ -111,7 +109,7 @@ class _BuildMetrics(ast.NodeVisitor):
         self.generic_visit(node)
 
 
-def _collect_build_metrics() -> Tuple[ast.FunctionDef, _BuildMetrics]:
+def _collect_build_metrics() -> tuple[ast.FunctionDef, _BuildMetrics]:
     module = _read_module()
     prompt_builder = _find_class(module, "PromptBuilder")
     build_method = _find_method(prompt_builder, "build")
@@ -143,7 +141,7 @@ class TestPromptBuilderArchitecture:
 
     def test_build_method_branching_is_under_control(self) -> None:
         _, metrics = _collect_build_metrics()
-        max_allowed_branch_nodes = 30 
+        max_allowed_branch_nodes = 30
 
         assert metrics.branch_nodes <= max_allowed_branch_nodes, (
             "PromptBuilder.build() стал слишком ветвистым: "

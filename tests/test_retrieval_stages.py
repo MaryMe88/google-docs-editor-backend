@@ -5,19 +5,17 @@ Unit-тесты для стадий _select_ranked_entries.
 
 from __future__ import annotations
 
-import pytest
-
 from src.knowledge_retrieval import (
-    SelectionParams,
     RULE_FALLBACK_POLICY,
     STRUCTURAL_FALLBACK_POLICY,
     FallbackPolicy,
-    _try_strong_stage,
-    _try_text_only_stage,
-    _try_tag_only_stage,
+    SelectionParams,
     _try_neutral_stage,
-    score_rule_entry,
+    _try_strong_stage,
+    _try_tag_only_stage,
+    _try_text_only_stage,
     normalize_text_for_match,
+    score_rule_entry,
 )
 
 
@@ -132,12 +130,14 @@ def test_try_tag_only_stage_returns_none_if_no_overlap():
 
 
 def test_try_neutral_stage_returns_neutral():
-    entries = [make_rule_entry(
-        wrong="",
-        rule="нейтральное правило",
-        tags=["neutral", "editing"],
-        description="общее описание"
-    )]
+    entries = [
+        make_rule_entry(
+            wrong="",
+            rule="нейтральное правило",
+            tags=["neutral", "editing"],
+            description="общее описание",
+        )
+    ]
     params = SelectionParams(scorer=score_rule_entry)
     wanted_set = {"missing"}  # не используется
     result = _try_neutral_stage(

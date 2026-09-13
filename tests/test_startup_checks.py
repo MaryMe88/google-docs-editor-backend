@@ -12,12 +12,11 @@ from unittest.mock import patch
 import pytest
 
 from src.startup_checks import (
+    StartupCheckParams,
     _check_scoring_weights_file,
     _check_tags_vs_kb,
     run_startup_checks,
-    StartupCheckParams,
 )
-from src.tag_registry import get_canonical_tag_names
 
 
 def test_scoring_weights_float_values_do_not_raise() -> None:
@@ -86,6 +85,7 @@ def test_scoring_weights_invalid_json_raises_error() -> None:
 def test_prompt_builder_import_and_startup_check() -> None:
     """Проверяет, что PromptBuilder импортируется и startup_check не падает (smoke-тест)."""
     from src.prompt_builder import PromptBuilder
+
     builder = PromptBuilder()
     builder.startup_check()
 
@@ -99,20 +99,26 @@ def test_check_tags_vs_kb_does_not_warn_for_aliases(tmp_path, caplog) -> None:
     kb_dir.mkdir()
     grammar_file = kb_dir / "grammar_errors.json"
     grammar_file.write_text(
-        json.dumps([{"wrong": "test", "correct": "test", "rule": "test", "tags": ["grammar"]}]),
+        json.dumps(
+            [{"wrong": "test", "correct": "test", "rule": "test", "tags": ["grammar"]}]
+        ),
         encoding="utf-8",
     )
 
-    with patch("src.startup_checks.get_canonical_tag_names", return_value={"storytelling", "nkrj", "antiai"}):
-        with caplog.at_level("WARNING"):
-            _check_tags_vs_kb(kb_dir)
-            match = re.search(r"missing in KB: \[([^\]]+)\]", caplog.text)
-            if match:
-                missing_tags_str = match.group(1)
-                missing_tags = [tag.strip().strip("'") for tag in missing_tags_str.split(",")]
-                assert "story" not in missing_tags
-                assert "taiga" not in missing_tags
-                assert "antillm" not in missing_tags
+    with patch(
+        "src.startup_checks.get_canonical_tag_names",
+        return_value={"storytelling", "nkrj", "antiai"},
+    ), caplog.at_level("WARNING"):
+        _check_tags_vs_kb(kb_dir)
+        match = re.search(r"missing in KB: \[([^\]]+)\]", caplog.text)
+        if match:
+            missing_tags_str = match.group(1)
+            missing_tags = [
+                tag.strip().strip("'") for tag in missing_tags_str.split(",")
+            ]
+            assert "story" not in missing_tags
+            assert "taiga" not in missing_tags
+            assert "antillm" not in missing_tags
 
 
 def test_check_tags_vs_kb_warns_for_missing_canonical_tag(tmp_path, caplog) -> None:
@@ -123,15 +129,18 @@ def test_check_tags_vs_kb_warns_for_missing_canonical_tag(tmp_path, caplog) -> N
     kb_dir.mkdir()
     grammar_file = kb_dir / "grammar_errors.json"
     grammar_file.write_text(
-        json.dumps([{"wrong": "test", "correct": "test", "rule": "test", "tags": ["grammar"]}]),
+        json.dumps(
+            [{"wrong": "test", "correct": "test", "rule": "test", "tags": ["grammar"]}]
+        ),
         encoding="utf-8",
     )
 
-    with patch("src.startup_checks.get_canonical_tag_names", return_value={"storytelling"}):
-        with caplog.at_level("WARNING"):
-            _check_tags_vs_kb(kb_dir)
-            assert "Tags declared in CANONICAL_TAGS but missing in KB" in caplog.text
-            assert "storytelling" in caplog.text
+    with patch(
+        "src.startup_checks.get_canonical_tag_names", return_value={"storytelling"}
+    ), caplog.at_level("WARNING"):
+        _check_tags_vs_kb(kb_dir)
+        assert "Tags declared in CANONICAL_TAGS but missing in KB" in caplog.text
+        assert "storytelling" in caplog.text
 
 
 # ---------------------------------------------------------------------------
@@ -148,27 +157,27 @@ def test_run_startup_checks_does_not_fail_due_to_tag_map() -> None:
 
         # Создаём tag_map.json с пустыми разделами (проверка не упадёт)
         (config_path / "tag_map.json").write_text(
-            json.dumps({"domains": {}, "intents": {}, "overlays": {}}),
-            encoding="utf-8"
+            json.dumps({"domains": {}, "intents": {}, "overlays": {}}), encoding="utf-8"
         )
 
         domains_dir = config_path / "domains"
         domains_dir.mkdir()
         # Создаём минимальный домен
         (domains_dir / "blog.json").write_text(
-            json.dumps({
-                "name": "blog",
-                "system_rules": "",
-                "tone": "neutral",
-                "allow_storytelling": False,
-                "allow_marketing": False,
-            }),
-            encoding="utf-8"
+            json.dumps(
+                {
+                    "name": "blog",
+                    "system_rules": "",
+                    "tone": "neutral",
+                    "allow_storytelling": False,
+                    "allow_marketing": False,
+                }
+            ),
+            encoding="utf-8",
         )
         # Создаём core.json (может потребоваться для некоторых проверок)
         (config_path / "core.json").write_text(
-            json.dumps({"role": "test"}),
-            encoding="utf-8"
+            json.dumps({"role": "test"}), encoding="utf-8"
         )
         # Создаём папки intents и overlays (пустые, чтобы не было лишних файлов)
         (config_path / "intents").mkdir()
@@ -178,8 +187,17 @@ def test_run_startup_checks_does_not_fail_due_to_tag_map() -> None:
         kb_path.mkdir()
         # Создаём минимальный файл KB, чтобы избежать предупреждений
         (kb_path / "grammar_errors.json").write_text(
-            json.dumps([{"wrong": "test", "correct": "test", "rule": "test", "tags": ["grammar"]}]),
-            encoding="utf-8"
+            json.dumps(
+                [
+                    {
+                        "wrong": "test",
+                        "correct": "test",
+                        "rule": "test",
+                        "tags": ["grammar"],
+                    }
+                ]
+            ),
+            encoding="utf-8",
         )
 
         params = StartupCheckParams(

@@ -8,8 +8,7 @@ from pathlib import Path
 
 import pytest
 
-from src.startup_checks import run_startup_checks, StartupCheckParams
-from src.shared_contracts import ALLOWED_DOMAINS, ALLOWED_INTENTS, ALLOWED_OVERLAYS
+from src.startup_checks import StartupCheckParams, run_startup_checks
 
 
 @pytest.fixture
@@ -68,8 +67,16 @@ def test_valid_conflict_rules_pass(temp_config_dir: Path) -> None:
     create_domain(temp_config_dir, "blog")
     create_domain(temp_config_dir, "marketing")
     create_intent(temp_config_dir, "analytical")
-    create_overlay(temp_config_dir, "landing", conflicts_with=["pressrelease"], priority=70, suppresses=["pressrelease"])
-    create_overlay(temp_config_dir, "pressrelease", conflicts_with=["landing"], priority=70)
+    create_overlay(
+        temp_config_dir,
+        "landing",
+        conflicts_with=["pressrelease"],
+        priority=70,
+        suppresses=["pressrelease"],
+    )
+    create_overlay(
+        temp_config_dir, "pressrelease", conflicts_with=["landing"], priority=70
+    )
 
     params = StartupCheckParams(
         allowed_domains={"blog", "marketing"},
@@ -92,7 +99,9 @@ def test_invalid_reference_raises_error(temp_config_dir: Path) -> None:
         config_path=temp_config_dir,
         kb_path=Path("knowledge_base"),
     )
-    with pytest.raises(ValueError, match="Invalid conflicts_with reference.*nonexistent"):
+    with pytest.raises(
+        ValueError, match="Invalid conflicts_with reference.*nonexistent"
+    ):
         run_startup_checks(params)
 
 
@@ -129,8 +138,12 @@ def test_suppression_cycle_raises_error(temp_config_dir: Path) -> None:
 
 def test_equal_priority_without_suppress_raises_error(temp_config_dir: Path) -> None:
     create_domain(temp_config_dir, "blog")
-    create_overlay(temp_config_dir, "landing", conflicts_with=["pressrelease"], priority=70)
-    create_overlay(temp_config_dir, "pressrelease", conflicts_with=["landing"], priority=70)
+    create_overlay(
+        temp_config_dir, "landing", conflicts_with=["pressrelease"], priority=70
+    )
+    create_overlay(
+        temp_config_dir, "pressrelease", conflicts_with=["landing"], priority=70
+    )
 
     params = StartupCheckParams(
         allowed_domains={"blog"},
@@ -145,8 +158,16 @@ def test_equal_priority_without_suppress_raises_error(temp_config_dir: Path) -> 
 
 def test_equal_priority_with_suppress_passes(temp_config_dir: Path) -> None:
     create_domain(temp_config_dir, "blog")
-    create_overlay(temp_config_dir, "landing", conflicts_with=["pressrelease"], priority=70, suppresses=["pressrelease"])
-    create_overlay(temp_config_dir, "pressrelease", conflicts_with=["landing"], priority=70)
+    create_overlay(
+        temp_config_dir,
+        "landing",
+        conflicts_with=["pressrelease"],
+        priority=70,
+        suppresses=["pressrelease"],
+    )
+    create_overlay(
+        temp_config_dir, "pressrelease", conflicts_with=["landing"], priority=70
+    )
 
     params = StartupCheckParams(
         allowed_domains={"blog"},

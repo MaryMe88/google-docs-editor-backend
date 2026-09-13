@@ -7,6 +7,7 @@ tests/test_main.py
 Запуск:
     pytest tests/test_main.py -v
 """
+
 from __future__ import annotations
 
 import os
@@ -16,17 +17,16 @@ import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
+from src.llm_client import LLMAPIError, LLMError, LLMFallbackError
 from src.main import (
-    app,
     _PROVIDER_KEY_ENV,
+    _check_providers_availability,
+    _llm_error_to_http_exception,
+    app,
     invalidate_provider_cache,
     lifespan,
-    _llm_error_to_http_exception,
-    _check_providers_availability,
 )
-from src.llm_client import LLMFallbackError, LLMError, LLMAPIError
 from src.prompt_builder import PromptBuilder
-from src.semantic_index import set_semantic_entries
 
 
 # ------------------------------------------------------------------------------
@@ -40,6 +40,7 @@ def enable_testing_mode(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 # ---------- Шаг 2: health check ----------
+
 
 @pytest.mark.asyncio
 async def test_health_light_check_uses_env_not_http(
@@ -84,11 +85,13 @@ def test_health_docstring_contains_warning() -> None:
     get_operation = path_item["get"]
     description = get_operation.get("description", "")
     assert "deep" in description, "Описание должно содержать упоминание 'deep'"
-    assert "ВНИМАНИЕ" in description or "потребляет реальные токены" in description, \
+    assert "ВНИМАНИЕ" in description or "потребляет реальные токены" in description, (
         "Описание должно содержать предупреждение о затратах"
+    )
 
 
 # ---------- Шаг 3: CORS ----------
+
 
 def test_cors_configuration_allows_credentials_with_specific_origins() -> None:
     """
@@ -125,10 +128,10 @@ def test_cors_origins_can_be_overridden_by_env(monkeypatch: pytest.MonkeyPatch) 
     # Здесь мы не перезагружаем модуль, поэтому просто проверяем,
     # что логика формирования списка работает корректно (она уже проверена).
     # Оставляем как заглушку, чтобы тест проходил.
-    pass
 
 
 # ---------- Шаг 4: утечка промпта и содержимого ----------
+
 
 @patch("src.main.call_with_fallback")
 @patch("src.main.get_prompt_builder")
@@ -193,10 +196,14 @@ def test_edit_response_does_not_log_prompt_entirely(
     Шаг 4в: проверяем, что полный промпт не попадает в логи (хотя бы на уровне INFO).
     """
     import logging
+
     caplog.set_level(logging.INFO)
 
     mock_builder = MagicMock()
-    mock_builder.build.return_value = ("super secret system prompt with instructions", {"meta": "data"})
+    mock_builder.build.return_value = (
+        "super secret system prompt with instructions",
+        {"meta": "data"},
+    )
     mock_get_builder.return_value = mock_builder
 
     mock_response = MagicMock()
@@ -221,6 +228,7 @@ def test_edit_response_does_not_log_prompt_entirely(
 
 
 # ---------- Тесты для _llm_error_to_http_exception ----------
+
 
 def test_llm_error_to_http_exception_rate_limit() -> None:
     """rate_limit → 429."""
@@ -313,8 +321,11 @@ def test_llm_error_to_http_exception_does_not_leak_details() -> None:
 
 # ---------- Новые тесты: обязательность API_SECRET_KEY в production ----------
 
+
 @pytest.mark.asyncio
-async def test_production_startup_requires_api_secret_key(monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_production_startup_requires_api_secret_key(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     """
     Приложение НЕ стартует в production режиме без API_SECRET_KEY.
     Ожидается RuntimeError.
@@ -325,13 +336,17 @@ async def test_production_startup_requires_api_secret_key(monkeypatch: pytest.Mo
     monkeypatch.delenv("PYTEST_RUNNING", raising=False)  # убираем тестовый режим
 
     app_test = FastAPI()
-    with pytest.raises(RuntimeError, match="API_SECRET_KEY is required in production mode."):
+    with pytest.raises(
+        RuntimeError, match="API_SECRET_KEY is required in production mode."
+    ):
         async with lifespan(app_test):
             pass
 
 
 @pytest.mark.asyncio
-async def test_production_startup_succeeds_with_api_secret_key(monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_production_startup_succeeds_with_api_secret_key(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     """
     Приложение стартует в production режиме, если API_SECRET_KEY задан.
     """
@@ -346,7 +361,9 @@ async def test_production_startup_succeeds_with_api_secret_key(monkeypatch: pyte
 
 
 @pytest.mark.asyncio
-async def test_development_startup_soft_mode_without_api_secret_key(monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_development_startup_soft_mode_without_api_secret_key(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     """
     В dev-режиме (ENV=development) приложение стартует без API_SECRET_KEY (soft-mode).
     """
@@ -361,7 +378,9 @@ async def test_development_startup_soft_mode_without_api_secret_key(monkeypatch:
 
 
 @pytest.mark.asyncio
-async def test_testing_startup_soft_mode_without_api_secret_key(monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_testing_startup_soft_mode_without_api_secret_key(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     """
     В тестовом режиме (PYTEST_RUNNING=true) приложение стартует без API_SECRET_KEY,
     даже если ENV=production.
@@ -379,6 +398,7 @@ async def test_testing_startup_soft_mode_without_api_secret_key(monkeypatch: pyt
 # ============================================================================
 # НОВЫЕ ТЕСТЫ: интеграция SemanticIndex и load_full_kb
 # ============================================================================
+
 
 @pytest.mark.asyncio
 async def test_lifespan_calls_load_full_kb() -> None:
@@ -432,6 +452,7 @@ def test_collect_semantic_entries_uses_loaded_kb() -> None:
     app.state.prompt_builder = mock_pb
 
     from src.main import _collect_semantic_entries
+
     entries = _collect_semantic_entries(app)
 
     # Проверяем, что записи собраны

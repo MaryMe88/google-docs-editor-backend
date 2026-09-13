@@ -13,19 +13,23 @@
 from __future__ import annotations
 
 import os
-from typing import Any, Dict
+from typing import Any
 from unittest.mock import AsyncMock, patch
 
-import pytest
 from fastapi.testclient import TestClient
 
 _TEST_API_KEY = "test-secret-key-guard"
 
-BASE_PAYLOAD: Dict[str, Any] = {
+BASE_PAYLOAD: dict[str, Any] = {
     "text": "Тестовый текст для редактирования.",
     "domain": "marketing",
     "intent": None,
-    "audience": {"kind": "b2b", "expertise": "pro", "formality": "neutral", "description": ""},
+    "audience": {
+        "kind": "b2b",
+        "expertise": "pro",
+        "formality": "neutral",
+        "description": "",
+    },
     "overlays": [],
     "output_mode": "text_only",
     "provider": "openrouter",
@@ -63,7 +67,7 @@ def _client_with_llm(side_effect):
     return mock_call, patches
 
 
-def _run(side_effect, payload: Dict[str, Any]):
+def _run(side_effect, payload: dict[str, Any]):
     mock_call, patches = _client_with_llm(side_effect)
     for p in patches:
         p.start()

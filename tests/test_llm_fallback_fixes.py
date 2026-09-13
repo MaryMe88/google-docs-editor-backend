@@ -15,10 +15,10 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from src.llm_client import (
+    LLMConfig,
     LLMError,
     LLMResponse,
     OpenAIClient,
-    LLMConfig,
     call_with_fallback,
 )
 from src.provider_registry import LLMProvider
@@ -29,9 +29,7 @@ from src.provider_registry import LLMProvider
 # ===========================================================================
 def _make_mock_client(content: str):
     """Async-context-manager клиент, чей generate() возвращает LLMResponse."""
-    resp = LLMResponse(
-        content=content, model="m", provider="openrouter", tokens_used=1
-    )
+    resp = LLMResponse(content=content, model="m", provider="openrouter", tokens_used=1)
     client = AsyncMock()
     client.generate = AsyncMock(return_value=resp)
     client.__aenter__ = AsyncMock(return_value=client)

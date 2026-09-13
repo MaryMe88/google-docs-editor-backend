@@ -9,8 +9,9 @@ from __future__ import annotations
 
 import os
 import re
+from collections.abc import Iterator
 from pathlib import Path
-from typing import Any, Dict, Iterator, List, Optional, Tuple
+from typing import Any
 
 import pytest
 
@@ -21,12 +22,9 @@ from src.shared_contracts import (
     ALLOWED_OVERLAYS,
 )
 
-
 REPOSITORY_ROOT = Path(__file__).resolve().parents[1]
 
-DEFAULT_CLIENT_SCRIPT_PATH = (
-    REPOSITORY_ROOT / "google_apps_script" / "New Script.js"
-)
+DEFAULT_CLIENT_SCRIPT_PATH = REPOSITORY_ROOT / "google_apps_script" / "New Script.js"
 
 CLIENT_SCRIPT_PATH = Path(
     os.environ.get(
@@ -43,13 +41,11 @@ class ModeConfigParseError(ValueError):
 def _find_matching_brace(source: str, opening_index: int) -> int:
     """Находит закрывающую скобку объекта с учётом строк и комментариев."""
     if opening_index >= len(source) or source[opening_index] != "{":
-        raise ModeConfigParseError(
-            "Ожидалась открывающая фигурная скобка."
-        )
+        raise ModeConfigParseError("Ожидалась открывающая фигурная скобка.")
 
     depth = 0
     index = opening_index
-    quote: Optional[str] = None
+    quote: str | None = None
     in_line_comment = False
     in_block_comment = False
 
@@ -126,19 +122,18 @@ def _extract_mode_config_object(source: str) -> str:
 
     if match is None:
         raise ModeConfigParseError(
-            "В Apps Script не найдена декларация "
-            "const MODE_CONFIG = {...}."
+            "В Apps Script не найдена декларация const MODE_CONFIG = {...}."
         )
 
     opening_index = source.find("{", match.start())
     closing_index = _find_matching_brace(source, opening_index)
 
-    return source[opening_index + 1:closing_index]
+    return source[opening_index + 1 : closing_index]
 
 
 def _iter_top_level_modes(
     mode_config: str,
-) -> Iterator[Tuple[str, str]]:
+) -> Iterator[tuple[str, str]]:
     """Итерирует mode_id и содержимое объекта режима верхнего уровня."""
     pattern = re.compile(
         r"""
@@ -162,7 +157,7 @@ def _iter_top_level_modes(
 
         yield (
             match.group("mode_id"),
-            mode_config[opening_index + 1:closing_index],
+            mode_config[opening_index + 1 : closing_index],
         )
 
         position = closing_index + 1
@@ -181,16 +176,13 @@ def _extract_required_string(
 
     if match is None:
         raise ModeConfigParseError(
-            f'У режима "{mode_id}" отсутствует строковое поле '
-            f'"{field_name}".'
+            f'У режима "{mode_id}" отсутствует строковое поле "{field_name}".'
         )
 
     value = match.group(1).strip()
 
     if not value:
-        raise ModeConfigParseError(
-            f'У режима "{mode_id}" поле "{field_name}" пустое.'
-        )
+        raise ModeConfigParseError(f'У режима "{mode_id}" поле "{field_name}" пустое.')
 
     return value
 
@@ -199,7 +191,7 @@ def _extract_optional_string(
     mode_id: str,
     body: str,
     field_name: str,
-) -> Optional[str]:
+) -> str | None:
     """Извлекает необязательное строковое поле или null."""
     match = re.search(
         rf"\b{re.escape(field_name)}\s*:\s*"
@@ -217,14 +209,13 @@ def _extract_optional_string(
 
     if value is None or not value.strip():
         raise ModeConfigParseError(
-            f'Не удалось разобрать поле "{field_name}" '
-            f'режима "{mode_id}".'
+            f'Не удалось разобрать поле "{field_name}" режима "{mode_id}".'
         )
 
     return value.strip()
 
 
-def _extract_overlays(mode_id: str, body: str) -> List[str]:
+def _extract_overlays(mode_id: str, body: str) -> list[str]:
     """Извлекает массив строк overlays."""
     match = re.search(
         r"\boverlays\s*:\s*\[([^\]]*)\]",
@@ -249,7 +240,7 @@ def _extract_overlays(mode_id: str, body: str) -> List[str]:
     return [overlay.strip() for overlay in overlays]
 
 
-def load_client_modes(script_path: Path) -> Dict[str, Dict[str, Any]]:
+def load_client_modes(script_path: Path) -> dict[str, dict[str, Any]]:
     """Читает и разбирает MODE_CONFIG из реального Apps Script-файла."""
     if not script_path.is_file():
         pytest.fail(
@@ -264,7 +255,7 @@ def load_client_modes(script_path: Path) -> Dict[str, Dict[str, Any]]:
     source = script_path.read_text(encoding="utf-8")
     mode_config = _extract_mode_config_object(source)
 
-    modes: Dict[str, Dict[str, Any]] = {}
+    modes: dict[str, dict[str, Any]] = {}
 
     for mode_id, body in _iter_top_level_modes(mode_config):
         if mode_id in modes:
@@ -293,27 +284,21 @@ def load_client_modes(script_path: Path) -> Dict[str, Dict[str, Any]]:
 
 
 @pytest.fixture(scope="module")
-def client_modes() -> Dict[str, Dict[str, Any]]:
+def client_modes() -> dict[str, dict[str, Any]]:
     """Возвращает режимы из реального Google Apps Script-клиента."""
     return load_client_modes(CLIENT_SCRIPT_PATH)
 
 
 def test_client_script_exists() -> None:
     """Apps Script должен быть доступен для проверки."""
-    assert CLIENT_SCRIPT_PATH.is_file(), (
-        "Apps Script не найден: "
-        f"{CLIENT_SCRIPT_PATH}"
-    )
+    assert CLIENT_SCRIPT_PATH.is_file(), f"Apps Script не найден: {CLIENT_SCRIPT_PATH}"
 
 
 def test_all_client_domains_are_allowed(
-    client_modes: Dict[str, Dict[str, Any]],
+    client_modes: dict[str, dict[str, Any]],
 ) -> None:
     """Каждый domain из MODE_CONFIG должен существовать на backend."""
-    client_domains = {
-        str(mode["domain"])
-        for mode in client_modes.values()
-    }
+    client_domains = {str(mode["domain"]) for mode in client_modes.values()}
 
     unsupported = client_domains - ALLOWED_DOMAINS
 
@@ -325,7 +310,7 @@ def test_all_client_domains_are_allowed(
 
 
 def test_all_client_intents_are_allowed(
-    client_modes: Dict[str, Dict[str, Any]],
+    client_modes: dict[str, dict[str, Any]],
 ) -> None:
     """Каждый непустой intent из MODE_CONFIG должен поддерживаться backend."""
     client_intents = {
@@ -344,13 +329,11 @@ def test_all_client_intents_are_allowed(
 
 
 def test_all_client_overlays_are_allowed(
-    client_modes: Dict[str, Dict[str, Any]],
+    client_modes: dict[str, dict[str, Any]],
 ) -> None:
     """Каждый overlay из MODE_CONFIG должен поддерживаться backend."""
     client_overlays = {
-        overlay
-        for mode in client_modes.values()
-        for overlay in mode["overlays"]
+        overlay for mode in client_modes.values() for overlay in mode["overlays"]
     }
 
     unsupported = client_overlays - ALLOWED_OVERLAYS
@@ -363,13 +346,10 @@ def test_all_client_overlays_are_allowed(
 
 
 def test_all_client_output_modes_are_allowed(
-    client_modes: Dict[str, Dict[str, Any]],
+    client_modes: dict[str, dict[str, Any]],
 ) -> None:
     """Каждый output_mode из MODE_CONFIG должен поддерживаться backend."""
-    client_output_modes = {
-        str(mode["output_mode"])
-        for mode in client_modes.values()
-    }
+    client_output_modes = {str(mode["output_mode"]) for mode in client_modes.values()}
 
     unsupported = client_output_modes - ALLOWED_OUTPUT_MODES
 
@@ -381,7 +361,7 @@ def test_all_client_output_modes_are_allowed(
 
 
 def test_every_client_mode_has_minimum_contract(
-    client_modes: Dict[str, Dict[str, Any]],
+    client_modes: dict[str, dict[str, Any]],
 ) -> None:
     """Каждый режим обязан содержать непустой domain и overlays."""
     for mode_id, mode in client_modes.items():
@@ -398,11 +378,8 @@ def test_every_client_mode_has_minimum_contract(
         )
 
         assert all(
-            isinstance(overlay, str) and overlay
-            for overlay in mode["overlays"]
-        ), (
-            f'Режим "{mode_id}" содержит некорректное значение overlays.'
-        )
+            isinstance(overlay, str) and overlay for overlay in mode["overlays"]
+        ), f'Режим "{mode_id}" содержит некорректное значение overlays.'
 
         assert isinstance(mode["output_mode"], str) and mode["output_mode"], (
             f'Режим "{mode_id}" не содержит корректный output_mode.'

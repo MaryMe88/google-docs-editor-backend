@@ -3,28 +3,25 @@
 
 from __future__ import annotations
 
-import pytest
-
 from src.config_types import (
     DomainConfig,
     FeatureResolutionResult,
-    OverlayConfig,
     KnowledgeLevel,
+    OverlayConfig,
 )
 from src.prompt_builder.feature_resolution import (
-    _prepare_resolution_context,
-    _apply_domain_incompatibility,
-    _apply_overlay_suppressions,
-    _resolve_overlay_conflicts,
-    _apply_full_level_overrides,
-    _apply_suppress_rules,
-    _activate_features_from_tags,
-    _activate_storytelling,
-    _activate_marketing,
     _activate_antiai,
-    _activate_rhetoric,
-    _activate_nkrj,
     _activate_editorial,
+    _activate_marketing,
+    _activate_nkrj,
+    _activate_rhetoric,
+    _activate_storytelling,
+    _apply_domain_incompatibility,
+    _apply_full_level_overrides,
+    _apply_overlay_suppressions,
+    _apply_suppress_rules,
+    _prepare_resolution_context,
+    _resolve_overlay_conflicts,
 )
 from src.reason_codes import ReasonCode
 
@@ -77,14 +74,22 @@ def test_apply_domain_incompatibility_removes_intent():
     warnings = []
 
     new_intent, new_overlays, new_tags = _apply_domain_incompatibility(
-        result, "blog", domain_config,
-        effective_intent, effective_overlays, tags,
-        suppressed_layers, warnings,
+        result,
+        "blog",
+        domain_config,
+        effective_intent,
+        effective_overlays,
+        tags,
+        suppressed_layers,
+        warnings,
     )
     assert new_intent is None
     assert "analytical" not in new_tags
     assert len(result.suppressed_features) == 1
-    assert ReasonCode.SUPPRESSED_BY_DOMAIN_INCOMPATIBLE_INTENT in result.suppression_reasons["intent"]
+    assert (
+        ReasonCode.SUPPRESSED_BY_DOMAIN_INCOMPATIBLE_INTENT
+        in result.suppression_reasons["intent"]
+    )
 
 
 def test_resolve_overlay_conflicts_higher_priority_wins():
@@ -125,8 +130,12 @@ def test_resolve_overlay_conflicts_higher_priority_wins():
         ignored_unknown_values=[],
     )
     new_overlays, new_tags = _resolve_overlay_conflicts(
-        result, effective_overlays, [ov1, ov2], tags,
-        result.suppressed_layers, result.warnings,
+        result,
+        effective_overlays,
+        [ov1, ov2],
+        tags,
+        result.suppressed_layers,
+        result.warnings,
     )
     assert "editorial" not in new_overlays
     assert "editorial" not in new_tags
@@ -199,8 +208,13 @@ def test_apply_suppress_rules_domain_suppresses_storytelling():
         ignored_unknown_values=[],
     )
     _apply_suppress_rules(
-        result, domain_config, None, [], [],
-        result.suppressed_layers, result.warnings,
+        result,
+        domain_config,
+        None,
+        [],
+        [],
+        result.suppressed_layers,
+        result.warnings,
     )
     assert result.storytelling_enabled is False
     assert "storytelling" in result.suppressed_features
@@ -210,10 +224,14 @@ def test_apply_suppress_rules_domain_suppresses_storytelling():
 # Тесты для функций активации отдельных фич
 # ---------------------------------------------------------------------------
 
+
 def test_activate_storytelling_enabled():
     domain_config = DomainConfig(
-        name="blog", system_rules="", tone="neutral",
-        allow_storytelling=True, allow_marketing=False,
+        name="blog",
+        system_rules="",
+        tone="neutral",
+        allow_storytelling=True,
+        allow_marketing=False,
     )
     result = FeatureResolutionResult(
         tags=[],
@@ -243,8 +261,11 @@ def test_activate_storytelling_enabled():
 
 def test_activate_marketing_disabled_by_domain():
     domain_config = DomainConfig(
-        name="blog", system_rules="", tone="neutral",
-        allow_storytelling=False, allow_marketing=False,
+        name="blog",
+        system_rules="",
+        tone="neutral",
+        allow_storytelling=False,
+        allow_marketing=False,
     )
     result = FeatureResolutionResult(
         tags=[],
@@ -268,7 +289,9 @@ def test_activate_marketing_disabled_by_domain():
     all_tags = ["blog", "marketing"]
     _activate_marketing(result, all_tags, domain_config)
     assert result.marketing_enabled is False
-    assert ReasonCode.DOMAIN_DENIES_MARKETING in result.suppression_reasons.get("marketing", [])
+    assert ReasonCode.DOMAIN_DENIES_MARKETING in result.suppression_reasons.get(
+        "marketing", []
+    )
 
 
 def test_activate_antiai_enabled():
@@ -320,7 +343,9 @@ def test_activate_rhetoric_no_tag():
     all_tags = ["blog"]
     _activate_rhetoric(result, all_tags)
     assert result.rhetoric_enabled is False
-    assert ReasonCode.NO_RECOGNIZED_ALIAS in result.suppression_reasons.get("rhetoric", [])
+    assert ReasonCode.NO_RECOGNIZED_ALIAS in result.suppression_reasons.get(
+        "rhetoric", []
+    )
 
 
 def test_activate_nkrj_enabled():
@@ -377,6 +402,7 @@ def test_activate_editorial_enabled():
 # Тесты для _apply_overlay_suppressions
 # ---------------------------------------------------------------------------
 
+
 def test_apply_overlay_suppressions_removes_suppressed_overlay():
     """Проверяет, что явный suppress удаляет целевой оверлей."""
     ov1 = OverlayConfig(
@@ -418,8 +444,12 @@ def test_apply_overlay_suppressions_removes_suppressed_overlay():
     warnings = []
 
     new_overlays, new_tags = _apply_overlay_suppressions(
-        result, effective_overlays, [ov1, ov2], tags,
-        suppressed_layers, warnings,
+        result,
+        effective_overlays,
+        [ov1, ov2],
+        tags,
+        suppressed_layers,
+        warnings,
     )
     assert "pressrelease" not in new_overlays
     assert "pressrelease" not in new_tags
@@ -458,8 +488,12 @@ def test_apply_overlay_suppressions_no_suppress_if_target_not_present():
     effective_overlays = ["landing"]
     tags = ["landing"]
     new_overlays, new_tags = _apply_overlay_suppressions(
-        result, effective_overlays, [ov1], tags,
-        [], [],
+        result,
+        effective_overlays,
+        [ov1],
+        tags,
+        [],
+        [],
     )
     assert "landing" in new_overlays
     assert len(new_overlays) == 1

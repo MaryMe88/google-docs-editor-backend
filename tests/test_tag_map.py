@@ -8,17 +8,18 @@ tests/test_tag_map.py
 from __future__ import annotations
 
 import json
-import logging
 import tempfile
 from pathlib import Path
 from unittest.mock import patch
 
-import pytest
-
 from src.config_types import CANONICAL_TAGS, get_primary_tags_for_category
 from src.shared_contracts import ALLOWED_DOMAINS, ALLOWED_INTENTS, ALLOWED_OVERLAYS
-from src.startup_checks import _check_tag_map_coverage, run_startup_checks, StartupCheckParams
-from src.tag_registry import normalize_tag, get_canonical_tag_names
+from src.startup_checks import (
+    StartupCheckParams,
+    _check_tag_map_coverage,
+    run_startup_checks,
+)
+from src.tag_registry import get_canonical_tag_names, normalize_tag
 
 
 def test_canonical_tags_loaded_from_json():
@@ -60,16 +61,18 @@ def test_tag_map_coverage_warns_on_missing():
     для отсутствующих записей, но не падает.
     """
     # Временно создаём словарь, где удалены некоторые ключи, чтобы проверить предупреждение
-    with patch("src.config_types.CANONICAL_TAGS", {"domains": {}, "intents": {}, "overlays": {}}):
-        with patch("logging.Logger.warning") as mock_warning:
-            _check_tag_map_coverage(
-                config_path=Path("config"),
-                allowed_domains=ALLOWED_DOMAINS,
-                allowed_intents=ALLOWED_INTENTS,
-                allowed_overlays=ALLOWED_OVERLAYS,
-            )
-            # Должны быть предупреждения для каждой категории
-            assert mock_warning.call_count >= 3
+    with patch(
+        "src.config_types.CANONICAL_TAGS",
+        {"domains": {}, "intents": {}, "overlays": {}},
+    ), patch("logging.Logger.warning") as mock_warning:
+        _check_tag_map_coverage(
+            config_path=Path("config"),
+            allowed_domains=ALLOWED_DOMAINS,
+            allowed_intents=ALLOWED_INTENTS,
+            allowed_overlays=ALLOWED_OVERLAYS,
+        )
+        # Должны быть предупреждения для каждой категории
+        assert mock_warning.call_count >= 3
 
 
 # ---------------------------------------------------------------------------
@@ -87,26 +90,26 @@ def test_run_startup_checks_does_not_fail_due_to_tag_map():
 
         # Создаём tag_map.json с пустыми разделами
         (config_path / "tag_map.json").write_text(
-            json.dumps({"domains": {}, "intents": {}, "overlays": {}}),
-            encoding="utf-8"
+            json.dumps({"domains": {}, "intents": {}, "overlays": {}}), encoding="utf-8"
         )
 
         domains_dir = config_path / "domains"
         domains_dir.mkdir()
         (domains_dir / "blog.json").write_text(
-            json.dumps({
-                "name": "blog",
-                "system_rules": "",
-                "tone": "neutral",
-                "allow_storytelling": False,
-                "allow_marketing": False,
-            }),
-            encoding="utf-8"
+            json.dumps(
+                {
+                    "name": "blog",
+                    "system_rules": "",
+                    "tone": "neutral",
+                    "allow_storytelling": False,
+                    "allow_marketing": False,
+                }
+            ),
+            encoding="utf-8",
         )
         # Создаём core.json
         (config_path / "core.json").write_text(
-            json.dumps({"role": "test"}),
-            encoding="utf-8"
+            json.dumps({"role": "test"}), encoding="utf-8"
         )
         (config_path / "intents").mkdir()
         (config_path / "overlays").mkdir()
@@ -114,8 +117,17 @@ def test_run_startup_checks_does_not_fail_due_to_tag_map():
         kb_path = Path(tmp) / "knowledge_base"
         kb_path.mkdir()
         (kb_path / "grammar_errors.json").write_text(
-            json.dumps([{"wrong": "test", "correct": "test", "rule": "test", "tags": ["grammar"]}]),
-            encoding="utf-8"
+            json.dumps(
+                [
+                    {
+                        "wrong": "test",
+                        "correct": "test",
+                        "rule": "test",
+                        "tags": ["grammar"],
+                    }
+                ]
+            ),
+            encoding="utf-8",
         )
 
         params = StartupCheckParams(
@@ -134,6 +146,7 @@ def test_run_startup_checks_does_not_fail_due_to_tag_map():
 # ============================================================================
 # НОВЫЕ ТЕСТЫ (CI и коллизии)
 # ============================================================================
+
 
 def test_known_duplicates_normalize_to_same():
     """
@@ -177,19 +190,26 @@ def test_overlay_files_exist():
 # NEW: Тесты для пилотного реорганизации (case_study)
 # ============================================================================
 
+
 def test_case_study_tags_are_canonical():
     """Проверяет, что теги, используемые в case_study.json, зарегистрированы в tag_map.json."""
     # Тег casestudy присутствует в разделе overlays
-    assert "casestudy" in CANONICAL_TAGS.get("overlays", {}), \
+    assert "casestudy" in CANONICAL_TAGS.get("overlays", {}), (
         "Тег 'casestudy' не найден в CANONICAL_TAGS['overlays']"
+    )
     overlay_data = CANONICAL_TAGS["overlays"]["casestudy"]
     # Проверяем, что expanded содержит results и testimonial
     expanded = overlay_data.get("expanded", [])
-    assert "results" in expanded, "Тег 'results' отсутствует в expanded для оверлея casestudy"
-    assert "testimonial" in expanded, "Тег 'testimonial' отсутствует в expanded для оверлея casestudy"
+    assert "results" in expanded, (
+        "Тег 'results' отсутствует в expanded для оверлея casestudy"
+    )
+    assert "testimonial" in expanded, (
+        "Тег 'testimonial' отсутствует в expanded для оверлея casestudy"
+    )
 
     # Также проверяем, что они есть в KNOWN_TAGS
     from src.config_types import KNOWN_TAGS
+
     assert "casestudy" in KNOWN_TAGS
     assert "results" in KNOWN_TAGS
     assert "testimonial" in KNOWN_TAGS
@@ -199,6 +219,7 @@ def test_case_study_tags_are_canonical():
 # НОВЫЕ ТЕСТЫ: get_canonical_tag_names и проверка алиасов
 # ============================================================================
 
+
 def test_get_canonical_tag_names_returns_only_canonical():
     """
     Проверяет, что функция get_canonical_tag_names возвращает только канонические имена,
@@ -206,13 +227,28 @@ def test_get_canonical_tag_names_returns_only_canonical():
     """
     canonical = get_canonical_tag_names()
     # Проверяем, что алиасы не включены
-    aliases = {"antillm", "antiplastic", "taiga", "socialnorms", "basicedit", "cleanup", "story"}
+    aliases = {
+        "antillm",
+        "antiplastic",
+        "taiga",
+        "socialnorms",
+        "basicedit",
+        "cleanup",
+        "story",
+    }
     # Если какие-то из этих алиасов присутствуют в CANONICAL_TAGS как канонические имена, то они не должны быть алиасами.
     # Но мы ожидаем, что они не являются ключами второго уровня.
     # Проверим, что они не входят в множество канонических имён.
-    assert not (aliases & canonical), f"Алиасы попали в канонический список: {aliases & canonical}"
+    assert not (aliases & canonical), (
+        f"Алиасы попали в канонический список: {aliases & canonical}"
+    )
     # Проверяем, что основные канонические имена присутствуют (если они есть в CANONICAL_TAGS)
-    expected = {"antiai", "nkrj", "editorial", "storytelling"}  # пример, могут быть и другие
+    expected = {
+        "antiai",
+        "nkrj",
+        "editorial",
+        "storytelling",
+    }  # пример, могут быть и другие
     # Не обязательно все присутствуют, но если присутствуют, они должны быть в canonical
     for tag in expected:
         if tag in CANONICAL_TAGS.get("overlays", {}):

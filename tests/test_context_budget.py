@@ -8,21 +8,21 @@ Unit-тесты для модуля context_budget.
 import pytest
 
 from src.context_budget import (
-    resolve_context_budget,
-    estimate_input_tokens,
-    estimate_edit_output_tokens,
-    LLMContextLimitError,
     DEFAULT_CONTEXT_WINDOW,
     DEFAULT_SAFETY_MARGIN,
-    MIN_USEFUL_OUTPUT_TOKENS,
-    MIN_EDIT_OUTPUT_TOKENS,
     MAX_EDIT_OUTPUT_TOKENS,
+    MIN_EDIT_OUTPUT_TOKENS,
+    MIN_USEFUL_OUTPUT_TOKENS,
+    LLMContextLimitError,
+    estimate_edit_output_tokens,
+    estimate_input_tokens,
+    resolve_context_budget,
 )
-
 
 # ---------------------------------------------------------------------------
 # Тесты для estimate_input_tokens
 # ---------------------------------------------------------------------------
+
 
 def test_estimate_input_tokens_empty() -> None:
     assert estimate_input_tokens("") == 0
@@ -42,6 +42,7 @@ def test_estimate_input_tokens_long() -> None:
 # ---------------------------------------------------------------------------
 # Тесты для estimate_edit_output_tokens
 # ---------------------------------------------------------------------------
+
 
 def test_estimate_edit_output_tokens_empty() -> None:
     assert estimate_edit_output_tokens("") == MIN_EDIT_OUTPUT_TOKENS
@@ -85,6 +86,7 @@ def test_estimate_edit_output_tokens_very_long_text() -> None:
 # ---------------------------------------------------------------------------
 # Тесты для resolve_context_budget
 # ---------------------------------------------------------------------------
+
 
 def test_resolve_budget_normal() -> None:
     """Нормальный случай: всё помещается, output не обрезается."""
