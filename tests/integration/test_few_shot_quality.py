@@ -56,10 +56,10 @@ def has_grammar_error_after_soglasno(text: str) -> bool:
     Проверяет, есть ли в тексте ошибка "согласно + родительный падеж".
     Например: "согласно приказа", "согласно распоряжения".
     """
-    matches = re.findall(r'согласно\s+(\S+)', text.lower())
+    matches = re.findall(r"согласно\s+(\S+)", text.lower())
     for m in matches:
-        if m.endswith('а') or m.endswith('я'):
-            if m not in ('времени', 'имени'):
+        if m.endswith(("а", "я")):
+            if m not in ("времени", "имени"):
                 return True
     return False
 
@@ -84,8 +84,9 @@ def test_no_verbatim_copy_from_few_shot(client: TestClient) -> None:
 
     # Проверяем, что ошибка "согласно + родительный падеж" исправлена
     # (вместо "приказа" может появиться "приказу" или предложение перестроено)
-    assert not has_grammar_error_after_soglasno(result), \
+    assert not has_grammar_error_after_soglasno(result), (
         f"Ошибка 'согласно + род.падеж' осталась: {result}"
+    )
     assert len(result) > 20, f"Ответ слишком короткий: {result}"
     # Проверяем наличие леммы "начальник" (в любом падеже)
     assert "начальник" in result, f"Потерян контекст: {result}"
@@ -101,8 +102,9 @@ def test_no_false_positive_from_few_shot(client: TestClient) -> None:
     text = "Он сделал всё согласно приказу."
     result = call_editor(client, text)
 
-    assert not has_grammar_error_after_soglasno(result), \
+    assert not has_grammar_error_after_soglasno(result), (
         f"Грамматическая ошибка после 'согласно' в ответе: {result}"
+    )
 
 
 @skip_no_key
@@ -116,10 +118,12 @@ def test_few_shot_disabled_does_not_add_examples(client: TestClient) -> None:
     result_with_fs = call_editor(client, text, include_few_shot=True)
     result_without_fs = call_editor(client, text, include_few_shot=False)
 
-    assert not has_grammar_error_after_soglasno(result_with_fs), \
+    assert not has_grammar_error_after_soglasno(result_with_fs), (
         f"С few-shot не исправлено: {result_with_fs}"
-    assert not has_grammar_error_after_soglasno(result_without_fs), \
+    )
+    assert not has_grammar_error_after_soglasno(result_without_fs), (
         f"Без few-shot не исправлено: {result_without_fs}"
+    )
 
     assert len(result_with_fs) > 10
     assert len(result_without_fs) > 10
