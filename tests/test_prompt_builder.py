@@ -1306,8 +1306,17 @@ def test_process_registry_block_includes_block_when_eligible():
     )
     trace = AssemblyTrace()
     current_total = builder._process_registry_block(
-        block_cfg, kb, req, lines, meta, 0, trace, LimitsConfig()
+        block_cfg,
+        kb,
+        req,
+        lines,
+        meta,
+        0,
+        trace,
+        LimitsConfig(),
     )
+
+    assert current_total == 0
     assert len(lines) > 0
     assert "Грамматические ориентиры:" in lines[0]
     assert trace.blocks[0].included is True
@@ -1358,3 +1367,4 @@ def test_process_registry_block_skips_block_when_budget_disabled():
     assert len(lines) == 0
     assert trace.blocks[0].eligible is False
     assert ReasonCode.BLOCK_INELIGIBLE_BUDGET_DISABLED in trace.blocks[0].reason_codes
+    
