@@ -40,9 +40,13 @@ select = ["E", "F", "W", "I", "UP", "B", "SIM", "RUF", "PIE"]
 #   B904     — raise ... from err — косметика, отложено.
 #   B905     — zip strict= — косметика, отложено.
 #   RUF012   — mutable default в тестовых BASE_PAYLOAD — не баг.
-#   RUF043   — pytest.raises(match=...) без raw-строки — косметика, отложено.
-#   UP042    — StrEnum vs (str, Enum) — нужен Py3.11+, отложено.
 #   E402     — импорты после reload в conftest/test_kb_loading — намеренно.
+#
+# Не указаны (появятся только в ruff 0.8.0+; текущий пин — 0.6.9):
+#   UP042  — StrEnum vs (str, Enum)
+#   UP045  — Optional[X] → X | None
+#   RUF043 — pytest.raises(match=...) без raw-строки
+# После апгрейда ruff до 0.8+ вернуть их в ignore / per-file-ignores.
 ignore = [
     "E501",
     "SIM102",
@@ -55,8 +59,6 @@ ignore = [
     "B904",
     "B905",
     "RUF012",
-    "RUF043",
-    "UP042",
     "E402",
 ]
 
@@ -65,21 +67,21 @@ ignore = [
 # (диагностические проверки в startup_checks и т.п.).
 
 [tool.ruff.lint.per-file-ignores]
-# Миграция typing.Dict → dict и Optional[X] → X | None отложена:
-# в этих модулях нет `from __future__ import annotations`,
-# автоматическая замена небезопасна для runtime-аннотаций Pydantic.
-"src/config_types.py"     = ["UP006", "UP035", "UP045"]
-"src/contracts.py"        = ["UP006", "UP035", "UP045"]
-"src/knowledge_retrieval.py" = ["UP006", "UP035", "UP045"]
-"src/llm_client.py"       = ["UP006", "UP035", "UP045"]
-"src/main.py"             = ["UP006", "UP035", "UP045"]
+# Миграция typing.Dict → dict отложена: в этих модулях нет
+# `from __future__ import annotations`, автоматическая замена небезопасна
+# для runtime-аннотаций Pydantic.
+"src/config_types.py"     = ["UP006", "UP035"]
+"src/contracts.py"        = ["UP006", "UP035"]
+"src/knowledge_retrieval.py" = ["UP006", "UP035"]
+"src/llm_client.py"       = ["UP006", "UP035"]
+"src/main.py"             = ["UP006", "UP035"]
 "src/output_guard.py"     = ["UP035"]
-"src/startup_checks.py"   = ["UP006", "UP035", "UP045"]
+"src/startup_checks.py"   = ["UP006", "UP035"]
 "src/kb_manifest_loader.py" = ["UP035"]
-"src/prompt_builder/builder.py"     = ["UP006", "UP035", "UP045"]
-"src/prompt_builder/kb_rendering.py" = ["UP006", "UP035", "UP045"]
-"src/prompt_builder/kb_loading.py"   = ["UP006", "UP035", "UP045"]
-"src/prompt_builder/feature_resolution.py" = ["UP006", "UP035", "UP045"]
+"src/prompt_builder/builder.py"     = ["UP006", "UP035"]
+"src/prompt_builder/kb_rendering.py" = ["UP006", "UP035"]
+"src/prompt_builder/kb_loading.py"   = ["UP006", "UP035"]
+"src/prompt_builder/feature_resolution.py" = ["UP006", "UP035"]
 "src/prompt_builder/config_loaders.py"     = ["UP035"]
 "src/prompt_builder/normalization.py"      = ["UP035"]
 "src/reason_codes.py"     = ["UP035"]
