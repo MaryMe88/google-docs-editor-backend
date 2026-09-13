@@ -225,7 +225,7 @@ def _check_scoring_weights_file(config_path: Path) -> None:
             )
 
         for k in required_keys:
-            if not isinstance(data[k], (int, float)):
+            if not isinstance(data[k], int | float):
                 logger.warning(
                     "Key '%s' in scoring_weights.json has unexpected type %s; "
                     "expected int or float. Using default weights for this key.",

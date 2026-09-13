@@ -23,6 +23,7 @@ import json
 import logging
 import time
 from collections.abc import Callable
+from contextlib import suppress
 from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
@@ -632,12 +633,10 @@ class FileCache:
 
         value = loader(*loader_args)
 
-        mtime = None
+        mtime: float | None = None
         if path is not None and self._policy.check_mtime:
-            try:
+            with suppress(OSError):
                 mtime = path.stat().st_mtime
-            except OSError:
-                pass
 
         self._store[key] = _CacheEntry(
             value=value,

@@ -174,7 +174,7 @@ def score_rule_entry(
                 score += get_scoring_weight("partial_text_match")
                 break
     entry_tags = entry.get("tags", [])
-    if not isinstance(entry_tags, (list, tuple)):
+    if not isinstance(entry_tags, list | tuple):
         entry_tags = []
     tag_set = {normalize_tag(tag) for tag in entry_tags if isinstance(tag, str)}
     overlap = len(tag_set & wanted_tags)
@@ -252,7 +252,7 @@ def score_structural_entry(
         break
 
     entry_tags = entry.get("tags", [])
-    if not isinstance(entry_tags, (list, tuple)):
+    if not isinstance(entry_tags, list | tuple):
         entry_tags = []
     tag_set = {normalize_tag(tag) for tag in entry_tags if isinstance(tag, str)}
     overlap = len(tag_set & wanted_tags)
@@ -296,7 +296,7 @@ def _normalize_tag_set(tags: Iterable[str]) -> set[str]:
 
 def _get_entry_tag_set(entry: dict[str, Any]) -> set[str]:
     raw_tags = entry.get("tags", [])
-    if not isinstance(raw_tags, (list, tuple)):
+    if not isinstance(raw_tags, list | tuple):
         return set()
     return {normalize_tag(tag) for tag in raw_tags if isinstance(tag, str)}
 
