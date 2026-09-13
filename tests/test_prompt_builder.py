@@ -1367,4 +1367,3 @@ def test_process_registry_block_skips_block_when_budget_disabled():
     assert len(lines) == 0
     assert trace.blocks[0].eligible is False
     assert ReasonCode.BLOCK_INELIGIBLE_BUDGET_DISABLED in trace.blocks[0].reason_codes
-    
