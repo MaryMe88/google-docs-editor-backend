@@ -40,12 +40,9 @@ select = ["E", "F", "W", "I", "UP", "B", "SIM", "RUF", "PIE"]
 #   B904     — raise ... from err — косметика, отложено.
 #   B905     — zip strict= — косметика, отложено.
 #   RUF012   — mutable default в тестовых BASE_PAYLOAD — не баг.
+#   RUF043   — pytest.raises(match=...) без raw-строки — косметика, отложено.
 #   UP042    — StrEnum vs (str, Enum) — нужен Py3.11+, отложено.
 #   E402     — импорты после reload в conftest/test_kb_loading — намеренно.
-#
-# RUF043 (pytest.raises(match=...) без raw-строки) не указан:
-# правило появилось в ruff 0.8.0+, текущий пин — 0.6.9.
-# При апгрейде ruff вернуть RUF043 в ignore.
 ignore = [
     "E501",
     "SIM102",
@@ -58,6 +55,7 @@ ignore = [
     "B904",
     "B905",
     "RUF012",
+    "RUF043",
     "UP042",
     "E402",
 ]
