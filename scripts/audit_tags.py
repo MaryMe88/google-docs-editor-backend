@@ -2,9 +2,9 @@ from __future__ import annotations
 
 import json
 import sys
+from collections.abc import Iterable
 from pathlib import Path
-from typing import Any, Dict, Iterable, List, Set, Tuple
-
+from typing import Any
 
 ROOT = Path(__file__).resolve().parent.parent
 TAG_MAP_PATH = ROOT / "config" / "tag_map.json"
@@ -24,7 +24,7 @@ def load_json(path: Path) -> Any:
         return json.load(fh)
 
 
-def extract_tags_from_mapping(node: Any, acc: Set[str]) -> None:
+def extract_tags_from_mapping(node: Any, acc: set[str]) -> None:
     if isinstance(node, dict):
         for key, value in node.items():
             if key in {"primary", "expanded"} and isinstance(value, list):
@@ -48,8 +48,8 @@ def iter_all_values(node: Any) -> Iterable[Any]:
             yield from iter_all_values(item)
 
 
-def extract_tags_from_kb_file(data: Any) -> Set[str]:
-    tags: Set[str] = set()
+def extract_tags_from_kb_file(data: Any) -> set[str]:
+    tags: set[str] = set()
 
     for node in iter_all_values(data):
         if not isinstance(node, dict):
@@ -66,16 +66,16 @@ def extract_tags_from_kb_file(data: Any) -> Set[str]:
     return tags
 
 
-def load_tag_map_tags(tag_map_path: Path) -> Set[str]:
+def load_tag_map_tags(tag_map_path: Path) -> set[str]:
     data = load_json(tag_map_path)
-    tags: Set[str] = set()
+    tags: set[str] = set()
     extract_tags_from_mapping(data, tags)
     return tags
 
 
-def load_kb_tags(kb_path: Path) -> Tuple[Set[str], Dict[str, List[str]]]:
-    all_tags: Set[str] = set()
-    tag_sources: Dict[str, List[str]] = {}
+def load_kb_tags(kb_path: Path) -> tuple[set[str], dict[str, list[str]]]:
+    all_tags: set[str] = set()
+    tag_sources: dict[str, list[str]] = {}
 
     for json_file in sorted(kb_path.rglob("*.json")):
         try:
@@ -92,7 +92,7 @@ def load_kb_tags(kb_path: Path) -> Tuple[Set[str], Dict[str, List[str]]]:
     return all_tags, tag_sources
 
 
-def try_load_canonical_tags() -> Set[str]:
+def try_load_canonical_tags() -> set[str]:
     try:
         sys.path.insert(0, str(ROOT))
         from src.startup_checks import CANONICAL_TAGS  # type: ignore
@@ -100,19 +100,19 @@ def try_load_canonical_tags() -> Set[str]:
         print(f"⚠️ Could not import CANONICAL_TAGS: {exc}")
         return set()
 
-    result: Set[str] = set()
+    result: set[str] = set()
     for tag in CANONICAL_TAGS:
         if isinstance(tag, str) and tag.strip():
             result.add(normalize_tag(tag))
     return result
 
 
-def find_naming_collisions(tags: Set[str]) -> List[Tuple[str, List[str]]]:
-    groups: Dict[str, List[str]] = {}
+def find_naming_collisions(tags: set[str]) -> list[tuple[str, list[str]]]:
+    groups: dict[str, list[str]] = {}
     for tag in sorted(tags):
         groups.setdefault(compact_tag(tag), []).append(tag)
 
-    collisions: List[Tuple[str, List[str]]] = []
+    collisions: list[tuple[str, list[str]]] = []
     for compact, variants in groups.items():
         if len(variants) > 1:
             collisions.append((compact, variants))
@@ -146,7 +146,7 @@ def main() -> None:
     kb_tags, tag_sources = load_kb_tags(KB_PATH)
     canonical_tags = try_load_canonical_tags()
 
-    print(f"\nTag counts")
+    print("\nTag counts")
     print("----------")
     print(f"tag_map tags    : {len(tag_map_tags)}")
     print(f"kb tags         : {len(kb_tags)}")

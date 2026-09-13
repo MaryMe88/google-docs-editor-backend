@@ -3,7 +3,6 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
-
 """Validate that every tag declared in CANONICAL_TAGS exists in at least one KB record.
 
 Usage (local):
@@ -22,7 +21,7 @@ try:
         ALLOWED_INTENTS,
         ALLOWED_OVERLAYS,
     )
-    from src.startup_checks import run_startup_checks, StartupCheckParams
+    from src.startup_checks import StartupCheckParams, run_startup_checks
 except ImportError as exc:
     print(f"❌ Import error — make sure dependencies are installed: {exc}")
     sys.exit(1)
@@ -58,7 +57,9 @@ def main() -> None:
         print(f"❌ Missing file or directory: {exc}")
         sys.exit(1)
 
-    print("✅ KB validation passed — all CANONICAL_TAGS are present in the knowledge base.")
+    print(
+        "✅ KB validation passed — all CANONICAL_TAGS are present in the knowledge base."
+    )
 
 
 if __name__ == "__main__":

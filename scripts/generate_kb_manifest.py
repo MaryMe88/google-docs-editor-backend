@@ -35,7 +35,6 @@ MANIFEST_FILENAME = "kb_manifest.json"
 # block_type    — "list" (по умолчанию) или "dict" — формат данных блока (BUG-7)
 
 FILE_RULES: dict[str, dict[str, Any]] = {
-
     # ── deai_cleanup (priority 1) ──────────────────────────────────────────
     "anti_ai_techniques.json": {
         "stage": "deai_cleanup",
@@ -80,10 +79,9 @@ FILE_RULES: dict[str, dict[str, Any]] = {
         "budget_weight": "high",
         "tags": ["stop_words", "filler", "deai", "word_level"],
         "intents": [],
-        "block_type": "dict",   # BUG-7: словарный блок
+        "block_type": "dict",  # BUG-7: словарный блок
         # stop_words — отдельный блок, не объединяется
     },
-
     # ── editorial_core (priority 2) ───────────────────────────────────────
     "general_editing_principles.json": {
         "stage": "editorial_core",
@@ -148,7 +146,6 @@ FILE_RULES: dict[str, dict[str, Any]] = {
         "intents": [],
         # отдельный блок
     },
-
     # ── stylistic_diagnosis (priority 3) ──────────────────────────────────
     "lexical_semantic_errors.json": {
         "stage": "stylistic_diagnosis",
@@ -186,7 +183,6 @@ FILE_RULES: dict[str, dict[str, Any]] = {
         "intents": [],
         "block_name": "stylistic_issues",
     },
-
     # ── word_level (priority 4) ────────────────────────────────────────────
     "cleaning_words_and_noise.json": {
         "stage": "word_level",
@@ -222,10 +218,9 @@ FILE_RULES: dict[str, dict[str, Any]] = {
         "budget_weight": "low",
         "tags": ["nkrj", "corpus", "passive", "sentence_length"],
         "intents": [],
-        "block_type": "dict",   # BUG-7: словарный блок
+        "block_type": "dict",  # BUG-7: словарный блок
         # отдельный блок
     },
-
     # ── composition (priority 5) ───────────────────────────────────────────
     "paragraph_structure_and_composition.json": {
         "stage": "composition",
@@ -245,7 +240,6 @@ FILE_RULES: dict[str, dict[str, Any]] = {
         "intents": [],
         "block_name": "editorial_techniques",
     },
-
     # ── grammar_safety (priority 6) ───────────────────────────────────────
     "grammatical_editing.json": {
         "stage": "grammar_safety",
@@ -274,12 +268,11 @@ FILE_RULES: dict[str, dict[str, Any]] = {
         "intents": [],
         "block_name": "stylistic_issues",
     },
-
     # ── logic (priority 6, параллельно с grammar) ─────────────────────────
     "logic_issues.json": {
         "stage": "logic",
         "priority": 6,
-        "load_mode": "always",          # BUG-8: всегда доступна для базовой логики
+        "load_mode": "always",  # BUG-8: всегда доступна для базовой логики
         "budget_weight": "medium",
         "tags": ["logic", "argumentation", "coherence", "reasoning"],
         "intents": [],
@@ -294,7 +287,6 @@ FILE_RULES: dict[str, dict[str, Any]] = {
         "intents": [],
         "block_name": "editorial_techniques",
     },
-
     # ── specialized (priority 7, по тегам) ────────────────────────────────
     "foreign_words_and_translation.json": {
         "stage": "specialized",
@@ -332,7 +324,6 @@ FILE_RULES: dict[str, dict[str, Any]] = {
         "intents": [],
         "block_name": "stylistic_issues",
     },
-
     # ── rhetoric (priority 8, по интенту) ─────────────────────────────────
     "rhetoric_topoi.json": {
         "stage": "rhetoric",
@@ -379,65 +370,67 @@ FILE_RULES: dict[str, dict[str, Any]] = {
         "intents": ["rhetoric", "expressiveness", "literary", "creative"],
         "block_name": "editorial_techniques",
     },
-
     # ── overlays: storytelling (по ТЕГАМ, а не по интенту) ────────────────
     "storytelling_macrostructures.json": {
         "stage": "overlay_storytelling",
         "priority": 9,
-        "load_mode": "by_tags",          # ИЗМЕНЕНО: было "by_intent"
+        "load_mode": "by_tags",
         "budget_weight": "medium",
         "tags": ["storytelling", "narrative", "structure", "macro_structure"],
-        "intents": [],                   # ОЧИЩЕНО: больше не зависит от интента
+        "intents": [],
         "block_name": "storytelling_frameworks",
     },
     "storytelling_microtechniques.json": {
         "stage": "overlay_storytelling",
         "priority": 9,
-        "load_mode": "by_tags",          # ИЗМЕНЕНО: было "by_intent"
+        "load_mode": "by_tags",
         "budget_weight": "medium",
         "tags": ["storytelling", "micro_technique", "show_not_tell", "suspense"],
-        "intents": [],                   # ОЧИЩЕНО
+        "intents": [],
         "block_name": "storytelling_frameworks",
     },
-
     # ── overlays: marketing (по тегам) ──────────────────────────────────
     "marketing_web.json": {
         "stage": "overlay_marketing",
         "priority": 9,
-        "load_mode": "by_tags",                 # изменено: было "by_intent"
+        "load_mode": "by_tags",
         "budget_weight": "medium",
-        "tags": ["marketing", "web", "landing", "cta"],  # добавлен "marketing"
-        "intents": [],                          # очищено
+        "tags": ["marketing", "web", "landing", "cta"],
+        "intents": [],
         "block_name": "marketing_templates",
     },
     "marketing_email.json": {
         "stage": "overlay_marketing",
         "priority": 9,
-        "load_mode": "by_tags",                 # изменено: было "by_intent"
+        "load_mode": "by_tags",
         "budget_weight": "medium",
-        "tags": ["marketing", "email", "newsletter", "lead_magnet"],  # добавлен "marketing"
-        "intents": [],                          # очищено
+        "tags": [
+            "marketing",
+            "email",
+            "newsletter",
+            "lead_magnet",
+        ],
+        "intents": [],
         "block_name": "marketing_templates",
     },
     "marketing_social.json": {
         "stage": "overlay_marketing",
         "priority": 9,
-        "load_mode": "by_tags",                 # изменено: было "by_intent"
+        "load_mode": "by_tags",
         "budget_weight": "medium",
-        "tags": ["marketing", "social", "smm", "post"],  # добавлен "marketing"
-        "intents": [],                          # очищено
+        "tags": ["marketing", "social", "smm", "post"],
+        "intents": [],
         "block_name": "marketing_templates",
     },
     "marketing_other.json": {
         "stage": "overlay_marketing",
         "priority": 9,
-        "load_mode": "by_tags",                 # изменено: было "by_intent"
+        "load_mode": "by_tags",
         "budget_weight": "low",
-        "tags": ["marketing", "case_study", "presentation"],  # добавлен "marketing"
-        "intents": [],                          # очищено
+        "tags": ["marketing", "case_study", "presentation"],
+        "intents": [],
         "block_name": "marketing_templates",
     },
-
     # ── overlays: genre (жанровые базы знаний, по тегам) ─────────────────
     "case_study.json": {
         "stage": "overlay_genre",
@@ -450,7 +443,6 @@ FILE_RULES: dict[str, dict[str, Any]] = {
         "block_name": "case_study_templates",
         "block_type": "list",
     },
-
     # ── overlays: genre / final check (по интенту) ────────────────────────
     "genre_templates.json": {
         "stage": "overlay_genre",
@@ -470,12 +462,11 @@ FILE_RULES: dict[str, dict[str, Any]] = {
         "intents": ["final_check", "proofreading", "marketing"],
         "block_name": "editorial_techniques",
     },
-
     # ── НОВОЕ ПРАВИЛО ДЛЯ otsenki.json (исправление рассинхрона) ─────────
     "otsenki.json": {
-        "stage": "editorial_core",           # техники редактирования
-        "priority": 2,                       # как у editorial_core
-        "load_mode": "always",               # всегда доступно
+        "stage": "editorial_core",  # техники редактирования
+        "priority": 2,  # как у editorial_core
+        "load_mode": "always",  # всегда доступно
         "budget_weight": "medium",
         "tags": [
             "editing",
@@ -484,11 +475,11 @@ FILE_RULES: dict[str, dict[str, Any]] = {
             "fact_based",
             "anti_advertising",
             "anti_ai",
-            "infostyle"
+            "infostyle",
         ],
         "intents": [],
         "block_name": "evaluation_techniques",
-        "block_type": "dict",                # файл имеет корневую структуру словаря
+        "block_type": "dict",  # файл имеет корневую структуру словаря
     },
 }
 
@@ -498,6 +489,7 @@ KNOWN_SUBFOLDERS = ("editorial_techniques", "stylistic_issues")
 
 
 # ── Основная логика ───────────────────────────────────────────────────────────
+
 
 def collect_kb_files(kb_dir: Path) -> list[tuple[Path, str]]:
     """Возвращает список (путь_к_файлу, относительный_путь_от_kb_dir)."""
@@ -608,9 +600,9 @@ def generate_manifest(kb_dir: Path, dry_run: bool, update: bool) -> None:
                 "never": "Файл отключён (unclassified или вручную)",
             },
             "budget_weights": {
-                "high":   "Урезается последним при сжатии промпта",
+                "high": "Урезается последним при сжатии промпта",
                 "medium": "Урезается вторым",
-                "low":    "Урезается первым",
+                "low": "Урезается первым",
             },
         },
         "files": entries,
@@ -636,21 +628,26 @@ def generate_manifest(kb_dir: Path, dry_run: bool, update: bool) -> None:
 
 # ── CLI ───────────────────────────────────────────────────────────────────────
 
+
 def main() -> None:
     parser = argparse.ArgumentParser(
         description="Генерирует kb_manifest.json по реальной структуре knowledge_base.",
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     parser.add_argument(
-        "--kb-dir", type=Path, default=None,
+        "--kb-dir",
+        type=Path,
+        default=None,
         help="Путь к папке knowledge_base (по умолчанию: папка рядом со скриптом).",
     )
     parser.add_argument(
-        "--dry-run", action="store_true",
+        "--dry-run",
+        action="store_true",
         help="Показать результат без записи файла.",
     )
     parser.add_argument(
-        "--update", action="store_true",
+        "--update",
+        action="store_true",
         help="Обновить существующий манифест, сохранив ручные заметки (note).",
     )
     args = parser.parse_args()

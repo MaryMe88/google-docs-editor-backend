@@ -3,15 +3,14 @@ from __future__ import annotations
 import json
 import shutil
 from pathlib import Path
-from typing import Any, Dict, List, Tuple
-
+from typing import Any
 
 ROOT = Path(__file__).resolve().parent.parent
 TAG_MAP_PATH = ROOT / "config" / "tag_map.json"
 BACKUP_PATH = ROOT / "config" / "tag_map.backup.json"
 
 # Только безопасные, очевидные замены по результатам аудита.
-RENAMES: Dict[str, str] = {
+RENAMES: dict[str, str] = {
     "aipatterns": "ai_patterns",
     "antiai": "anti_ai",
     "casestudy": "case_study",
@@ -46,9 +45,9 @@ def save_json(path: Path, data: Any) -> None:
         fh.write("\n")
 
 
-def dedupe_preserve_order(items: List[str]) -> List[str]:
+def dedupe_preserve_order(items: list[str]) -> list[str]:
     seen = set()
-    result: List[str] = []
+    result: list[str] = []
 
     for item in items:
         if item not in seen:
@@ -58,16 +57,16 @@ def dedupe_preserve_order(items: List[str]) -> List[str]:
     return result
 
 
-def rewrite_node(node: Any, path: str = "") -> List[Tuple[str, str, str]]:
-    changes: List[Tuple[str, str, str]] = []
+def rewrite_node(node: Any, path: str = "") -> list[tuple[str, str, str]]:
+    changes: list[tuple[str, str, str]] = []
 
     if isinstance(node, dict):
         for key, value in node.items():
             current_path = f"{path}.{key}" if path else key
 
             if key in TARGET_KEYS and isinstance(value, list):
-                new_values: List[str] = []
-                local_changes: List[Tuple[str, str, str]] = []
+                new_values: list[str] = []
+                local_changes: list[tuple[str, str, str]] = []
 
                 for item in value:
                     if isinstance(item, str):
