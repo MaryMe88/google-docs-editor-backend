@@ -95,16 +95,16 @@ def load_kb_tags(kb_path: Path) -> tuple[set[str], dict[str, list[str]]]:
 def try_load_canonical_tags() -> set[str]:
     try:
         sys.path.insert(0, str(ROOT))
-        from src.startup_checks import CANONICAL_TAGS  # type: ignore
+        from src.tag_registry import get_canonical_tag_names
     except Exception as exc:
-        print(f"⚠️ Could not import CANONICAL_TAGS: {exc}")
+        print(f"⚠️ Could not import get_canonical_tag_names: {exc}")
         return set()
 
-    result: set[str] = set()
-    for tag in CANONICAL_TAGS:
-        if isinstance(tag, str) and tag.strip():
-            result.add(normalize_tag(tag))
-    return result
+    try:
+        return {normalize_tag(tag) for tag in get_canonical_tag_names() if tag.strip()}
+    except Exception as exc:
+        print(f"⚠️ Could not load canonical tags: {exc}")
+        return set()
 
 
 def find_naming_collisions(tags: set[str]) -> list[tuple[str, list[str]]]:
