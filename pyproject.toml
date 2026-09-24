@@ -42,11 +42,11 @@ select = ["E", "F", "W", "I", "UP", "B", "SIM", "RUF", "PIE"]
 #   RUF012   — mutable default в тестовых BASE_PAYLOAD — не баг.
 #   E402     — импорты после reload в conftest/test_kb_loading — намеренно.
 #
-# Не указаны (появятся только в ruff 0.8.0+; текущий пин — 0.6.9):
+# Не указаны в ignore — эти правила уже активны в ruff 0.8.4:
 #   UP042  — StrEnum vs (str, Enum)
 #   UP045  — Optional[X] → X | None
 #   RUF043 — pytest.raises(match=...) без raw-строки
-# После апгрейда ruff до 0.8+ вернуть их в ignore / per-file-ignores.
+# Если начнут срабатывать, добавлять их в ignore осознанно с обоснованием.
 ignore = [
     "E501",
     "SIM102",
