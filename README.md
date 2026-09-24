@@ -71,7 +71,7 @@
 * **Backend:** FastAPI, задеплоен на [Render](https://render.com)
 * **LLM‑провайдер:** [OpenRouter](https://openrouter.ai) (модель задаётся в конфиге или env)
 * **Клиент:** Google Apps Script (файл `New Script.js`)
-* **Python:** 3.11+
+* **Python:** 3.11+ (CI проверяет 3.11 и 3.12)
 
 ## Архитектура
 
