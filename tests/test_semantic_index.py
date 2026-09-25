@@ -205,16 +205,10 @@ def test_semantic_index_is_ready() -> None:
 
 def test_get_semantic_index_returns_none_if_not_initialized() -> None:
     """Проверяет, что get_semantic_index возвращает None, если индекс не инициализирован."""
-    from src.semantic_index import _global_index, get_semantic_index
+    from src.semantic_index import get_semantic_index, reset_semantic_index
 
-    old_global = _global_index
-    try:
-        import src.semantic_index as si
-
-        si._global_index = None
-        assert get_semantic_index() is None
-    finally:
-        si._global_index = old_global
+    reset_semantic_index()
+    assert get_semantic_index() is None
 
 
 def test_init_semantic_index_sets_global_index() -> None:
@@ -237,20 +231,66 @@ def test_init_semantic_index_sets_global_index() -> None:
 # ============================================================================
 
 
-def test_set_semantic_entries_stores_entries() -> None:
-    """Проверяет, что set_semantic_entries сохраняет записи в глобальную переменную."""
-    from src.semantic_index import _entries_for_index, set_semantic_entries
+def test_set_semantic_entries_stores_entries(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """set_semantic_entries stores entries for lazy initialization."""
+    monkeypatch.setattr("src.semantic_index._CACHE_PATH", tmp_path / "e.npy")
+    monkeypatch.setattr("src.semantic_index._CACHE_META_PATH", tmp_path / "e.json")
 
-    # Сохраняем старое значение, чтобы восстановить после теста
-    old = _entries_for_index
-    try:
-        # Устанавливаем явно None, чтобы избежать влияния других тестов
-        import src.semantic_index as si
+    from src.semantic_index import (
+        ensure_semantic_index,
+        reset_semantic_index,
+        set_semantic_entries,
+    )
 
-        si._entries_for_index = None
+    reset_semantic_index()
+    test_entries = [{"id": "test", "name": "test"}]
 
-        test_entries = [{"id": "test"}]
+    with patch("src.semantic_index.SemanticIndex._get_model") as mock_get_model:
+        mock_model = MagicMock()
+        mock_model.encode = MagicMock(return_value=[[0.1, 0.2]])
+        mock_get_model.return_value = mock_model
+
         set_semantic_entries(test_entries)
-        assert si._entries_for_index is test_entries
-    finally:
-        si._entries_for_index = old  # восстанавливаем
+        index = ensure_semantic_index()
+
+    assert index is not None
+    assert index.entries == test_entries
+
+
+def test_ensure_semantic_index_returns_none_without_entries() -> None:
+    """ensure_semantic_index returns None if no entries were stored."""
+    from src.semantic_index import ensure_semantic_index, reset_semantic_index
+
+    reset_semantic_index()
+    assert ensure_semantic_index() is None
+
+
+def test_ensure_semantic_index_returns_same_instance(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Repeated calls to ensure_semantic_index return the same cached index."""
+    monkeypatch.setattr("src.semantic_index._CACHE_PATH", tmp_path / "e.npy")
+    monkeypatch.setattr("src.semantic_index._CACHE_META_PATH", tmp_path / "e.json")
+
+    from src.semantic_index import (
+        ensure_semantic_index,
+        reset_semantic_index,
+        set_semantic_entries,
+    )
+
+    reset_semantic_index()
+    set_semantic_entries([{"id": "1", "name": "a"}])
+
+    with patch("src.semantic_index.SemanticIndex._get_model") as mock_get_model:
+        mock_model = MagicMock()
+        mock_model.encode = MagicMock(return_value=[[0.1, 0.2]])
+        mock_get_model.return_value = mock_model
+
+        index1 = ensure_semantic_index()
+        index2 = ensure_semantic_index()
+
+    assert index1 is not None
+    assert index1 is index2
+    assert mock_model.encode.call_count == 1
