@@ -317,6 +317,41 @@ def set_semantic_entries(entries: list[dict[str, Any]]) -> None:
     )
 
 
+def ensure_semantic_index(
+    model_name: str = "cointegrated/rubert-tiny2",
+) -> SemanticIndex | None:
+    """Return the global semantic index, lazily building it if needed.
+
+    Lazily builds the index from entries previously stored via
+    set_semantic_entries(). Returns None if no entries were stored or
+    if the index could not be built.
+    """
+    global _global_index
+
+    index = _global_index
+    if index is not None and index.is_ready():
+        return index
+
+    if not _entries_for_index:
+        logger.warning("SemanticIndex is not initialized: no entries were stored for indexing")
+        return None
+
+    logger.info("SemanticIndex: lazy initialization on first request")
+    index = SemanticIndex(model_name=model_name)
+    index.build(_entries_for_index)
+    if not index.is_ready():
+        return None
+    _global_index = index
+    return index
+
+
+def reset_semantic_index() -> None:
+    """Reset global semantic index state (intended for tests)."""
+    global _global_index, _entries_for_index
+    _global_index = None
+    _entries_for_index = None
+
+
 def init_semantic_index(
     all_entries: list[dict[str, Any]],
     model_name: str = "cointegrated/rubert-tiny2",

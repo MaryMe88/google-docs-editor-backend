@@ -173,8 +173,7 @@ def reset_semantic_index():
     """
     import src.semantic_index as si
 
-    si._global_index = None
-    si._entries_for_index = None
+    si.reset_semantic_index()
     yield
 
 

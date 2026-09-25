@@ -431,21 +431,9 @@ def _semantic_rerank(
     if not entries or not query or not query.strip() or semantic_weight <= 0:
         return entries
     try:
-        from src.semantic_index import (
-            _entries_for_index,
-            get_semantic_index,
-            init_semantic_index,
-        )
+        from src.semantic_index import ensure_semantic_index
 
-        index = get_semantic_index()
-        if index is None:
-            if _entries_for_index:
-                logger.info("SemanticIndex: ленивая инициализация индекса по первому запросу")
-                init_semantic_index(_entries_for_index)
-                index = get_semantic_index()
-            else:
-                logger.warning("SemanticIndex не инициализирован: нет записей для индексации")
-                return entries
+        index = ensure_semantic_index()
         if index is None or not index.is_ready():
             return entries
     except ImportError:
