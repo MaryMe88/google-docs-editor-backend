@@ -68,9 +68,13 @@ jobs:
         run: |
           python scripts/audit_tags.py
 
-      - name: Run pytest
+      - name: Run pytest with coverage
         env:
           PYTHONPATH: .
         run: |
-          pytest tests/ -v
+          python -m pytest tests/ \
+            --cov=src \
+            --cov-report=term-missing \
+            --cov-report=xml \
+            -q
           
