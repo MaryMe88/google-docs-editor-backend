@@ -25,6 +25,7 @@ from src.knowledge_retrieval import (
     STRUCTURAL_FALLBACK_POLICY,
     FallbackPolicy,
     FallbackStage,
+    RetrievalResult,
     SelectionParams,
     _collect_with_budget,
     _select_ranked_entries,
@@ -752,3 +753,75 @@ class TestSemanticRerankOption:
             limit=1,
         )
         assert len(result) == 1
+
+
+class TestRetrievalResultContract:
+    """Contract tests for RetrievalResult (iteration 6, roadmap).
+
+    The class must stay a tuple subclass with named fields so that
+    both positional unpacking and attribute access work.
+    """
+
+    def test_is_tuple_subclass(self) -> None:
+        r = RetrievalResult([], FallbackStage.EMPTY, 0)
+        assert isinstance(r, tuple)
+        assert isinstance(r, RetrievalResult)
+
+    def test_named_fields_match_positional(self) -> None:
+        entries = [{"id": "x"}]
+        r = RetrievalResult(entries, FallbackStage.STRONG, 2)
+        assert r.entries == entries
+        assert r.stage is FallbackStage.STRONG
+        assert r.dropped_count == 2
+        assert r[0] == entries
+        assert r[1] is FallbackStage.STRONG
+        assert r[2] == 2
+
+    def test_equality_with_plain_tuple(self) -> None:
+        r = RetrievalResult([], FallbackStage.EMPTY, 0)
+        assert r == ([], FallbackStage.EMPTY, 0)
+
+    def test_select_grammar_rules_returns_retrieval_result_when_meta(self) -> None:
+        kb = SimpleNamespace(
+            grammar_errors=[
+                make_rule_entry(
+                    wrong="alpha",
+                    correct="beta",
+                    rule="gamma",
+                    tags=["grammar"],
+                )
+            ]
+        )
+        result = select_grammar_rules(
+            kb=kb,
+            text="alpha",
+            tags=["grammar"],
+            limit=1,
+            return_meta=True,
+        )
+        assert isinstance(result, RetrievalResult)
+        assert isinstance(result.entries, list)
+        assert isinstance(result.stage, FallbackStage)
+        assert isinstance(result.dropped_count, int)
+
+    def test_select_ranked_returns_retrieval_result_when_meta(self) -> None:
+        entries = [
+            make_rule_entry(
+                wrong="alpha",
+                correct="beta",
+                rule="gamma",
+                tags=["grammar"],
+            )
+        ]
+        params = SelectionParams(
+            scorer=score_rule_entry,
+            return_meta=True,
+        )
+        result = _select_ranked_entries(
+            entries=entries,
+            normalized_text="alpha",
+            wanted_tags=["grammar"],
+            limit=1,
+            params=params,
+        )
+        assert isinstance(result, RetrievalResult)
