@@ -54,7 +54,7 @@ jobs:
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install -r requirements.txt
+          pip install -r requirements-dev.txt
 
       - name: Validate KB tags
         env:
@@ -68,9 +68,13 @@ jobs:
         run: |
           python scripts/audit_tags.py
 
-      - name: Run pytest
+      - name: Run pytest with coverage
         env:
           PYTHONPATH: .
         run: |
-          pytest tests/ -v
+          python -m pytest tests/ \
+            --cov=src \
+            --cov-report=term-missing \
+            --cov-report=xml \
+            -q
           
