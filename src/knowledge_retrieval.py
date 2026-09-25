@@ -17,6 +17,7 @@ from enum import Enum
 from typing import (
     Any,
     Literal,
+    NamedTuple,
     overload,
 )
 
@@ -32,6 +33,19 @@ class FallbackStage(str, Enum):
     TAG_ONLY = "tag_only"
     NEUTRAL = "neutral"
     EMPTY = "empty"
+
+
+class RetrievalResult(NamedTuple):
+    """
+    Result of the retrieval selection with fallback stage info.
+
+    Behaves like a plain 3-tuple (entries, stage, dropped_count),
+    but exposes named fields for clarity and static typing.
+    """
+
+    entries: list[dict[str, Any]]
+    stage: FallbackStage
+    dropped_count: int
 
 
 @dataclass(frozen=True)
@@ -405,14 +419,17 @@ def _sort_ranked(scored: list[tuple[int, int, dict[str, Any]]]) -> list[dict[str
 def _ensure_return_type(
     result: list[dict[str, Any]] | tuple[list[dict[str, Any]], FallbackStage, int],
     return_meta: bool,
-) -> list[dict[str, Any]] | tuple[list[dict[str, Any]], FallbackStage, int]:
+) -> list[dict[str, Any]] | RetrievalResult:
     if return_meta:
-        if not isinstance(result, tuple) or len(result) != 3:
-            raise TypeError(
-                "_select_ranked_entries с return_meta=True должен возвращать "
-                "tuple из 3 элементов (entries, stage, dropped), "
-                f"но получил {type(result).__name__}: {result!r}"
-            )
+        if isinstance(result, RetrievalResult):
+            return result
+        if isinstance(result, tuple) and len(result) == 3:
+            return RetrievalResult(result[0], result[1], result[2])
+        raise TypeError(
+            "_select_ranked_entries с return_meta=True должен возвращать "
+            "tuple из 3 элементов (entries, stage, dropped), "
+            f"но получил {type(result).__name__}: {result!r}"
+        )
     else:
         if not isinstance(result, list):
             raise TypeError(
@@ -646,15 +663,18 @@ def _select_ranked_entries(
     wanted_tags: Iterable[str],
     limit: int,
     params: SelectionParams,
-) -> list[dict[str, Any]] | tuple[list[dict[str, Any]], FallbackStage, int]:
+) -> list[dict[str, Any]] | RetrievalResult:
     """
     Общая функция ранжирования записей с quality-gated fallback.
     Стадии: strong -> text_only -> tag_only -> neutral -> empty.
     Если params.return_meta=True, возвращает (entries, stage, dropped).
     """
     if not entries or limit <= 0:
-        stage = FallbackStage.EMPTY
-        result = ([], stage, 0) if params.return_meta else []
+        result: list[dict[str, Any]] | RetrievalResult
+        if params.return_meta:
+            result = RetrievalResult([], FallbackStage.EMPTY, 0)
+        else:
+            result = []
         return _ensure_return_type(result, params.return_meta)
 
     policy = params.fallback_policy or RULE_FALLBACK_POLICY
@@ -678,16 +698,18 @@ def _select_ranked_entries(
         )
         if result_entries_dropped is not None:
             result_entries, dropped = result_entries_dropped
+            res: list[dict[str, Any]] | RetrievalResult
             if params.return_meta:
-                res = (result_entries, stage_name, dropped)
+                res = RetrievalResult(result_entries, stage_name, dropped)
             else:
                 res = result_entries
             return _ensure_return_type(res, params.return_meta)
 
     # Если ни одна стадия не сработала
     _log_stage_debug(params.debug_context, FallbackStage.EMPTY, candidates, [])
+    res: list[dict[str, Any]] | RetrievalResult
     if params.return_meta:
-        res = ([], FallbackStage.EMPTY, 0)
+        res = RetrievalResult([], FallbackStage.EMPTY, 0)
     else:
         res = []
     return _ensure_return_type(res, params.return_meta)
@@ -754,7 +776,7 @@ def select_entries(
     char_budget: int | None = None,
     return_meta: Literal[True] = True,
     semantic_rerank: bool = False,
-) -> tuple[list[dict[str, Any]], FallbackStage, int]: ...
+) -> RetrievalResult: ...
 
 
 def select_entries(
@@ -769,7 +791,7 @@ def select_entries(
     char_budget: int | None = None,
     return_meta: bool = False,
     semantic_rerank: bool = False,
-) -> list[dict[str, Any]] | tuple[list[dict[str, Any]], FallbackStage, int]:
+) -> list[dict[str, Any]] | RetrievalResult:
     if params is None:
         scorer = score_rule_entry if category != "structural" else score_structural_entry
         fb_policy = STRUCTURAL_FALLBACK_POLICY if category == "structural" else RULE_FALLBACK_POLICY
@@ -797,7 +819,7 @@ def select_entries(
         if not entries_source:
             logger.warning("select_entries: %s пустой. Блок %s не будет добавлен.", attr, category)
             if params.return_meta:
-                return [], FallbackStage.EMPTY, 0
+                return RetrievalResult([], FallbackStage.EMPTY, 0)
             return []
 
     if category == "structural":
@@ -818,14 +840,12 @@ def select_entries(
     if category != "structural":
         weight = 0.35 if params.semantic_rerank else 0.0
         if params.return_meta:
-            entries, stage, dropped = raw  # type: ignore
-            entries = _semantic_rerank(entries, text, semantic_weight=weight)
-            return entries, stage, dropped
-        else:
-            raw = _semantic_rerank(raw, text, semantic_weight=weight)  # type: ignore
-            return raw
-    else:
-        return raw  # type: ignore
+            assert isinstance(raw, RetrievalResult)
+            reranked = _semantic_rerank(raw.entries, text, semantic_weight=weight)
+            return RetrievalResult(reranked, raw.stage, raw.dropped_count)
+        assert isinstance(raw, list)
+        return _semantic_rerank(raw, text, semantic_weight=weight)
+    return raw
 
 
 # ---------------------------------------------------------------------------
@@ -843,7 +863,7 @@ def select_grammar_rules(
     char_budget: int | None = None,
     return_meta: bool = False,
     semantic_rerank: bool = False,
-) -> list[dict[str, Any]] | tuple[list[dict[str, Any]], FallbackStage, int]:
+) -> list[dict[str, Any]] | RetrievalResult:
     params = SelectionParams(
         scorer=score_rule_entry,
         candidate_limit=candidate_limit,
@@ -876,7 +896,7 @@ def select_style_issues(
     char_budget: int | None = None,
     return_meta: bool = False,
     semantic_rerank: bool = False,
-) -> list[dict[str, Any]] | tuple[list[dict[str, Any]], FallbackStage, int]:
+) -> list[dict[str, Any]] | RetrievalResult:
     params = SelectionParams(
         scorer=score_rule_entry,
         candidate_limit=candidate_limit,
@@ -909,7 +929,7 @@ def select_logic_issues(
     char_budget: int | None = None,
     return_meta: bool = False,
     semantic_rerank: bool = False,
-) -> list[dict[str, Any]] | tuple[list[dict[str, Any]], FallbackStage, int]:
+) -> list[dict[str, Any]] | RetrievalResult:
     params = SelectionParams(
         scorer=score_rule_entry,
         candidate_limit=candidate_limit,
@@ -940,7 +960,7 @@ def select_structural_by_tags_or_all(
     min_score: int | None = None,
     char_budget: int | None = None,
     return_meta: bool = False,
-) -> list[dict[str, Any]] | tuple[list[dict[str, Any]], FallbackStage, int]:
+) -> list[dict[str, Any]] | RetrievalResult:
     params = SelectionParams(
         scorer=score_structural_entry,
         candidate_limit=None,
