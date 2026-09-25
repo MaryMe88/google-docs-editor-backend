@@ -393,7 +393,7 @@ class BlockBudget:
     enabled: bool = True
 
     @property
-    def charbudget(self) -> int:
+    def charbudget(self) -> int | None:
         """Совместимость со старым legacy-кодом, использующим charbudget."""
         return self.char_budget
 
@@ -735,6 +735,20 @@ def _normalize_tags_local(tags: list[str]) -> list[str]:
     return [_normalize_tag_local(tag) for tag in tags if isinstance(tag, str)]
 
 
+def _resolve_normalizers() -> (
+    tuple[
+        Callable[[str], str],
+        Callable[[list[str]], list[str]],
+    ]
+):
+    """Resolve (normalize_tag, normalize_tags) from tag_registry or use local fallbacks."""
+    try:
+        from src.tag_registry import normalize_tag, normalize_tags
+    except ImportError:
+        return _normalize_tag_local, _normalize_tags_local
+    return normalize_tag, normalize_tags
+
+
 def _build_known_tags_from_canonical() -> set[str]:
     """Строит множество всех canonical тегов."""
     tags: set[str] = set()
@@ -756,11 +770,7 @@ KNOWN_TAGS: set[str] = _build_known_tags_from_canonical()
 
 def get_canonical_tags_for_category(category: str, value: str) -> list[str]:
     """Возвращает primary + expanded теги для категории/значения."""
-    try:
-        from src.tag_registry import normalize_tag, normalize_tags
-    except ImportError:
-        normalize_tag = _normalize_tag_local
-        normalize_tags = _normalize_tags_local
+    normalize_tag, normalize_tags = _resolve_normalizers()
 
     norm_value = normalize_tag(value)
     data = CANONICAL_TAGS.get(category, {}).get(norm_value)
@@ -774,11 +784,7 @@ def get_canonical_tags_for_category(category: str, value: str) -> list[str]:
 
 def get_primary_tags_for_category(category: str, value: str) -> list[str]:
     """Возвращает primary теги."""
-    try:
-        from src.tag_registry import normalize_tag, normalize_tags
-    except ImportError:
-        normalize_tag = _normalize_tag_local
-        normalize_tags = _normalize_tags_local
+    normalize_tag, normalize_tags = _resolve_normalizers()
 
     norm_value = normalize_tag(value)
     data = CANONICAL_TAGS.get(category, {}).get(norm_value)
@@ -792,11 +798,7 @@ def get_primary_tags_for_category(category: str, value: str) -> list[str]:
 
 def get_expanded_tags_for_category(category: str, value: str) -> list[str]:
     """Возвращает expanded теги."""
-    try:
-        from src.tag_registry import normalize_tag, normalize_tags
-    except ImportError:
-        normalize_tag = _normalize_tag_local
-        normalize_tags = _normalize_tags_local
+    normalize_tag, normalize_tags = _resolve_normalizers()
 
     norm_value = normalize_tag(value)
     data = CANONICAL_TAGS.get(category, {}).get(norm_value)

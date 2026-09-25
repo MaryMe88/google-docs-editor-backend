@@ -109,13 +109,17 @@ indent-style = "space"
 line-ending = "lf"
 
 # ---------------------------------------------------------------------------
-# mypy — на будущее (итерация 2B), пока закомментировано
+# mypy — статическая проверка типов (итерация 4, foundation)
 # ---------------------------------------------------------------------------
-# [tool.mypy]
-# python_version = "3.11"
-# ignore_missing_imports = true
-# warn_unused_ignores = true
-# warn_redundant_casts = true
+# Пока проверяется только узкий набор стабильных модулей; список
+# расширяется отдельными PR. Запуск: mypy <files> (или из CI).
+[tool.mypy]
+python_version = "3.11"
+ignore_missing_imports = true
+warn_unused_ignores = true
+warn_redundant_casts = true
+no_implicit_optional = true
+check_untyped_defs = true
 
 # ---------------------------------------------------------------------------
 # pytest — переносим сюда постепенно, пока оставляем pytest.ini
