@@ -5,7 +5,6 @@ import os
 import re
 import time
 from contextlib import asynccontextmanager
-from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
@@ -29,7 +28,6 @@ from src.llm_client import (
     LLMError,
     LLMFallbackError,
     call_with_fallback,
-    create_llm_client,
 )
 from src.output_guard import (
     find_placeholder_leaks,
@@ -37,9 +35,13 @@ from src.output_guard import (
     has_placeholder_leak,
 )
 from src.prompt_builder import PromptBuilder
-from src.provider_registry import LLMProvider
 from src.scoring_weights import load_scoring_weights
 from src.semantic_index import set_semantic_entries
+from src.services.provider_health import (  # noqa: F401
+    _PROVIDER_KEY_ENV,
+    _check_providers_availability,
+    invalidate_provider_cache,
+)
 from src.shared_contracts import (
     ALLOWED_DOMAINS,
     ALLOWED_INTENTS,
@@ -68,40 +70,9 @@ def _client_ip_key(request: Request) -> str:
 # ---------------------------------------------------------------------------
 # Кэш доступности провайдеров
 # ---------------------------------------------------------------------------
-@dataclass
-class _ProviderCacheEntry:
-    available: bool
-    checked_at: float = field(default_factory=time.monotonic)
-
-    def is_fresh(self, ttl: float) -> bool:
-        return (time.monotonic() - self.checked_at) < ttl
-
-
-_provider_cache: dict[str, _ProviderCacheEntry] = {}
-_PROVIDER_CACHE_TTL = 60.0
-
-
-def _get_cached_availability(provider: str) -> bool | None:
-    entry = _provider_cache.get(provider)
-    if entry and entry.is_fresh(_PROVIDER_CACHE_TTL):
-        return entry.available
-    return None
-
-
-def _set_cached_availability(provider: str, available: bool) -> None:
-    _provider_cache[provider] = _ProviderCacheEntry(available=available)
-
-
-def invalidate_provider_cache() -> None:
-    _provider_cache.clear()
-
-
-_PROVIDER_KEY_ENV: dict[str, str] = {
-    "perplexity": "PERPLEXITY_API_KEY",
-    "openai": "OPENAI_API_KEY",
-    "anthropic": "ANTHROPIC_API_KEY",
-    "openrouter": "OPENROUTER_API_KEY",
-}
+# Provider cache and _PROVIDER_KEY_ENV moved to
+# src.services.provider_health (iteration 8, step 1a).
+# Re-exports are declared in the top import block below.
 
 # ---------------------------------------------------------------------------
 # SEC-патч 2.1: Строгий allowlist для CORS
@@ -264,45 +235,9 @@ def get_prompt_builder() -> PromptBuilder:
 # ---------------------------------------------------------------------------
 # Проверка провайдеров
 # ---------------------------------------------------------------------------
-async def _check_provider_deep(provider_name: str) -> bool:
-    try:
-        provider_enum = LLMProvider(provider_name)
-        async with create_llm_client(
-            provider=provider_enum,
-            model=None,
-            temperature=0.0,
-            timeout=5.0,
-            max_retries=1,
-            max_tokens=1,
-        ) as client:
-            await client.generate("ping")
-            return True
-    except Exception as error:
-        logger.debug("Deep check failed for %s: %s", provider_name, error)
-        return False
-
-
-async def _check_providers_availability(
-    deep: bool = False,
-) -> tuple[bool, dict[str, bool]]:
-    results: dict[str, bool] = {}
-    for provider in ALLOWED_PROVIDERS:
-        if not deep:
-            cached = _get_cached_availability(provider)
-            if cached is not None:
-                results[provider] = cached
-                continue
-            env_var = _PROVIDER_KEY_ENV.get(provider.lower())
-            available = bool(os.getenv(env_var)) if env_var else False
-            _set_cached_availability(provider, available)
-            results[provider] = available
-        else:
-            available = await _check_provider_deep(provider)
-            _set_cached_availability(provider, available)
-            results[provider] = available
-
-    any_available = any(results.values())
-    return any_available, results
+# _check_provider_deep and _check_providers_availability moved to
+# src.services.provider_health (iteration 8, step 1a).
+# Re-exports are declared in the top import block below.
 
 
 # ---------------------------------------------------------------------------
