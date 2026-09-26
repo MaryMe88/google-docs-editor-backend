@@ -21,6 +21,10 @@ from src.contracts import (
     EditRequest,
     EditResponse,
 )
+from src.error_mapping import (
+    InvalidLLMOutputError,
+    _llm_error_to_http_exception,
+)
 from src.llm_client import (
     LLMError,
     LLMFallbackError,
@@ -266,10 +270,8 @@ def _log_edit_request_meta(body: EditRequest, retrieval_meta: dict | None = None
     logger.info(json.dumps(log_data, ensure_ascii=False))
 
 
-class InvalidLLMOutputError(Exception):
-    def __init__(self, reasons: list[str]) -> None:
-        self.reasons = reasons
-        super().__init__(f"Invalid LLM output: {reasons}")
+# InvalidLLMOutputError moved to src.error_mapping
+# (iteration 8, step 1v). Re-export is in the top import block.
 
 
 def _split_edit_output(raw: str, output_mode: str) -> tuple[str, str | None]:
@@ -388,48 +390,8 @@ async def _generate_clean_edit(
     return response, edited_text, report
 
 
-def _llm_error_to_http_exception(error: LLMError) -> HTTPException:
-    if isinstance(error, LLMFallbackError):
-        kind = error.kind
-        if kind == "rate_limit":
-            return HTTPException(
-                status_code=status.HTTP_429_TOO_MANY_REQUESTS,
-                detail="LLM provider rate limit reached. Please try again later.",
-            )
-        if kind == "context_limit":
-            return HTTPException(
-                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-                detail="The text or editing instructions are too large. " "Please shorten them.",
-            )
-        if kind in ("timeout", "upstream_error"):
-            return HTTPException(
-                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-                detail="LLM service is temporarily unavailable. " "Please try again later.",
-            )
-        if kind in ("authentication", "configuration"):
-            return HTTPException(
-                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-                detail="LLM service configuration is temporarily unavailable.",
-            )
-        if kind == "invalid_response":
-            return HTTPException(
-                status_code=status.HTTP_502_BAD_GATEWAY,
-                detail="LLM service returned an empty or invalid response. "
-                "Please try again later.",
-            )
-        return HTTPException(
-            status_code=status.HTTP_502_BAD_GATEWAY,
-            detail="LLM service returned an invalid response. " "Please try again later.",
-        )
-    return HTTPException(
-        status_code=status.HTTP_502_BAD_GATEWAY,
-        detail="LLM service returned an invalid response. " "Please try again later.",
-    )
-
-
-# ============================================================================
-# ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ ДЛЯ edit_text (выделены)
-# ============================================================================
+# _llm_error_to_http_exception moved to src.error_mapping
+# (iteration 8, step 1v). Re-export is in the top import block.
 
 
 def _build_audience_from_request(body: EditRequest) -> AudienceProfile | None:
