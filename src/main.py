@@ -8,9 +8,8 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any
 
-from fastapi import Depends, FastAPI, HTTPException, Request, Response, status
+from fastapi import Depends, FastAPI, HTTPException, Request, status
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
 from pydantic import ValidationError
 from slowapi import Limiter, _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
@@ -19,10 +18,8 @@ from slowapi.util import get_remote_address
 from src.auth import verify_api_key
 from src.config_types import AudienceProfile
 from src.contracts import (
-    CONTRACT_VERSION,
     EditRequest,
     EditResponse,
-    HealthResponse,
 )
 from src.llm_client import (
     LLMError,
@@ -35,6 +32,7 @@ from src.output_guard import (
     has_placeholder_leak,
 )
 from src.prompt_builder import PromptBuilder
+from src.routers.health import router as health_router
 from src.scoring_weights import load_scoring_weights
 from src.semantic_index import set_semantic_entries
 from src.services.provider_health import (  # noqa: F401
@@ -225,6 +223,9 @@ async def add_security_headers(request: Request, call_next):
     return response
 
 
+app.include_router(health_router)
+
+
 def get_prompt_builder() -> PromptBuilder:
     prompt_builder = getattr(app.state, "prompt_builder", None)
     if prompt_builder is None:
@@ -243,56 +244,8 @@ def get_prompt_builder() -> PromptBuilder:
 # ---------------------------------------------------------------------------
 # Эндпоинты
 # ---------------------------------------------------------------------------
-@app.get("/")
-async def root() -> dict:
-    return {"status": "ok"}
-
-
-@app.get("/livez")
-async def liveness_check() -> dict:
-    return {"status": "alive"}
-
-
-@app.get(
-    "/health",
-    response_model=HealthResponse,
-    dependencies=[Depends(verify_api_key)],
-    description="""
-Проверка состояния сервиса.
-
-- deep=false (по умолчанию): проверяет только наличие API-ключей в env.
-- deep=true: выполняет реальный тестовый запрос к каждому LLM-провайдеру.
-  ВНИМАНИЕ: deep=true потребляет реальные токены и может тарифицироваться.
-  Использовать только для диагностики, не в автоматическом мониторинге.
-""",
-)
-async def health_check(request: Request, deep: bool = False) -> Response:
-    if deep and not os.getenv("API_SECRET_KEY"):
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="API_SECRET_KEY is required for deep health check.",
-        )
-
-    builder = get_prompt_builder()
-    any_available, provider_status = await _check_providers_availability(deep=deep)
-
-    health = HealthResponse(
-        status="ok" if any_available else "degraded",
-        version="1.0.0",
-        available_domains=sorted(ALLOWED_DOMAINS),
-        available_intents=list(builder.get_available_intents()),
-        available_overlays=list(builder.get_available_overlays()),
-        available_providers=[provider for provider, ok in provider_status.items() if ok],
-        provider_status=provider_status,
-        deep_check=deep,
-        contract_version=CONTRACT_VERSION,
-    )
-
-    status_code = status.HTTP_200_OK if any_available else status.HTTP_503_SERVICE_UNAVAILABLE
-    return JSONResponse(
-        content=health.model_dump(),
-        status_code=status_code,
-    )
+# Health endpoints (/, /livez, /health) moved to src.routers.health
+# (iteration 8, step 1b).
 
 
 def _log_edit_request_meta(body: EditRequest, retrieval_meta: dict | None = None) -> None:
