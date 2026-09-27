@@ -60,7 +60,7 @@ def _client_with_llm(side_effect):
     mock_call = AsyncMock(side_effect=side_effect)
     # Мокаем именно ссылку, импортированную в src.main.
     patches = [
-        patch("src.main.call_with_fallback", mock_call),
+        patch("src.services.edit_service.call_with_fallback", mock_call),
         patch("src.startup_checks._check_tags_vs_kb"),
         patch.dict(os.environ, {"API_SECRET_KEY": _TEST_API_KEY}),
     ]
