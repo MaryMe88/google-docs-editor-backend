@@ -133,8 +133,8 @@ def test_cors_origins_can_be_overridden_by_env(monkeypatch: pytest.MonkeyPatch) 
 # ---------- Шаг 4: утечка промпта и содержимого ----------
 
 
-@patch("src.main.call_with_fallback")
-@patch("src.main.get_prompt_builder")
+@patch("src.services.edit_service.call_with_fallback")
+@patch("src.routers.edit.get_prompt_builder")
 def test_edit_response_does_not_contain_prompt_or_content(
     mock_get_builder: MagicMock,
     mock_call_fallback: AsyncMock,
@@ -185,8 +185,8 @@ def test_edit_response_does_not_contain_prompt_or_content(
         assert data_dry["raw_response"] == {}
 
 
-@patch("src.main.call_with_fallback")
-@patch("src.main.get_prompt_builder")
+@patch("src.services.edit_service.call_with_fallback")
+@patch("src.routers.edit.get_prompt_builder")
 def test_edit_response_does_not_log_prompt_entirely(
     mock_get_builder: MagicMock,
     mock_call_fallback: AsyncMock,
