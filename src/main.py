@@ -7,37 +7,25 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any
 
-from fastapi import Depends, FastAPI, HTTPException, Request, status
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import ValidationError
-from slowapi import Limiter, _rate_limit_exceeded_handler
+from slowapi import _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
-from slowapi.util import get_remote_address
 
-from src.auth import verify_api_key
-from src.contracts import (
-    EditRequest,
-    EditResponse,
-)
-from src.error_mapping import (
+from src.error_mapping import (  # noqa: F401
     InvalidLLMOutputError,
     _llm_error_to_http_exception,
 )
-from src.llm_client import (
-    LLMError,
-    LLMFallbackError,
-)
 from src.prompt_builder import PromptBuilder
+from src.rate_limit import (
+    _client_ip_key,  # noqa: F401
+    limiter,
+)
+from src.routers.edit import router as edit_router
 from src.routers.health import router as health_router
 from src.scoring_weights import load_scoring_weights
 from src.semantic_index import set_semantic_entries
-from src.services.edit_service import (
-    _build_audience_from_request,
-    _build_dry_run_response,
-    _generate_clean_edit,
-    _log_edit_request_meta,
-    _parse_text_and_report,  # noqa: F401
-)
+from src.services.edit_service import _parse_text_and_report  # noqa: F401
 from src.services.provider_health import (  # noqa: F401
     _PROVIDER_KEY_ENV,
     _check_providers_availability,
@@ -47,7 +35,6 @@ from src.shared_contracts import (
     ALLOWED_DOMAINS,
     ALLOWED_INTENTS,
     ALLOWED_OVERLAYS,
-    ALLOWED_PROVIDERS,
 )
 from src.startup_checks import StartupCheckParams, run_startup_checks
 
@@ -57,15 +44,9 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-_is_testing = os.getenv("PYTEST_RUNNING", "false").lower() == "true"
-_rate_limit = "1000/minute" if _is_testing else "10/minute"
 
-
-# ---------------------------------------------------------------------------
-# SEC-патч 3.1: Rate limit по реальному IP клиента
-# ---------------------------------------------------------------------------
-def _client_ip_key(request: Request) -> str:
-    return get_remote_address(request)
+# _client_ip_key moved to src.rate_limit (iteration 8, step 3).
+# Re-export is in the top import block.
 
 
 # ---------------------------------------------------------------------------
@@ -184,7 +165,7 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
-limiter = Limiter(key_func=_client_ip_key)
+# limiter imported from src.rate_limit (iteration 8, step 3).
 app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
@@ -227,13 +208,11 @@ async def add_security_headers(request: Request, call_next):
 
 
 app.include_router(health_router)
+app.include_router(edit_router)
 
 
-def get_prompt_builder() -> PromptBuilder:
-    prompt_builder = getattr(app.state, "prompt_builder", None)
-    if prompt_builder is None:
-        raise RuntimeError("PromptBuilder is not initialized")
-    return prompt_builder
+# get_prompt_builder moved to src.routers.edit
+# (iteration 8, step 3).
 
 
 # ---------------------------------------------------------------------------
@@ -258,108 +237,6 @@ def get_prompt_builder() -> PromptBuilder:
 # (iteration 8, step 2). Re-exports are in the top import block.
 
 
-# ============================================================================
-# Основной эндпоинт редактирования
-# ============================================================================
-
-
-@app.post(
-    "/api/edit",
-    response_model=EditResponse,
-    dependencies=[Depends(verify_api_key)],
-)
-@limiter.limit(_rate_limit)
-async def edit_text(request: Request, body: EditRequest) -> EditResponse:
-    try:
-        audience = _build_audience_from_request(body)
-        prompt_builder = get_prompt_builder()
-
-        prompt, retrieval_meta = prompt_builder.build(
-            text=body.text,
-            domain=body.domain,
-            intent=body.intent,
-            audience=audience,
-            overlays=body.overlays,
-            output_mode=body.output_mode,
-            include_knowledge=body.include_knowledge,
-            include_few_shot=body.include_few_shot,
-            include_retrieval_meta=True,
-            deep_semantic_search=body.deep_semantic_search,
-        )
-
-        if body.dry_run:
-            return _build_dry_run_response(body, prompt, retrieval_meta)
-
-        providers_to_try = [body.provider] + [
-            provider for provider in sorted(ALLOWED_PROVIDERS) if provider != body.provider
-        ]
-
-        response, edited_text, report = await _generate_clean_edit(
-            prompt=prompt,
-            providers=providers_to_try,
-            body=body,
-        )
-
-        _log_edit_request_meta(body, retrieval_meta)
-        return EditResponse(
-            edited_text=edited_text,
-            report=report,
-            model=response.model,
-            provider=response.provider,
-            dry_run=False,
-            usage={"tokens_used": response.tokens_used},
-            raw_response={
-                "finish_reason": response.finish_reason,
-            },
-            retrieval_meta=(retrieval_meta if body.include_retrieval_meta else None),
-        )
-
-    except InvalidLLMOutputError as error:
-        logger.error("Output guard blocked response: %s", error.reasons)
-        raise HTTPException(
-            status_code=status.HTTP_502_BAD_GATEWAY,
-            detail=("The editor could not produce a valid formatted result. " "Please try again."),
-        ) from error
-    except LLMError as error:
-        if isinstance(error, LLMFallbackError):
-            logger.warning(
-                "LLMFallbackError: provider=%s kind=%s upstream_status=%s "
-                "skipped=%s unknown=%s prompt_length=%d",
-                error.provider,
-                error.kind,
-                error.upstream_status,
-                error.skipped_providers,
-                error.unknown_providers,
-                error.prompt_length,
-            )
-        else:
-            logger.error("LLM error: %s", error, exc_info=True)
-        raise _llm_error_to_http_exception(error) from error
-    except FileNotFoundError as error:
-        logger.error("Config file not found: %s", error, exc_info=True)
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Service configuration error. Contact support.",
-        ) from error
-    except HTTPException:
-        raise
-    except ValidationError as error:
-        logger.error("Validation error: %s", error, exc_info=True)
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail=error.errors(),
-        ) from error
-    except Exception as error:
-        logger.error("Unexpected error: %s", error, exc_info=True)
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Internal server error.",
-        ) from error
-
-
-# ---------------------------------------------------------------------------
-# Парсинг ответа LLM с маркерами ТЕКСТ/ОТЧЁТ
-# ---------------------------------------------------------------------------
-# _MARKER_TEXT, _MARKER_REPORT, _parse_text_and_report moved to
-# src.services.edit_service (iteration 8, step 2).
-# Re-export of _parse_text_and_report is in the top import block.
+# /api/edit endpoint moved to src.routers.edit (iteration 8, step 3).
+# Re-export of _parse_text_and_report — in the top import block.
+# Router is registered via app.include_router(edit_router).
