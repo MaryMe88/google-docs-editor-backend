@@ -320,6 +320,25 @@ def _backoff_with_jitter(base_delay: float, attempt: int) -> float:
     return random.uniform(0, cap)
 
 
+def _resolve_openrouter_reasoning_max_tokens() -> int | None:
+    """Читает OPENROUTER_REASONING_MAX_TOKENS из env.
+
+    Возвращает положительное int или None, если переменная не задана
+    или некорректна. Используется для эмпирической проверки
+    поддержки reasoning.max_tokens на openrouter/auto.
+    """
+    raw = os.getenv("OPENROUTER_REASONING_MAX_TOKENS")
+    if raw is None:
+        return None
+    try:
+        value = int(raw)
+    except ValueError:
+        return None
+    if value <= 0:
+        return None
+    return value
+
+
 _DEFAULT_MAX_TOKENS = 6000
 _MIN_MAX_TOKENS = 1536
 _MAX_MAX_TOKENS = 12000
@@ -603,6 +622,13 @@ class OpenRouterClient(_OpenAICompatibleClient):
         headers["HTTP-Referer"] = os.getenv("OPENROUTER_SITE_URL", "")
         headers["X-Title"] = os.getenv("OPENROUTER_APP_NAME", "text-editor-api")
         return headers
+
+    def _build_payload(self, prompt: str) -> dict[str, Any]:
+        payload = super()._build_payload(prompt)
+        reasoning_max = _resolve_openrouter_reasoning_max_tokens()
+        if reasoning_max is not None:
+            payload["reasoning"] = {"max_tokens": reasoning_max}
+        return payload
 
 
 class AnthropicClient(BaseLLMClient):
