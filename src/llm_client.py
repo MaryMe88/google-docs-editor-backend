@@ -320,24 +320,15 @@ def _backoff_with_jitter(base_delay: float, attempt: int) -> float:
     return random.uniform(0, cap)
 
 
-_VALID_REASONING_EFFORTS = frozenset({"none", "minimal", "low", "medium", "high", "xhigh", "max"})
+def _resolve_openrouter_reasoning_enabled() -> bool:
+    """Return True if reasoning should be enabled.
 
-
-def _resolve_openrouter_reasoning_effort() -> str | None:
-    """Читает OPENROUTER_REASONING_EFFORT из env.
-
-    Дефолт — "none" (reasoning отключён), чтобы модель не тратила
-    выходной бюджет на chain-of-thought. Значение из env
-    переопределяет дефолт, если оно входит в список допустимых.
-    При некорректном значении используется дефолт.
+    Default is False (reasoning disabled) to prevent the model from
+    consuming the entire output budget on chain-of-thought.
+    Env variable OPENROUTER_REASONING_ENABLED=true enables it back.
     """
-    default = "none"
-    raw = os.getenv("OPENROUTER_REASONING_EFFORT")
-    if raw is None:
-        return default
-    if raw not in _VALID_REASONING_EFFORTS:
-        return default
-    return raw
+    raw = os.getenv("OPENROUTER_REASONING_ENABLED", "false")
+    return raw.lower() in ("1", "true", "yes", "on")
 
 
 _DEFAULT_MAX_TOKENS = 6000
@@ -626,13 +617,11 @@ class OpenRouterClient(_OpenAICompatibleClient):
 
     def _build_payload(self, prompt: str) -> dict[str, Any]:
         payload = super()._build_payload(prompt)
-        effort = _resolve_openrouter_reasoning_effort()
-        if effort is not None:
-            # Top-level reasoning_effort (DeepSeek V4 native format).
-            # Nested reasoning.effort конфликтует с DeepSeek V4
-            # wrapper и вызывает HTTP 400, поэтому используем
-            # только верхнеуровневое поле.
-            payload["reasoning_effort"] = effort
+        if not _resolve_openrouter_reasoning_enabled():
+            # OpenRouter native: reasoning disabled for all
+            # supporting models. Prevents budget drain on
+            # chain-of-thought.
+            payload["reasoning"] = {"enabled": False}
         return payload
 
 
