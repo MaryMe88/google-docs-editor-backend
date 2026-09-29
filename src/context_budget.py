@@ -33,7 +33,40 @@ CHARS_PER_INPUT_TOKEN: float = 3.5
 CHARS_PER_OUTPUT_TOKEN: float = 3.5
 
 # Лимиты для выходного бюджета
-MIN_EDIT_OUTPUT_TOKENS: int = 768
+#
+# MIN_EDIT_OUTPUT_TOKENS увеличен с 768 до 4096 (issue #22):
+# reasoning-модели (например, deepseek/deepseek-v4.1-flash через
+# OpenRouter) тратят весь выходной бюджет на chain-of-thought и
+# оставляют 0 токенов на финальный ответ. 4096 даёт запас и на
+# reasoning (~1000-1500 токенов), и на сам текст.
+#
+# Для не-reasoning моделей стоимость не растёт: max_tokens — это
+# лимит, а не цель. Модель завершает ответ раньше и биллятся за
+# фактические токены.
+#
+# Env-override: MIN_EDIT_OUTPUT_TOKENS (целое положительное число).
+_DEFAULT_MIN_EDIT_OUTPUT_TOKENS: int = 4096
+
+
+def _load_min_edit_output_tokens() -> int:
+    """Читает MIN_EDIT_OUTPUT_TOKENS из env с fallback на дефолт.
+
+    Возвращает дефолт, если переменная не задана, не парсится в int
+    или не положительна. Ошибки env не критичны для старта.
+    """
+    raw = os.getenv("MIN_EDIT_OUTPUT_TOKENS")
+    if raw is None:
+        return _DEFAULT_MIN_EDIT_OUTPUT_TOKENS
+    try:
+        value = int(raw)
+    except ValueError:
+        return _DEFAULT_MIN_EDIT_OUTPUT_TOKENS
+    if value <= 0:
+        return _DEFAULT_MIN_EDIT_OUTPUT_TOKENS
+    return value
+
+
+MIN_EDIT_OUTPUT_TOKENS: int = _load_min_edit_output_tokens()
 MAX_EDIT_OUTPUT_TOKENS: int = 8192
 EDIT_OUTPUT_MULTIPLIER: float = 1.35
 

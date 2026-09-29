@@ -778,7 +778,7 @@ def test_diag_parse_length_finish_reason_empty_content() -> None:
     }
     with pytest.raises(LLMInvalidResponseError) as exc:
         client.parse_response(data)
-    assert exc.value.reason_code == "EMPTY_CONTENT"
+    assert exc.value.reason_code == "REASONING_ONLY"
     diag = exc.value.diagnostics
     assert diag is not None
     assert diag["finish_reason"] == "length"
@@ -876,7 +876,7 @@ async def test_diag_generate_does_not_log_user_data(
     assert secret_prompt not in log_text
     assert secret_reasoning not in log_text
     # Диагностика при этом действительно залогирована:
-    assert "reason_code=EMPTY_CONTENT" in log_text
+    assert "reason_code=REASONING_ONLY" in log_text
 
 
 # --- fallback integration ---------------------------------------------------
@@ -947,3 +947,80 @@ def test_diag_collect_never_raises(weird_data: object) -> None:
     )
     assert isinstance(result, dict)
     assert result["reason_code"] == "X"
+
+
+# ============================================================================
+# Issue #22 follow-up: REASONING_ONLY reason_code (second fix PR)
+# ============================================================================
+
+
+def test_reasoning_only_error_message() -> None:
+    """LLMInvalidResponseError с reason_code=REASONING_ONLY имеет понятное сообщение."""
+    err = LLMInvalidResponseError("REASONING_ONLY")
+    assert err.reason_code == "REASONING_ONLY"
+    assert "reasoning" in str(err).lower()
+    assert "REASONING_ONLY" in str(err)
+
+
+def test_parse_reasoning_only_specific_case() -> None:
+    """content пустой + finish_reason=length + reasoning present -> REASONING_ONLY."""
+    client = _make_openrouter_client()
+    data = {
+        "choices": [
+            {
+                "finish_reason": "length",
+                "message": {"content": "", "reasoning": "some long reasoning"},
+            }
+        ],
+    }
+    with pytest.raises(LLMInvalidResponseError) as exc:
+        client.parse_response(data)
+    assert exc.value.reason_code == "REASONING_ONLY"
+
+
+def test_parse_empty_content_without_reasoning_is_plain_empty() -> None:
+    """content пустой + finish_reason=length, но reasoning отсутствует -> EMPTY_CONTENT."""
+    client = _make_openrouter_client()
+    data = {
+        "choices": [
+            {
+                "finish_reason": "length",
+                "message": {"content": ""},
+            }
+        ],
+    }
+    with pytest.raises(LLMInvalidResponseError) as exc:
+        client.parse_response(data)
+    assert exc.value.reason_code == "EMPTY_CONTENT"
+
+
+def test_parse_empty_content_with_stop_reason_is_plain_empty() -> None:
+    """content пустой + reasoning present, но finish_reason != length -> EMPTY_CONTENT."""
+    client = _make_openrouter_client()
+    data = {
+        "choices": [
+            {
+                "finish_reason": "stop",
+                "message": {"content": "", "reasoning": "some reasoning"},
+            }
+        ],
+    }
+    with pytest.raises(LLMInvalidResponseError) as exc:
+        client.parse_response(data)
+    assert exc.value.reason_code == "EMPTY_CONTENT"
+
+
+def test_parse_reasoning_only_requires_whitespace_stripped_reasoning() -> None:
+    """reasoning из одних пробелов не считается present -> EMPTY_CONTENT."""
+    client = _make_openrouter_client()
+    data = {
+        "choices": [
+            {
+                "finish_reason": "length",
+                "message": {"content": "", "reasoning": "   \n  "},
+            }
+        ],
+    }
+    with pytest.raises(LLMInvalidResponseError) as exc:
+        client.parse_response(data)
+    assert exc.value.reason_code == "EMPTY_CONTENT"

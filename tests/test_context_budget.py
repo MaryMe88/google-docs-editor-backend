@@ -63,10 +63,10 @@ def test_estimate_edit_output_tokens_medium_text() -> None:
 
 
 def test_estimate_edit_output_tokens_long_text() -> None:
-    # 5000 символов / 3.5 = 1428.6 → * 1.35 = 1928.6 → ceil = 1929
-    result = estimate_edit_output_tokens("а" * 5000)
+    # 15000 символов / 3.5 = 4285.7 → * 1.35 = 5785.7 → ceil = 5786
+    result = estimate_edit_output_tokens("а" * 15000)
     assert MIN_EDIT_OUTPUT_TOKENS < result < MAX_EDIT_OUTPUT_TOKENS
-    assert result == 1929
+    assert result == 5786
 
 
 def test_estimate_edit_output_tokens_very_long_text() -> None:
