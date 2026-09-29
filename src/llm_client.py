@@ -320,23 +320,24 @@ def _backoff_with_jitter(base_delay: float, attempt: int) -> float:
     return random.uniform(0, cap)
 
 
-def _resolve_openrouter_reasoning_max_tokens() -> int | None:
-    """Читает OPENROUTER_REASONING_MAX_TOKENS из env.
+_VALID_REASONING_EFFORTS = frozenset({"none", "minimal", "low", "medium", "high", "xhigh", "max"})
 
-    Возвращает положительное int или None, если переменная не задана
-    или некорректна. Используется для эмпирической проверки
-    поддержки reasoning.max_tokens на openrouter/auto.
+
+def _resolve_openrouter_reasoning_effort() -> str | None:
+    """Читает OPENROUTER_REASONING_EFFORT из env.
+
+    Дефолт — "none" (reasoning отключён), чтобы модель не тратила
+    выходной бюджет на chain-of-thought. Значение из env
+    переопределяет дефолт, если оно входит в список допустимых.
+    При некорректном значении используется дефолт.
     """
-    raw = os.getenv("OPENROUTER_REASONING_MAX_TOKENS")
+    default = "none"
+    raw = os.getenv("OPENROUTER_REASONING_EFFORT")
     if raw is None:
-        return None
-    try:
-        value = int(raw)
-    except ValueError:
-        return None
-    if value <= 0:
-        return None
-    return value
+        return default
+    if raw not in _VALID_REASONING_EFFORTS:
+        return default
+    return raw
 
 
 _DEFAULT_MAX_TOKENS = 6000
@@ -625,9 +626,13 @@ class OpenRouterClient(_OpenAICompatibleClient):
 
     def _build_payload(self, prompt: str) -> dict[str, Any]:
         payload = super()._build_payload(prompt)
-        reasoning_max = _resolve_openrouter_reasoning_max_tokens()
-        if reasoning_max is not None:
-            payload["reasoning"] = {"max_tokens": reasoning_max}
+        effort = _resolve_openrouter_reasoning_effort()
+        if effort is not None:
+            # Top-level reasoning_effort (DeepSeek V4 native format).
+            # Nested reasoning.effort конфликтует с DeepSeek V4
+            # wrapper и вызывает HTTP 400, поэтому используем
+            # только верхнеуровневое поле.
+            payload["reasoning_effort"] = effort
         return payload
 
 
@@ -729,7 +734,9 @@ def create_llm_client(
         LLMProvider.PERPLEXITY: "sonar-pro",
         LLMProvider.OPENAI: "gpt-4o-mini",
         LLMProvider.ANTHROPIC: "claude-3-5-sonnet-20241022",
-        LLMProvider.OPENROUTER: "openrouter/auto",
+        # Issue #22: openrouter/auto returns reasoning models that consume
+        # the entire output budget. Explicit model keeps behavior predictable.
+        LLMProvider.OPENROUTER: "deepseek/deepseek-v4-flash",
     }
 
     env_keys = {
