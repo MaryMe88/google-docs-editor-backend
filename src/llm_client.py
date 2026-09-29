@@ -124,7 +124,12 @@ class LLMInvalidResponseError(LLMError):
     ) -> None:
         self.reason_code = reason_code
         self.diagnostics = diagnostics
-        if reason_code in ("EMPTY_CONTENT", "NON_TEXT_CONTENT"):
+        if reason_code == "REASONING_ONLY":
+            message = (
+                "Provider consumed the entire output budget on reasoning "
+                "without producing content (REASONING_ONLY)"
+            )
+        elif reason_code in ("EMPTY_CONTENT", "NON_TEXT_CONTENT"):
             message = f"Provider returned empty or non-text content ({reason_code})"
         else:
             message = f"Invalid LLM response: {reason_code}"
@@ -541,7 +546,19 @@ class _OpenAICompatibleClient(BaseLLMClient):
             if "message" not in choice or not isinstance(choice["message"], dict):
                 raise _fail("MISSING_MESSAGE")
 
-            content = choice["message"].get("content")
+            message = choice["message"]
+            content = message.get("content")
+            finish_reason = choice.get("finish_reason")
+            reasoning = message.get("reasoning")
+            has_reasoning = isinstance(reasoning, str) and bool(reasoning.strip())
+
+            # Issue #22: reasoning-модель израсходовала весь выходной
+            # бюджет на chain-of-thought и обрубилась по лимиту,
+            # оставив content пустым. Это более специфичный случай,
+            # чем общий EMPTY_CONTENT.
+            content_empty = content is None or (isinstance(content, str) and not content.strip())
+            if content_empty and finish_reason == "length" and has_reasoning:
+                raise _fail("REASONING_ONLY")
 
             if content is None:
                 raise _fail("EMPTY_CONTENT")
@@ -551,8 +568,6 @@ class _OpenAICompatibleClient(BaseLLMClient):
 
             if not content.strip():
                 raise _fail("EMPTY_CONTENT")
-
-            finish_reason = choice.get("finish_reason")
 
             tokens_used = None
             if "usage" in data and isinstance(data["usage"], dict):
