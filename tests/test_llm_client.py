@@ -9,6 +9,7 @@ tests/test_llm_client.py
 
 from __future__ import annotations
 
+import logging
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -19,13 +20,20 @@ from src.llm_client import (
     _MAX_MAX_TOKENS,
     _MIN_MAX_TOKENS,
     LLMAPIError,
+    LLMConfig,
     LLMError,
     LLMFallbackError,
+    LLMInvalidResponseError,
     LLMProvider,
     LLMResponse,
     LLMTimeoutError,
+    OpenRouterClient,
     _build_fallback_error,
+    _collect_response_diagnostics,
+    _format_diagnostics,
     _resolve_provider_max_tokens,
+    _safe_int,
+    _safe_str,
     _try_provider,
     call_with_fallback,
     estimate_max_tokens,
@@ -519,3 +527,423 @@ def test_build_fallback_error_no_primary():
     assert error.upstream_status is None
     assert error.skipped_providers == ("openrouter",)
     assert error.unknown_providers == ("foo",)
+
+
+# ============================================================================
+# Issue #22: safe diagnostics for invalid OpenRouter responses.
+# ============================================================================
+
+
+def _make_openrouter_client(
+    *,
+    max_tokens: int = 6000,
+    max_retries: int = 3,
+    retry_delay: float = 1.0,
+) -> OpenRouterClient:
+    """Тестовый OpenRouterClient с фиксированной конфигурацией."""
+    config = LLMConfig(
+        provider=LLMProvider.OPENROUTER,
+        model="openrouter/auto",
+        api_key="test-key",
+        max_tokens=max_tokens,
+        max_retries=max_retries,
+        retry_delay=retry_delay,
+    )
+    return OpenRouterClient(config)
+
+
+# --- _safe_str / _safe_int --------------------------------------------------
+
+
+def test_diag_safe_str_none() -> None:
+    assert _safe_str(None) is None
+
+
+def test_diag_safe_str_short_string() -> None:
+    assert _safe_str("hello") == "hello"
+
+
+def test_diag_safe_str_long_string_truncated() -> None:
+    result = _safe_str("x" * 100, max_len=10)
+    assert result == "x" * 10 + "..."
+
+
+def test_diag_safe_str_rejects_dict_and_list() -> None:
+    assert _safe_str({"k": "v"}) is None
+    assert _safe_str(["a", "b"]) is None
+    assert _safe_str(("tuple",)) is None
+
+
+def test_diag_safe_str_rejects_bool() -> None:
+    assert _safe_str(True) is None
+    assert _safe_str(False) is None
+
+
+def test_diag_safe_str_accepts_numbers() -> None:
+    assert _safe_str(42) == "42"
+    assert _safe_str(3.5) == "3.5"
+
+
+def test_diag_safe_int_rejects_bool() -> None:
+    assert _safe_int(True) is None
+    assert _safe_int(False) is None
+
+
+def test_diag_safe_int_accepts_int() -> None:
+    assert _safe_int(42) == 42
+
+
+def test_diag_safe_int_accepts_float() -> None:
+    assert _safe_int(3.7) == 3
+
+
+def test_diag_safe_int_rejects_other_types() -> None:
+    assert _safe_int("42") is None
+    assert _safe_int(None) is None
+    assert _safe_int([1]) is None
+
+
+# --- _collect_response_diagnostics ------------------------------------------
+
+
+def test_diag_collect_not_a_dict() -> None:
+    diag = _collect_response_diagnostics(None, reason_code="X", requested_model="m", max_tokens=100)
+    assert diag["reason_code"] == "X"
+    assert diag["data_type"] == "NoneType"
+
+
+def test_diag_collect_full_response() -> None:
+    data = {
+        "id": "resp-123",
+        "model": "openai/gpt-4o-mini",
+        "provider": "OpenAI",
+        "choices": [
+            {
+                "finish_reason": "length",
+                "message": {"content": "", "reasoning": "some reasoning here"},
+            }
+        ],
+        "usage": {
+            "prompt_tokens": 100,
+            "completion_tokens": 50,
+            "completion_tokens_details": {"reasoning_tokens": 40},
+        },
+    }
+    diag = _collect_response_diagnostics(
+        data, reason_code="EMPTY_CONTENT", requested_model="auto", max_tokens=768
+    )
+    assert diag["response_id"] == "resp-123"
+    assert diag["actual_model"] == "openai/gpt-4o-mini"
+    assert diag["provider"] == "OpenAI"
+    assert diag["choices_count"] == 1
+    assert diag["finish_reason"] == "length"
+    assert diag["has_message"] is True
+    assert diag["content_type"] == "str"
+    assert diag["content_length"] == 0
+    assert diag["has_reasoning"] is True
+    assert diag["reasoning_length"] == len("some reasoning here")
+    assert diag["prompt_tokens"] == 100
+    assert diag["completion_tokens"] == 50
+    assert diag["reasoning_tokens"] == 40
+    # Содержимое не должно попасть в диагностику:
+    assert "some reasoning here" not in str(diag)
+
+
+def test_diag_collect_choices_not_list() -> None:
+    diag = _collect_response_diagnostics(
+        {"choices": "not-a-list"}, reason_code="X", requested_model="m", max_tokens=100
+    )
+    assert diag["choices_count"] is None
+
+
+def test_diag_collect_top_level_error() -> None:
+    data = {
+        "error": {
+            "code": "invalid_api_key",
+            "type": "authentication_error",
+            "message": "SECRET_ERROR_MESSAGE_TEXT",
+        },
+        "choices": [],
+    }
+    diag = _collect_response_diagnostics(data, reason_code="X", requested_model="m", max_tokens=100)
+    assert diag["has_top_level_error"] is True
+    assert diag["error_code"] == "invalid_api_key"
+    assert diag["error_type"] == "authentication_error"
+    assert "SECRET_ERROR_MESSAGE_TEXT" not in str(diag)
+
+
+# --- _format_diagnostics ----------------------------------------------------
+
+
+def test_diag_format_with_dict() -> None:
+    result = _format_diagnostics({"a": 1, "b": "x"}, attempt=2)
+    assert "attempt=2" in result
+    assert "a=1" in result
+    assert "b=x" in result
+
+
+def test_diag_format_none() -> None:
+    assert _format_diagnostics(None, attempt=1) == "[attempt=1]"
+
+
+# --- parse_response ---------------------------------------------------------
+
+
+def test_diag_parse_valid_content() -> None:
+    client = _make_openrouter_client()
+    data = {"choices": [{"message": {"content": "hello"}, "finish_reason": "stop"}]}
+    resp = client.parse_response(data)
+    assert resp.content == "hello"
+
+
+def test_diag_parse_empty_string() -> None:
+    client = _make_openrouter_client()
+    data = {"choices": [{"message": {"content": ""}}]}
+    with pytest.raises(LLMInvalidResponseError) as exc:
+        client.parse_response(data)
+    assert exc.value.reason_code == "EMPTY_CONTENT"
+    assert exc.value.diagnostics is not None
+    assert exc.value.diagnostics["reason_code"] == "EMPTY_CONTENT"
+
+
+def test_diag_parse_whitespace_only() -> None:
+    client = _make_openrouter_client()
+    data = {"choices": [{"message": {"content": "   \n  "}}]}
+    with pytest.raises(LLMInvalidResponseError) as exc:
+        client.parse_response(data)
+    assert exc.value.reason_code == "EMPTY_CONTENT"
+
+
+def test_diag_parse_content_none() -> None:
+    client = _make_openrouter_client()
+    data = {"choices": [{"message": {"content": None}}]}
+    with pytest.raises(LLMInvalidResponseError) as exc:
+        client.parse_response(data)
+    assert exc.value.reason_code == "EMPTY_CONTENT"
+
+
+def test_diag_parse_missing_choices() -> None:
+    client = _make_openrouter_client()
+    with pytest.raises(LLMInvalidResponseError) as exc:
+        client.parse_response({})
+    assert exc.value.reason_code == "MISSING_CHOICES"
+
+
+def test_diag_parse_empty_choices() -> None:
+    client = _make_openrouter_client()
+    with pytest.raises(LLMInvalidResponseError) as exc:
+        client.parse_response({"choices": []})
+    assert exc.value.reason_code == "MISSING_CHOICES"
+
+
+def test_diag_parse_missing_message() -> None:
+    client = _make_openrouter_client()
+    data = {"choices": [{"finish_reason": "stop"}]}
+    with pytest.raises(LLMInvalidResponseError) as exc:
+        client.parse_response(data)
+    assert exc.value.reason_code == "MISSING_MESSAGE"
+
+
+def test_diag_parse_top_level_error() -> None:
+    client = _make_openrouter_client()
+    data = {
+        "error": {"code": "x", "type": "y", "message": "SECRET_MSG"},
+        "choices": [],
+    }
+    with pytest.raises(LLMInvalidResponseError) as exc:
+        client.parse_response(data)
+    assert exc.value.reason_code == "MISSING_CHOICES"
+    assert exc.value.diagnostics is not None
+    assert exc.value.diagnostics["has_top_level_error"] is True
+    assert "SECRET_MSG" not in str(exc.value.diagnostics)
+
+
+def test_diag_parse_length_finish_reason_empty_content() -> None:
+    """Ключевой сценарий issue #22: finish_reason=length + пустой content."""
+    client = _make_openrouter_client()
+    reasoning_text = "thinking-step " * 50
+    data = {
+        "model": "some-reasoning-model",
+        "choices": [
+            {
+                "finish_reason": "length",
+                "message": {"content": "", "reasoning": reasoning_text},
+            }
+        ],
+        "usage": {
+            "prompt_tokens": 100,
+            "completion_tokens": 768,
+            "completion_tokens_details": {"reasoning_tokens": 750},
+        },
+    }
+    with pytest.raises(LLMInvalidResponseError) as exc:
+        client.parse_response(data)
+    assert exc.value.reason_code == "EMPTY_CONTENT"
+    diag = exc.value.diagnostics
+    assert diag is not None
+    assert diag["finish_reason"] == "length"
+    assert diag["has_reasoning"] is True
+    assert diag["reasoning_length"] == len(reasoning_text)
+    assert diag["reasoning_tokens"] == 750
+    assert "thinking-step" not in str(diag)
+
+
+def test_diag_parse_malformed() -> None:
+    client = _make_openrouter_client()
+    # choices[0] не dict -> TypeError при проверке "message" in choice
+    with pytest.raises(LLMInvalidResponseError) as exc:
+        client.parse_response({"choices": [None]})
+    assert exc.value.reason_code == "MALFORMED_RESPONSE"
+
+
+# --- generate retry behavior ------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_diag_generate_recovers_after_first_invalid() -> None:
+    """Первая попытка invalid, вторая успешная."""
+    client = _make_openrouter_client(max_tokens=100, max_retries=3, retry_delay=0.0)
+    good = LLMResponse(content="ok", model="m", provider="openrouter")
+    queue: list[object] = [
+        LLMInvalidResponseError("EMPTY_CONTENT", diagnostics={"reason_code": "EMPTY_CONTENT"}),
+        good,
+    ]
+
+    async def fake_call_api(prompt: str) -> LLMResponse:
+        item = queue.pop(0)
+        if isinstance(item, Exception):
+            raise item
+        return item  # type: ignore[return-value]
+
+    try:
+        with patch.object(client, "call_api", side_effect=fake_call_api):
+            result = await client.generate("prompt")
+        assert result is good
+    finally:
+        await client.close()
+
+
+@pytest.mark.asyncio
+async def test_diag_generate_raises_after_all_invalid() -> None:
+    """Все попытки invalid -> LLMInvalidResponseError прокидывается наружу."""
+    client = _make_openrouter_client(max_tokens=100, max_retries=2, retry_delay=0.0)
+
+    async def fake_call_api(prompt: str) -> LLMResponse:
+        raise LLMInvalidResponseError("EMPTY_CONTENT", diagnostics={"reason_code": "EMPTY_CONTENT"})
+
+    try:
+        with patch.object(client, "call_api", side_effect=fake_call_api):
+            with pytest.raises(LLMInvalidResponseError):
+                await client.generate("prompt")
+    finally:
+        await client.close()
+
+
+@pytest.mark.asyncio
+async def test_diag_generate_does_not_log_user_data(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Ключевой safety-тест: пользовательские данные не попадают в логи."""
+    caplog.set_level(logging.WARNING)
+
+    secret_prompt = "SECRET_PROMPT_TEXT_XYZ123"
+    secret_reasoning = "SECRET_REASONING_TEXT_ABC456"
+
+    client = _make_openrouter_client(max_tokens=100, max_retries=1, retry_delay=0.0)
+    bad_data = {
+        "choices": [
+            {
+                "finish_reason": "length",
+                "message": {"content": "", "reasoning": secret_reasoning},
+            }
+        ],
+    }
+
+    async def fake_post(*args: object, **kwargs: object) -> MagicMock:
+        mock_resp = MagicMock()
+        mock_resp.status_code = 200
+        mock_resp.json.return_value = bad_data
+        return mock_resp
+
+    try:
+        with patch.object(client.client, "post", side_effect=fake_post):
+            with pytest.raises(LLMInvalidResponseError):
+                await client.generate(secret_prompt)
+    finally:
+        await client.close()
+
+    log_text = "\n".join(rec.message for rec in caplog.records)
+    assert secret_prompt not in log_text
+    assert secret_reasoning not in log_text
+    # Диагностика при этом действительно залогирована:
+    assert "reason_code=EMPTY_CONTENT" in log_text
+
+
+# --- fallback integration ---------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_diag_fallback_kind_is_invalid_response() -> None:
+    """LLMInvalidResponseError -> kind=invalid_response в LLMFallbackError."""
+    invalid = LLMInvalidResponseError("EMPTY_CONTENT", diagnostics={"reason_code": "EMPTY_CONTENT"})
+    invalid_client = make_failing_client(invalid)
+
+    def fake_create(provider: LLMProvider, **kwargs: object) -> object:
+        if provider == LLMProvider.OPENROUTER:
+            return invalid_client
+        raise ValueError("Missing")
+
+    with (
+        patch("src.llm_client.create_llm_client", side_effect=fake_create),
+        pytest.raises(LLMFallbackError) as exc_info,
+    ):
+        await call_with_fallback(
+            prompt="test",
+            providers=["openrouter", "anthropic"],
+            max_retries_per_provider=1,
+        )
+
+    assert exc_info.value.kind == "invalid_response"
+
+
+def test_diag_invalid_response_maps_to_502() -> None:
+    """kind=invalid_response -> HTTPException 502 (контракт не изменился)."""
+    from src.error_mapping import _llm_error_to_http_exception
+
+    err = LLMFallbackError("invalid", kind="invalid_response")
+    exc = _llm_error_to_http_exception(err)
+    assert exc.status_code == 502
+
+
+# --- robustness to unexpected field types -----------------------------------
+
+
+@pytest.mark.parametrize(
+    "weird_data",
+    [
+        None,
+        "string",
+        123,
+        [],
+        {"choices": "not-a-list"},
+        {"choices": None},
+        {"choices": [None]},
+        {"choices": [{}]},
+        {"choices": [{"message": None}]},
+        {"choices": [{"message": {"content": 12345}}]},
+        {"choices": [{"message": {"content": []}}]},
+        {"choices": [{"message": {"content": {"nested": "dict"}}}]},
+        {"choices": [{"message": {"content": "", "reasoning": 999}}]},
+        {"choices": [{"message": {"content": ""}}], "usage": "not-a-dict"},
+        {"choices": [{"message": {"content": ""}}], "usage": {"prompt_tokens": "not-int"}},
+        {"choices": [{"message": {"content": ""}}], "error": "string-error"},
+        {"choices": [{"message": {"content": ""}}], "provider": {"nested": "dict"}},
+    ],
+)
+def test_diag_collect_never_raises(weird_data: object) -> None:
+    """_collect_response_diagnostics не падает на любых неожиданных данных."""
+    result = _collect_response_diagnostics(
+        weird_data, reason_code="X", requested_model="m", max_tokens=100
+    )
+    assert isinstance(result, dict)
+    assert result["reason_code"] == "X"
