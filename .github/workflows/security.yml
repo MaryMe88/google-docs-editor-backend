@@ -18,10 +18,6 @@ jobs:
   pip-audit:
     name: Audit Python dependencies (pip-audit)
     runs-on: ubuntu-latest
-    # Итерация 9: первый запуск информационный. Не блокирует merge,
-    # но результат виден в логах и summary. Отдельным PR будет
-    # решено, включать ли блокировку (continue-on-error: false).
-    continue-on-error: true
 
     steps:
       - uses: actions/checkout@v4
@@ -37,9 +33,15 @@ jobs:
           pip install -r requirements-dev.txt
 
       - name: Run pip-audit on requirements.txt
+        # Итерация 9: первый запуск информационный. Шаг помечается
+        # warning, если pip-audit находит уязвимости, но не блокирует
+        # job/workflow. Отдельным PR будет решено, включать ли
+        # блокировку (continue-on-error: false).
+        continue-on-error: true
         run: |
           pip-audit -r requirements.txt --progress-spinner off
 
       - name: Run pip-audit on requirements-dev.txt
+        continue-on-error: true
         run: |
           pip-audit -r requirements-dev.txt --progress-spinner off
