@@ -6,6 +6,12 @@ on:
   pull_request:
     branches: [ main ]
 
+# Минимальные права токена GitHub Actions: только чтение содержимого
+# репозитория. Дефолтный токен имеет более широкие права, которые
+# workflow не использует.
+permissions:
+  contents: read
+
 jobs:
   lint:
     name: Lint (ruff)
