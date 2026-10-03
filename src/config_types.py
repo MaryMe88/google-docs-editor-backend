@@ -1,25 +1,23 @@
 """
-config_types.py
+config_types.py — публичный фасад конфигурационных типов.
 
-Dataclasses, enum'ы и инфраструктурные типы для конфигурирования PromptBuilder.
+Содержит только реэкспорты из src.config_models.* и ReasonCode
+из src.reason_codes для обратной совместимости.
 
-Содержит:
-- Domain types — RuleEntry, KnowledgeBase, CoreConfig и т.д.
-- LimitsConfig — лимиты выдачи и кандидатов
-- KnowledgeLevel — режим включения блоков знаний
-- KnowledgeBlockPlan — описание блока для budget-aware сборки
-- BlockBudget — бюджет одного блока KB
-- KnowledgeBudget — совокупный бюджет всех блоков
-- KnowledgeBudgetManager — вычисляет бюджет
-- CachePolicy — политика инвалидации кэша
-- FileCache — кэш-менеджер с поддержкой TTL/mtime
-- Tag constants — CANONICAL_TAGS, KNOWN_TAGS, get_*_tags_for_category
-- Explainability structures — FeatureResolutionResult, AssemblyBlockDiagnostics, AssemblyTrace
+Сами определения типов живут в тематических модулях:
+- src.config_models.domain — домены, интенты, оверлеи, аудитория.
+- src.config_models.limits — LimitsConfig.
+- src.config_models.knowledge_budget — KnowledgeLevel, бюджеты.
+- src.config_models.cache — CachePolicy, FileCache.
+- src.config_models.tags — CANONICAL_TAGS, KNOWN_TAGS, helpers.
+- src.config_models.explainability — FeatureResolutionResult,
+  AssemblyBlockDiagnostics, AssemblyTrace.
+
+Не добавляйте сюда новые определения: расширяйте соответствующий
+модуль в src/config_models/ и реэкспортируйте при необходимости.
 """
 
 from __future__ import annotations
-
-import logging
 
 # Re-exports для обратной совместимости (итерация 7 дорожной карты).
 # Код проекта исторически ожидает эти имена из src.config_types.
@@ -65,7 +63,6 @@ from src.config_models.tags import (  # noqa: F401
 )
 from src.reason_codes import ReasonCode  # noqa: F401
 
-logger = logging.getLogger(__name__)
 
 # ============================================================================
 # Domain types (moved to src.config_models.domain)
