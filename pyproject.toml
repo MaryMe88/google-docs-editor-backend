@@ -122,8 +122,17 @@ no_implicit_optional = true
 check_untyped_defs = true
 
 # ---------------------------------------------------------------------------
-# pytest — переносим сюда постепенно, пока оставляем pytest.ini
+# pytest — конфигурация перенесена из pytest.ini в итерации 10
 # ---------------------------------------------------------------------------
-# [tool.pytest.ini_options]
-# testpaths = ["tests"]
-# addopts = "-ra -q"
+[tool.pytest.ini_options]
+minversion = "6.0"
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+python_classes = ["Test*"]
+python_functions = ["test_*"]
+addopts = "-v --tb=short --strict-markers"
+asyncio_mode = "strict"
+asyncio_default_fixture_loop_scope = "function"
+markers = [
+    "integration: marks tests as integration tests (deselect with '-m \"not integration\"')",
+]
