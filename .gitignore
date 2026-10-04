@@ -9,3 +9,7 @@ __pycache__/
 .coverage
 coverage.xml
 htmlcov/
+
+# pip-audit output (не коммитить)
+pip-audit-*.json
+pip-audit-*.txt
