@@ -91,3 +91,43 @@
 - Issue #35: https://github.com/MaryMe88/google-docs-editor-backend/issues/35
 - OSV: https://osv.dev/
 - PyPA advisory database: https://github.com/pypa/advisory-database
+
+## Обновление 2026-10-04: итерация 2 (FastAPI + Starlette)
+
+После обновления `fastapi==0.125.0` + явного пина `starlette==0.50.0`:
+
+- **Закрыто:** PYSEC-2026-1943, PYSEC-2026-1941, PYSEC-2026-1942.
+- **Осталось (требуют Starlette >= 1.0.1):** PYSEC-2026-161, PYSEC-2026-2281,
+  PYSEC-2026-2280, PYSEC-2026-249, PYSEC-2026-248.
+
+Все 5 оставшихся advisories ссылаются на Starlette 1.x, которая требует
+major-bump и проверки middleware/lifespan. Отдельная задача (spike).
+
+Общие метрики после итерации 2:
+
+- `pip-audit`: 22 уязвимости в 4 пакетах (было 26 в 4).
+- OpenAPI paths не изменились (проверено).
+- 531 passed, 9 skipped.
+
+## Остаточный риск: 5 advisories Starlette (P2)
+
+| Advisory | Fix | Статус |
+|---|---|---|
+| PYSEC-2026-161 | 1.0.1 | Требует Starlette 1.x |
+| PYSEC-2026-2281 | 1.1.0 | Требует Starlette 1.x |
+| PYSEC-2026-2280 | 1.1.0 | Требует Starlette 1.x |
+| PYSEC-2026-249 | 1.3.1 | Требует Starlette 1.x |
+| PYSEC-2026-248 | 1.3.0 | Требует Starlette 1.x |
+
+**Действие:** отдельный spike/PR на FastAPI >=0.142 + Starlette 1.x.
+В текущей версии risk mitigation: актуальные патчи FastAPI 0.125.0,
+минимальные права токенов GitHub Actions, отсутствие эксплойтов через
+публичный API (проверено grep-диагностикой).
+
+## Прочие advisories (не входили в итерацию 2)
+
+- `python-dotenv` — закрыто в итерации 1 (1.2.4).
+- `pytest` — ожидает итерации 4 (dev-only).
+- `sentence-transformers` — ожидает итерации 6/7 (ML-стек).
+- `transformers` — ожидает итерации 6/7 (ML-стек, major 4→5).
+- `torch` — не аудирован, ожидает итерации 3.
