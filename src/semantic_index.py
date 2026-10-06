@@ -23,6 +23,12 @@ logger = logging.getLogger(__name__)
 _CACHE_PATH = Path(__file__).parent.parent / "knowledge_base" / "kb_embeddings.npy"
 _CACHE_META_PATH = Path(__file__).parent.parent / "knowledge_base" / "kb_embeddings_meta.json"
 
+# Ревизия модели закреплена конкретным commit SHA в Hugging Face
+# (main на 2025-12-30, e8ed3b0c8bbf4fb6984c3de043bf7d2f4e5969ae).
+# Это защищает от supply-chain атаки: если содержимое тега main
+# изменится, мы продолжим загружать проверенные веса и код.
+_SEMANTIC_MODEL_REVISION = "e8ed3b0c8bbf4fb6984c3de043bf7d2f4e5969ae"
+
 # Type aliases
 SemanticEntry = dict[str, Any]
 SearchResult = tuple[SemanticEntry, float]
@@ -187,8 +193,15 @@ class SemanticIndex:
             try:
                 from sentence_transformers import SentenceTransformer
 
-                logger.info("SemanticIndex: загружаю модель %s…", self.model_name)
-                self._model = SentenceTransformer(self.model_name)
+                logger.info(
+                    "SemanticIndex: загружаю модель %s (revision=%s)…",
+                    self.model_name,
+                    _SEMANTIC_MODEL_REVISION,
+                )
+                self._model = SentenceTransformer(
+                    self.model_name,
+                    revision=_SEMANTIC_MODEL_REVISION,
+                )
                 logger.info("SemanticIndex: модель загружена")
             except ImportError:
                 raise ImportError(
