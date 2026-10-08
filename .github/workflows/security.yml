@@ -3,45 +3,139 @@ name: Security
 on:
   push:
     branches: [ main ]
+    paths:
+      - "requirements*.txt"
+      - "pyproject.toml"
+      - ".github/workflows/security.yml"
+      - ".github/scripts/verify_torch.py"
   pull_request:
     branches: [ main ]
   schedule:
-    # Каждый понедельник в 06:00 UTC.
+    # Каждый понедельник в 06:00 UTC. Периодический полный аудит,
+    # чтобы отслеживать новые advisory в неизменённых зависимостях.
     - cron: "0 6 * * 1"
   workflow_dispatch:
 
-# Минимальные права: только чтение содержимого репозитория.
 permissions:
   contents: read
 
-jobs:
-  pip-audit:
-    name: Audit Python dependencies (pip-audit)
-    runs-on: ubuntu-latest
+# Временно принятые риски (issue #35, пересмотр не позднее 2026-04-08).
+#
+# Все 6 уникальных advisory ниже — в transformers 4.57.6. Обновление
+# до 5.x заблокировано несовместимостью с torch 2.5.0+cpu
+# (docs/security/2026-10-transformers-audit.md). Все они требуют
+# trust_remote_code=True или загрузки недоверенной модели — в нашей
+# конфигурации недостижимы (см. тот же документ).
+#
+# Запрещено использовать глобальный `--ignore-all`. Каждое исключение
+# должно содержать advisory, причину, issue, дату пересмотра.
 
+jobs:
+  runtime-audit:
+    name: Audit runtime dependencies
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
 
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version: "3.11"
+          python-version: "3.12"
 
-      - name: Install dev requirements
+      - name: Install runtime dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install pip-audit==2.10.1
+
+      - name: Audit runtime dependencies (blocking)
+        # PYSEC-2025-217   — X-CLIP checkpoint conversion RCE (vision)
+        # PYSEC-2026-2288  — Trainer _load_rng_state() RCE
+        # PYSEC-2026-2289  — config injection RCE (_attn_implementation_internal)
+        # PYSEC-2026-2290  — LightGlue model loading bypass trust_remote_code
+        # PYSEC-2026-3929  — save_pretrained() path traversal
+        # PYSEC-2026-4174  — remote Python file write без consent
+        run: |
+          pip-audit \
+            --progress-spinner off \
+            --format=json \
+            --output=audit-runtime.json \
+            --ignore-vuln PYSEC-2025-217 \
+            --ignore-vuln PYSEC-2026-2288 \
+            --ignore-vuln PYSEC-2026-2289 \
+            --ignore-vuln PYSEC-2026-2290 \
+            --ignore-vuln PYSEC-2026-3929 \
+            --ignore-vuln PYSEC-2026-4174
+
+      - name: Upload runtime audit report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: pip-audit-runtime
+          path: audit-runtime.json
+          if-no-files-found: warn
+
+  dev-audit:
+    name: Audit dev dependencies
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dev dependencies
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements-dev.txt
 
-      - name: Run pip-audit on requirements.txt
-        # Итерация 9: первый запуск информационный. Шаг помечается
-        # warning, если pip-audit находит уязвимости, но не блокирует
-        # job/workflow. Отдельным PR будет решено, включать ли
-        # блокировку (continue-on-error: false).
-        continue-on-error: true
+      - name: Audit dev dependencies (blocking)
+        # requirements-dev.txt включает -r requirements.txt, поэтому
+        # те же остаточные исключения применимы. Dev-only advisory
+        # (например, в pytest) не игнорируются — только обновлением.
         run: |
-          pip-audit -r requirements.txt --progress-spinner off
+          pip-audit \
+            --progress-spinner off \
+            --format=json \
+            --output=audit-dev.json \
+            --ignore-vuln PYSEC-2025-217 \
+            --ignore-vuln PYSEC-2026-2288 \
+            --ignore-vuln PYSEC-2026-2289 \
+            --ignore-vuln PYSEC-2026-2290 \
+            --ignore-vuln PYSEC-2026-3929 \
+            --ignore-vuln PYSEC-2026-4174
 
-      - name: Run pip-audit on requirements-dev.txt
-        continue-on-error: true
+      - name: Upload dev audit report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: pip-audit-dev
+          path: audit-dev.json
+          if-no-files-found: warn
+
+  torch-audit:
+    name: Verify torch (outside pip-audit coverage)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install runtime dependencies
         run: |
-          pip-audit -r requirements-dev.txt --progress-spinner off
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Verify torch version matches documented target
+        # pip-audit не может проверить torch — пакет установлен из
+        # CPU-индекса download.pytorch.org/whl/cpu, которого нет на
+        # PyPI. См. docs/security/2026-10-torch-audit.md.
+        #
+        # Скрипт падает, если версия torch отличается от ожидаемой.
+        # Это заставляет явно задокументировать любое обновление.
+        run: python .github/scripts/verify_torch.py
