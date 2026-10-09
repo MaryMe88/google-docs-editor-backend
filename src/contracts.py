@@ -64,6 +64,10 @@ class EditRequest(BaseModel):
     domain: str = Field(default="marketing")
     intent: str | None = Field(default=None)
     audience: AudienceRequest | None = Field(default=None)
+    # SEC: ограничение количества и длины оверлеев реализовано
+    # в validate_overlays (mode="before"), а не через Field(max_length=...),
+    # потому что Field-проверка выполняется после дедупликации и не
+    # защищает от атаки «миллион одинаковых элементов».
     overlays: list[str] = Field(default_factory=list)
     output_mode: str = Field(default="text_only")
     provider: str = Field(default="openrouter")
@@ -117,6 +121,14 @@ class EditRequest(BaseModel):
         Для оверлеев normalize_tag() уместен: у них есть алиасы и
         варианты написания (finalcheck / final_check / FinalCheck).
         """
+        if isinstance(v, list):
+            if len(v) > 20:
+                raise ValueError(f"too many overlays: {len(v)} items (max 20)")
+            for idx, item in enumerate(v):
+                if isinstance(item, str) and len(item) > 100:
+                    raise ValueError(
+                        f"overlays[{idx}] is too long: " f"{len(item)} characters (max 100)"
+                    )
         result = []
         seen = set()
         for item in v:
