@@ -16,6 +16,7 @@ from src.error_mapping import (  # noqa: F401
     InvalidLLMOutputError,
     _llm_error_to_http_exception,
 )
+from src.middleware.body_size import BodySizeLimitMiddleware
 from src.prompt_builder import PromptBuilder
 from src.rate_limit import (
     _client_ip_key,  # noqa: F401
@@ -176,6 +177,8 @@ app.add_middleware(
     allow_methods=["GET", "POST", "OPTIONS"],
     allow_headers=["Authorization", "Content-Type", "X-API-Key"],
 )
+
+app.add_middleware(BodySizeLimitMiddleware)
 
 
 @app.middleware("http")
