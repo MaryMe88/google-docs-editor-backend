@@ -42,9 +42,7 @@ _LEAK_PROBE_KEY = "leak-probe-secret-9c1c4e5b-2f8a-4d3c-a1b6-7e8d9f0a2b3c"
 def _assert_key_not_logged(caplog: pytest.LogCaptureFixture) -> None:
     """Общий ассерт: ни один лог-рекорд не содержит значение ключа."""
     leak_messages = [
-        rec.getMessage()
-        for rec in caplog.records
-        if _LEAK_PROBE_KEY in rec.getMessage()
+        rec.getMessage() for rec in caplog.records if _LEAK_PROBE_KEY in rec.getMessage()
     ]
     assert not leak_messages, f"API key leaked into logs: {leak_messages!r}"
 
