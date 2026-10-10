@@ -17,7 +17,14 @@ future import in this module.
 
 import logging
 
-from fastapi import APIRouter, Depends, HTTPException, Request, status
+from fastapi import (
+    APIRouter,
+    Depends,
+    HTTPException,
+    Request,
+    Response,
+    status,
+)
 from pydantic import ValidationError
 
 from src.auth import verify_api_key
@@ -55,7 +62,11 @@ def get_prompt_builder(request: Request) -> PromptBuilder:
     dependencies=[Depends(verify_api_key)],
 )
 @limiter.limit(RATE_LIMIT)
-async def edit_text(request: Request, body: EditRequest) -> EditResponse:
+async def edit_text(
+    request: Request,
+    response: Response,
+    body: EditRequest,
+) -> EditResponse:
     try:
         audience = _build_audience_from_request(body)
         prompt_builder = get_prompt_builder(request)
