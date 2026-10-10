@@ -2,7 +2,7 @@
 
 pip-audit cannot audit torch: the package is installed from the
 PyTorch CPU index (download.pytorch.org/whl/cpu), which is not on
-PyPI. See docs/security/2026-10-torch-audit.md (iteration 3).
+PyPI. See docs/security/torch-risk-assessment.md.
 
 If this check fails, it means torch was bumped without updating the
 security documentation. Either revert the bump or re-audit manually
@@ -17,8 +17,9 @@ import torch
 
 # Единственная версия torch, для которой проведён security-аудит.
 # При обновлении — перепроверить вручную и обновить
-# docs/security/2026-10-torch-audit.md.
+# docs/security/torch-risk-assessment.md.
 EXPECTED_VERSION_PREFIX = "2.5.0"
+EXPECTED_SUFFIX = "+cpu"
 
 
 def main() -> int:
@@ -37,13 +38,32 @@ def main() -> int:
         print(
             "pip-audit does not cover torch (CPU index). "
             "If the bump is intentional, re-audit torch manually and "
-            "update docs/security/2026-10-torch-audit.md, then update "
+            "update docs/security/torch-risk-assessment.md, then update "
             "EXPECTED_VERSION_PREFIX in .github/scripts/verify_torch.py.",
             file=sys.stderr,
         )
         return 1
 
-    print("torch version OK")
+    if not installed.endswith(EXPECTED_SUFFIX):
+        print(
+            f"ERROR: torch {installed} is not a CPU-only build "
+            f"(expected suffix {EXPECTED_SUFFIX})",
+            file=sys.stderr,
+        )
+        print(
+            "This project requires CPU-only torch from "
+            "download.pytorch.org/whl/cpu. "
+            "See docs/security/torch-risk-assessment.md.",
+            file=sys.stderr,
+        )
+        return 1
+
+    print("Torch is not covered by pip-audit.")
+    print(
+        f"Separate Torch assessment: passed "
+        f"({installed}, CPU-only)."
+    )
+    print("See docs/security/torch-risk-assessment.md for details.")
     return 0
 
 

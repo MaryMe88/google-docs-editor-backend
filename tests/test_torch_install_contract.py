@@ -164,3 +164,10 @@ def test_sentence_transformers_requires_torch() -> None:
         "sentence-transformers не требует torch — "
         "возможно, зависимость изменилась, надо пересмотреть"
     )
+
+
+def test_verify_torch_script_does_not_reference_missing_doc() -> None:
+    script_path = Path(__file__).resolve().parents[1] / ".github" / "scripts" / "verify_torch.py"
+    script = script_path.read_text(encoding="utf-8")
+    assert "2026-10-torch-audit.md" not in script, "verify_torch.py ссылается на удалённый документ"
+    assert "torch-risk-assessment.md" in script
