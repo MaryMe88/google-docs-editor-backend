@@ -134,7 +134,7 @@ jobs:
       - name: Verify torch version matches documented target
         # pip-audit не может проверить torch — пакет установлен из
         # CPU-индекса download.pytorch.org/whl/cpu, которого нет на
-        # PyPI. См. docs/security/2026-10-torch-audit.md.
+        # PyPI. См. docs/security/torch-risk-assessment.md.
         #
         # Скрипт падает, если версия torch отличается от ожидаемой.
         # Это заставляет явно задокументировать любое обновление.
