@@ -16,6 +16,7 @@ from fastapi.responses import JSONResponse
 from src.auth import verify_api_key
 from src.contracts import CONTRACT_VERSION, HealthResponse
 from src.prompt_builder import PromptBuilder
+from src.rate_limit import HEALTH_RATE_LIMIT, limiter
 from src.services.provider_health import _check_providers_availability
 from src.shared_contracts import ALLOWED_DOMAINS
 
@@ -53,7 +54,12 @@ async def liveness_check() -> dict:
   Использовать только для диагностики, не в автоматическом мониторинге.
 """,
 )
-async def health_check(request: Request, deep: bool = False) -> Response:
+@limiter.limit(HEALTH_RATE_LIMIT)
+async def health_check(
+    request: Request,
+    response: Response,
+    deep: bool = False,
+) -> Response:
     if deep and not os.getenv("API_SECRET_KEY"):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
