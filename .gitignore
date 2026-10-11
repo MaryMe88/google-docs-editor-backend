@@ -13,3 +13,4 @@ htmlcov/
 # pip-audit output (не коммитить)
 pip-audit-*.json
 pip-audit-*.txt
+.venv-security-final/
