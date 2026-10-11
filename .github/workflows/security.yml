@@ -6,8 +6,10 @@ on:
     paths:
       - "requirements*.txt"
       - "pyproject.toml"
+      - "render.yaml"
       - ".github/workflows/security.yml"
       - ".github/scripts/verify_torch.py"
+      - "src/semantic_index.py"
   pull_request:
     branches: [ main ]
   schedule:
@@ -47,6 +49,9 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements.txt
           pip install pip-audit==2.10.1
+
+      - name: Verify dependency consistency
+        run: python -m pip check
 
       - name: Audit runtime dependencies (blocking)
         # PYSEC-2025-217   — X-CLIP checkpoint conversion RCE (vision)
@@ -145,3 +150,29 @@ jobs:
         # Скрипт падает, если версия torch отличается от ожидаемой.
         # Это заставляет явно задокументировать любое обновление.
         run: python .github/scripts/verify_torch.py
+
+
+  dependency-review:
+    name: Dependency review (PR only)
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/dependency-review-action@v4
+        continue-on-error: true
+        with:
+          fail-on-severity: high
+
+  secret-scanning:
+    name: Secret scanning
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Run gitleaks (OSS binary)
+        run: |
+          docker run --rm -v "${{ github.workspace }}:/repo" zricethezav/gitleaks:latest detect --source=/repo --config=/repo/.gitleaks.toml --verbose --redact
