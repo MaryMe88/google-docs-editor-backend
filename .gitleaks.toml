@@ -1,0 +1,8 @@
+﻿[extend]
+useDefault = true
+
+[[allowlists]]
+description = "Test fixtures contain intentional non-secret placeholders"
+paths = [
+  '''tests/test_production_auth_hardening\.py$''',
+]
