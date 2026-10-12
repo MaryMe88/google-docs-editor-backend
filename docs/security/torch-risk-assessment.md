@@ -31,6 +31,7 @@
 | CVE-2025-2148 | Memory corruption в `torch.ops.profiler._call_end_callbacks_on_jit_fut` | 2.7.0 | **No** — профайлер не используется |
 | CVE-2025-3730 | DoS в `torch.nn.functional.ctc_loss` | 2.8.0 | **No** — CTC loss не используется |
 | CVE-2025-63396 | DoS при отсутствии `profiler.stop()` | 2.7.1 | **No** — профайлер не используется |
+| CVE-2025-3001 / GHSA-qfhq-4f3w-5fph | Memory corruption в `torch.lstm_cell` | 2.10.0 | **No** — LSTM не используется |
 
 ## Applicable advisories
 
@@ -44,7 +45,7 @@
 - `trust_remote_code=True` — не используется.
 - CUDA-специфичные операции — сборка CPU-only.
 - Профайлер — не используется.
-- RNN-операции (`unpack_sequence`, `pad_packed_sequence`) — не используются.
+- RNN-операции (`unpack_sequence`, `pad_packed_sequence`, `lstm_cell`) — не используются.
 - JIT-компиляция (`torch.jit.script`) — не используется.
 - Квантование (`nnq_Sigmoid`) — не используется.
 - CTC loss — не используется (это для speech recognition).
