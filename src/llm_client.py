@@ -32,6 +32,7 @@ from src.context_budget import (
     get_context_profile_from_env,
     resolve_context_budget,
 )
+from src.model_policy import get_default_model
 from src.provider_registry import LLMProvider
 
 load_dotenv()
@@ -719,14 +720,9 @@ def create_llm_client(
     timeout: float = 60.0,
     max_retries: int = 4,
 ) -> BaseLLMClient:
-    default_models = {
-        LLMProvider.PERPLEXITY: "sonar-pro",
-        LLMProvider.OPENAI: "gpt-4o-mini",
-        LLMProvider.ANTHROPIC: "claude-3-5-sonnet-20241022",
-        # Issue #22: openrouter/auto returns reasoning models that consume
-        # the entire output budget. Explicit model keeps behavior predictable.
-        LLMProvider.OPENROUTER: "deepseek/deepseek-v4-flash",
-    }
+    # SEC (model_policy): единый источник default-моделей — src/model_policy.py.
+    # Issue #22: openrouter/auto returns reasoning models that consume
+    # the entire output budget. Explicit model keeps behavior predictable.
 
     env_keys = {
         LLMProvider.PERPLEXITY: "PERPLEXITY_API_KEY",
@@ -736,9 +732,7 @@ def create_llm_client(
     }
 
     if model is None:
-        model = default_models.get(provider)
-        if model is None:
-            raise ValueError(f"No default model for provider: {provider}")
+        model = get_default_model(provider.value)
 
     if api_key is None:
         env_key = env_keys.get(provider)
