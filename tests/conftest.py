@@ -54,7 +54,8 @@ sentence_transformers.SentenceTransformer = MockSentenceTransformer
 # Устанавливаем фейковый API-ключ для тестов
 # ---------------------------------------------------------------------------
 os.environ["OPENROUTER_API_KEY"] = "test-key"
-os.environ["PYTEST_RUNNING"] = "true"
+os.environ["PYTEST_RUNNING"] = "true"  # для rate_limit.py: высокие лимиты в тестах
+os.environ["ENV"] = "development"  # для auth: тесты работают в dev-режиме
 
 # ---------------------------------------------------------------------------
 # Пути

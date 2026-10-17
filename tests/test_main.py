@@ -376,21 +376,26 @@ async def test_development_startup_soft_mode_without_api_secret_key(
 
 
 @pytest.mark.asyncio
-async def test_testing_startup_soft_mode_without_api_secret_key(
+async def test_testing_mode_does_not_bypass_production_auth(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """
-    В тестовом режиме (PYTEST_RUNNING=true) приложение стартует без API_SECRET_KEY,
-    даже если ENV=production.
+    PYTEST_RUNNING=true НЕ отключает production fail-fast (Этап 2A).
+
+    До Этапа 2A: is_production учитывал PYTEST_RUNNING, поэтому
+    ENV=production + PYTEST_RUNNING=true + нет ключа → приложение стартовало.
+    После Этапа 2A: production определяется только через ENV, а auth-флаг
+    тестового режима не должен обходить fail-fast.
     """
     monkeypatch.setenv("ENV", "production")
     monkeypatch.setenv("OPENROUTER_API_KEY", "dummy")
     monkeypatch.delenv("API_SECRET_KEY", raising=False)
-    monkeypatch.setenv("PYTEST_RUNNING", "true")  # тестовый режим
+    monkeypatch.setenv("PYTEST_RUNNING", "true")
 
     app_test = FastAPI()
-    async with lifespan(app_test):
-        pass
+    with pytest.raises(RuntimeError, match="API_SECRET_KEY is required in production mode."):
+        async with lifespan(app_test):
+            pass
 
 
 # ============================================================================

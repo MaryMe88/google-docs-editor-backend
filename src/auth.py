@@ -13,6 +13,16 @@ logger = logging.getLogger(__name__)
 _soft_auth_warned = False
 
 
+def get_expected_api_key() -> str:
+    """Возвращает нормализованный API_SECRET_KEY (strip).
+
+    Пустая строка означает, что ключ не задан (или состоит из пробелов).
+    Единая точка нормализации: используется и в verify_api_key, и в
+    startup-проверке production (src/main.py).
+    """
+    return os.environ.get("API_SECRET_KEY", "").strip()
+
+
 def verify_api_key(x_api_key: str | None = Header(None, alias="X-API-Key")) -> None:
     """
     Проверяет X-API-Key header.
@@ -22,7 +32,7 @@ def verify_api_key(x_api_key: str | None = Header(None, alias="X-API-Key")) -> N
     - При несовпадении или отсутствии заголовка возвращает 401 Unauthorized.
     """
     global _soft_auth_warned
-    expected = os.environ.get("API_SECRET_KEY", "")
+    expected = get_expected_api_key()
     if not expected:
         # Ключ не задан — пропускаем (для совместимости с деплоями без ключа).
         # Сигнализируем один раз, чтобы открытый доступ не остался
@@ -41,7 +51,14 @@ def verify_api_key(x_api_key: str | None = Header(None, alias="X-API-Key")) -> N
             detail="Missing API key.",
             headers={"WWW-Authenticate": "ApiKey"},
         )
-    if not secrets.compare_digest(x_api_key.encode(), expected.encode()):
+    provided = x_api_key.strip()
+    if not provided:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Missing API key.",
+            headers={"WWW-Authenticate": "ApiKey"},
+        )
+    if not secrets.compare_digest(provided.encode(), expected.encode()):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid API key.",
