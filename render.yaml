@@ -13,5 +13,7 @@ services:
         value: .
       - key: API_SECRET_KEY
         sync: false
+      - key: ENV
+        value: production
       - key: OPENROUTER_SITE_URL
         value: https://google-docs-editor-backend.onrender.com
