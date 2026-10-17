@@ -12,6 +12,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from slowapi import _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
 
+from src.auth import get_expected_api_key
 from src.error_mapping import (  # noqa: F401
     InvalidLLMOutputError,
     _llm_error_to_http_exception,
@@ -114,9 +115,12 @@ async def lifespan(app: FastAPI):
         logger.critical("Missing required env variables: %s. Refusing to start.", _missing)
         raise RuntimeError(f"Missing required env variables: {_missing}")
 
-    is_testing_now = os.getenv("PYTEST_RUNNING", "false").lower() == "true"
-    is_production = not (os.getenv("ENV", "").lower() == "development" or is_testing_now)
-    if is_production and not os.getenv("API_SECRET_KEY"):
+    # Этап 2A: PYTEST_RUNNING не влияет на auth-режим.
+    # Production определяется только через ENV (не "development").
+    is_production = os.getenv("ENV", "").lower() != "development"
+    # get_expected_api_key() делает strip(), поэтому ключ из пробелов
+    # считается отсутствующим.
+    if is_production and not get_expected_api_key():
         logger.critical("API_SECRET_KEY is required in production mode. Refusing to start.")
         raise RuntimeError("API_SECRET_KEY is required in production mode.")
 

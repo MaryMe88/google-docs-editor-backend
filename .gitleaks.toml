@@ -5,4 +5,5 @@ useDefault = true
 description = "Test fixtures contain intentional non-secret placeholders"
 paths = [
   '''tests/test_production_auth_hardening\.py$''',
+  '''tests/test_runtime_auth_hardening\.py$''',
 ]
