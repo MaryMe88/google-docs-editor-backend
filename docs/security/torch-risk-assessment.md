@@ -5,7 +5,7 @@
 **Installation source:** `download.pytorch.org/whl/cpu`, pinned as `torch==2.5.0+cpu`  
 **Supported Python versions:** 3.11, 3.12  
 **Review date:** 2026-10-10  
-**Next review date:** 2026-04-10  
+**Next review date:** 2027-04-10  
 **Tracking issue:** #35
 
 ## Related ML packages

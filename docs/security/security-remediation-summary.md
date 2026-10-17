@@ -1,8 +1,8 @@
-﻿# Security Remediation Summary
+# Security Remediation Summary
 
 **Period:** 2026-10-09 — 2026-10-12  
 **Tracking issue:** #35  
-**Next review:** 2026-04-10
+**Next review:** 2027-04-10
 
 ## Overview
 
@@ -87,7 +87,7 @@ These alerts should be dismissed with the rationale "not applicable — see torc
 
 ## Next review
 
-**2026-04-10**, or earlier if a new critical advisory appears. The weekly Security workflow will catch new advisories automatically.
+**2027-04-10**, or earlier if a new critical advisory appears. The weekly Security workflow will catch new advisories automatically.
 
 ## Related documents
 

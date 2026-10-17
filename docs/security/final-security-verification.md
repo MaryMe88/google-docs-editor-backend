@@ -1,4 +1,4 @@
-﻿# Final Runtime Security Verification
+# Final Runtime Security Verification
 
 **Date:** 2026-10-11  
 **Reviewer:** security/final-runtime-verification  
@@ -93,9 +93,9 @@ None in runtime or dev dependencies after the above ignores.
 
 | Risk | Mitigation | Tracking | Review |
 |---|---|---|---|
-| transformers 4.57.6 has 6 advisory entries | unreachable in our config; upgrade blocked by torch compat | #35 | 2026-04-10 |
-| torch is not covered by pip-audit | separate `verify_torch.py` + manual assessment | #35 | 2026-04-10 |
-| setuptools 78.1.0 build-time advisories | build-time only, not imported at runtime | #35 | 2026-04-10 |
+| transformers 4.57.6 has 6 advisory entries | unreachable in our config; upgrade blocked by torch compat | #35 | 2027-04-10 |
+| torch is not covered by pip-audit | separate `verify_torch.py` + manual assessment | #35 | 2027-04-10 |
+| setuptools 78.1.0 build-time advisories | build-time only, not imported at runtime | #35 | 2027-04-10 |
 
 ## Dev dependencies in runtime
 
@@ -103,7 +103,7 @@ Confirmed that `pytest`, `ruff`, `mypy`, `pip-audit` are **not** required to run
 
 ## Next review date
 
-**2026-04-10**
+**2027-04-10**
 
 ## Related documents
 
