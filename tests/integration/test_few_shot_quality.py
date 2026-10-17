@@ -43,7 +43,7 @@ def call_editor(client: TestClient, text: str, include_few_shot: bool = True) ->
         "include_few_shot": include_few_shot,
         "dry_run": False,
         "provider": "openrouter",
-        "model": "openrouter/auto",
+        "model": "deepseek/deepseek-v4-flash",
     }
     response = client.post("/api/edit", json=payload)
     if response.status_code != 200:

@@ -126,11 +126,39 @@ def test_audience_description_above_limit_rejected() -> None:
 # ============================================================================
 
 
-def test_model_at_limit_passes() -> None:
-    """200 символов в field max_length — принимается (если regex позволяет)."""
-    # Используем только разрешённые regex-символы: \w . / : -
+def test_model_regex_allows_200_chars_but_policy_rejects() -> None:
+    """200 символов проходят regex-allowlist, но policy отвергает:
+    строка "aaa..." не входит в ALLOWED_OPENROUTER_MODELS.
+
+    Раньше этот тест проверял только длину. Теперь EditRequest дополнительно
+    проверяет пару (provider, model) через model_policy.
+    """
     value = "a" * 200
-    EditRequest(text="x", model=value)
+    # regex-проверка всё ещё пропускает такую строку
+    from src.contracts import _MODEL_NAME_RE
+
+    assert _MODEL_NAME_RE.match(value) is not None
+    # но policy её отвергает
+    with pytest.raises(ValidationError) as exc_info:
+        EditRequest(text="x", provider="openrouter", model=value)
+    assert "is not allowed for provider" in str(exc_info.value)
+
+
+def test_model_in_allowlist_passes() -> None:
+    """Разрешённая модель для openrouter проходит валидацию."""
+    request = EditRequest(
+        text="x",
+        provider="openrouter",
+        model="google/gemini-3-pro-preview",
+    )
+    assert request.model == "google/gemini-3-pro-preview"
+
+
+def test_model_none_passes_for_any_provider() -> None:
+    """model=None валиден для любого провайдера из LLMProvider."""
+    for provider in ("openrouter", "openai", "anthropic", "perplexity"):
+        request = EditRequest(text="x", provider=provider)
+        assert request.model is None
 
 
 def test_model_above_limit_rejected() -> None:

@@ -264,12 +264,12 @@ class TestLLMClientContract:
 
         resp = LLMResponse(
             content="text",
-            model="openrouter/auto",
+            model="deepseek/deepseek-v4-flash",
             provider="openrouter",
             tokens_used=100,
         )
         assert resp.content == "text"
-        assert resp.model == "openrouter/auto"
+        assert resp.model == "deepseek/deepseek-v4-flash"
         assert resp.provider == "openrouter"
         assert resp.tokens_used == 100
 
@@ -298,7 +298,7 @@ def api_client():
 
     mock_response = LLMResponse(
         content="Отредактированный текст.",
-        model="openrouter/auto",
+        model="deepseek/deepseek-v4-flash",
         provider="openrouter",
         tokens_used=42,
     )
@@ -406,7 +406,7 @@ class TestFastAPIContractEdit:
         "overlays": [],
         "output_mode": "text_only",
         "provider": "openrouter",
-        "model": "openrouter/auto",
+        "model": "deepseek/deepseek-v4-flash",
         "temperature": 0.3,
     }
 

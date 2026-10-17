@@ -543,7 +543,7 @@ def _make_openrouter_client(
     """Тестовый OpenRouterClient с фиксированной конфигурацией."""
     config = LLMConfig(
         provider=LLMProvider.OPENROUTER,
-        model="openrouter/auto",
+        model="deepseek/deepseek-v4-flash",
         api_key="test-key",
         max_tokens=max_tokens,
         max_retries=max_retries,

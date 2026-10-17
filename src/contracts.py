@@ -1,8 +1,9 @@
 import re
 from typing import Any
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
+from src.model_policy import validate_explicit_model
 from src.shared_contracts import (
     ALLOWED_DOMAINS,
     ALLOWED_EXPERTISE,
@@ -169,6 +170,18 @@ class EditRequest(BaseModel):
         if not _MODEL_NAME_RE.match(v):
             raise ValueError("model contains disallowed characters")
         return v
+
+    @model_validator(mode="after")
+    def validate_model_policy(self) -> "EditRequest":
+        """Проверяет пару (provider, model) через model_policy.
+
+        - model=None разрешён для любого провайдера (используется default).
+        - явный model разрешён только для provider='openrouter'
+          и только из ALLOWED_OPENROUTER_MODELS.
+        - ModelPolicyError (подкласс ValueError) превращается в 422.
+        """
+        validate_explicit_model(self.provider, self.model)
+        return self
 
 
 class EditResponse(BaseModel):

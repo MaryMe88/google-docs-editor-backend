@@ -33,7 +33,7 @@ BASE_PAYLOAD: dict[str, Any] = {
     "overlays": [],
     "output_mode": "text_only",
     "provider": "openrouter",
-    "model": "openrouter/auto",
+    "model": "deepseek/deepseek-v4-flash",
     "temperature": 0.3,
 }
 
@@ -44,7 +44,7 @@ def _make_response(content: str):
 
     return LLMResponse(
         content=content,
-        model="openrouter/auto",
+        model="deepseek/deepseek-v4-flash",
         provider="openrouter",
         tokens_used=10,
     )
