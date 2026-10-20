@@ -78,7 +78,7 @@ jobs:
 
       - name: Upload runtime audit report
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: pip-audit-runtime
           path: audit-runtime.json
@@ -120,7 +120,7 @@ jobs:
 
       - name: Upload dev audit report
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: pip-audit-dev
           path: audit-dev.json
