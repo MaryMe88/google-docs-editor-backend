@@ -174,4 +174,4 @@ jobs:
           fetch-depth: 0
       - name: Run gitleaks (OSS binary)
         run: |
-          docker run --rm -v "${{ github.workspace }}:/repo" zricethezav/gitleaks:latest detect --source=/repo --config=/repo/.gitleaks.toml --verbose --redact
+          docker run --rm -v "${{ github.workspace }}:/repo" zricethezav/gitleaks:v8.30.1 detect --source=/repo --config=/repo/.gitleaks.toml --verbose --redact
