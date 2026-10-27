@@ -369,7 +369,7 @@ def _check_feature_resolution_invariants(config_path: Path) -> None:
     pb = PromptBuilder(config_path=config_path)
     pb.startup_check()
 
-    scenarios = [
+    scenarios: list[tuple[str, str | None, list[str], dict[str, bool]]] = [
         (
             "marketing",
             "marketingpush",
@@ -489,7 +489,7 @@ def _check_assembly_diagnostics_invariants(config_path: Path) -> None:
         text = "Тестовый текст для проверки сборки блоков."
         domain = "blog"
         intent = None
-        overlays = []
+        overlays: list[str] = []
         domain_config = pb.get_domain_config(domain)
         intent_config = pb.get_intent_config(intent)
         overlay_configs = pb.get_overlay_configs(overlays) if overlays else []
@@ -546,7 +546,12 @@ def _check_assembly_diagnostics_invariants(config_path: Path) -> None:
             editorial_enabled=editorial_enabled,
             return_trace=True,
         )
-        _, _, _, trace = pb._build_knowledge_block(req)
+        # TODO(5.3): заменить на overload-аннотацию _build_knowledge_block.
+        # Функция возвращает 4-tuple при req.return_trace=True, но аннотация
+        # в builder.py объявляет union 3- и 4-tuple, поэтому mypy не видит
+        # связи через флаг return_trace. Этот ignore удалится в 5.3
+        # (warn_unused_ignores=true не даст его забыть).
+        _, _, _, trace = pb._build_knowledge_block(req)  # type: ignore[misc]
 
         for diag in trace.blocks:
             if diag.included and not diag.eligible:
@@ -720,16 +725,16 @@ def _validate_references_in_configs(
         for ref in cfg.incompatible_overlays:
             validate_reference(ref, f"domain {domain_name}", "incompatible_overlays")
 
-    for intent_name, cfg in intents.items():
-        for ref in cfg.suppresses:
+    for intent_name, intent_cfg in intents.items():
+        for ref in intent_cfg.suppresses:
             validate_reference(ref, f"intent {intent_name}", "suppresses")
-        for ref in cfg.conflicts_with:
+        for ref in intent_cfg.conflicts_with:
             validate_reference(ref, f"intent {intent_name}", "conflicts_with")
 
-    for overlay_name, cfg in overlays.items():
-        for ref in cfg.suppresses:
+    for overlay_name, overlay_cfg in overlays.items():
+        for ref in overlay_cfg.suppresses:
             validate_reference(ref, f"overlay {overlay_name}", "suppresses")
-        for ref in cfg.conflicts_with:
+        for ref in overlay_cfg.conflicts_with:
             validate_reference(ref, f"overlay {overlay_name}", "conflicts_with")
 
 
@@ -751,7 +756,12 @@ def _check_suppression_cycles(
 ) -> None:
     """Строит граф suppression и проверяет на циклы."""
     suppression_graph: dict[str, set[str]] = {}
-    for entity, cfg in {**domains, **intents, **overlays}.items():
+    combined: dict[str, DomainConfig | IntentConfig | OverlayConfig] = {
+        **domains,
+        **intents,
+        **overlays,
+    }
+    for entity, cfg in combined.items():
         prefix = "domain" if entity in domains else ("intent" if entity in intents else "overlay")
         key = f"{prefix}:{entity}"
         suppression_graph[key] = set()

@@ -13,7 +13,7 @@ import json
 import logging
 import time
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 import numpy as np
 
@@ -290,7 +290,9 @@ class SemanticIndex:
     def _save_cache(self, count: int) -> None:
         """Сохраняет embeddings и метаданные на диск."""
         try:
-            np.save(str(_CACHE_PATH), self.embeddings)
+            # self.embeddings гарантированно установлен в build() до вызова
+            # _save_cache(); mypy не выводит это межпроцедурно.
+            np.save(str(_CACHE_PATH), cast(np.ndarray, self.embeddings))
             meta = {
                 "count": count,
                 "model": self.model_name,
