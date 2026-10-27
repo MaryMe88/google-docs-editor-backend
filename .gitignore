@@ -14,3 +14,4 @@ htmlcov/
 pip-audit-*.json
 pip-audit-*.txt
 .venv-security-final/
+.venv-final-verify/
