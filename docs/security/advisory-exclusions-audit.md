@@ -55,3 +55,29 @@ In `.github/workflows/security.yml`, added `--ignore-vuln GHSA-xmj3-9gf7-h52w` t
 - `docs/security/torch-risk-assessment.md`
 - `docs/security/security-remediation-summary.md`
 - `docs/security/final-security-verification.md`
+
+## Full inventory of --ignore-vuln in security.yml (2026-10-27)
+
+All 9 advisory exclusions in `.github/workflows/security.yml` (both `runtime-audit` and `dev-audit` jobs) have:
+
+- advisory ID (as `--ignore-vuln` flag);
+- reason (as inline comment);
+- reference to issue #35 (in header comment, line 24);
+- review date 2027-04-10 (in header comment, line 24);
+- documentation (in `docs/security/`).
+
+| Advisory | Package | Reason | Documented in |
+|---|---|---|---|
+| PYSEC-2025-217 | transformers | X-CLIP conversion RCE (not used) | 2026-10-transformers-audit.md |
+| PYSEC-2026-2288 | transformers | Trainer `_load_rng_state()` RCE (not used) | same |
+| PYSEC-2026-2289 | transformers | config injection RCE (not used) | same |
+| PYSEC-2026-2290 | transformers | LightGlue bypass `trust_remote_code` (not used) | same |
+| PYSEC-2026-3929 | transformers | `save_pretrained()` path traversal (not used) | same |
+| PYSEC-2026-4174 | transformers | remote Python write without consent (not used) | same |
+| PYSEC-2025-49 | setuptools | build-time only, pulled by torch | final-security-verification.md |
+| PYSEC-2026-3447 | setuptools | build-time only, pulled by torch | final-security-verification.md |
+| GHSA-xmj3-9gf7-h52w | setuptools | Windows-only build-time path escape | this document, section "Accepted risk" |
+
+**Note on `residual-risk-baseline.md`:** that document (iteration 0) lists accepted risks at package level (`transformers 4.57.6`, `torch 2.5.0+cpu`, `setuptools 78.1.0`) without individual advisory IDs. `security.yml` operates at advisory-ID level. This is not a conflict — both are consistent in intent, at different granularity.
+
+**Audit result (2026-10-27): passed.** All exclusions documented, review date current, `pip-audit` state matches the ignore list.
