@@ -17,7 +17,7 @@ from typing import Any
 from src.config_types import AudienceProfile
 from src.contracts import EditRequest, EditResponse
 from src.error_mapping import InvalidLLMOutputError
-from src.llm_client import call_with_fallback
+from src.llm_client import LLMResponse, call_with_fallback
 from src.output_guard import (
     find_placeholder_leaks,
     harden_prompt_against_placeholders,
@@ -32,7 +32,7 @@ _MARKER_REPORT = re.compile(r"={2,}\s*ОТЧЁТ\s*={2,}", re.IGNORECASE)
 
 
 def _log_edit_request_meta(body: EditRequest, retrieval_meta: dict | None = None) -> None:
-    log_data = {
+    log_data: dict[str, Any] = {
         "event": "edit_request",
         "domain": body.domain,
         "intent": body.intent,
@@ -105,7 +105,7 @@ async def _generate_clean_edit(
     prompt: str,
     providers: list[str],
     body: EditRequest,
-) -> tuple[Any, str, str | None]:
+) -> tuple[LLMResponse, str, str | None]:
     response = await call_with_fallback(
         prompt=prompt,
         providers=providers,
