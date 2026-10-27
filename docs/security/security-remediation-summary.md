@@ -62,7 +62,17 @@ This document summarizes the residual security remediation roadmap (iterations 0
 |---|---|---|
 | transformers 4.57.6 | 6 unique advisories | Require `trust_remote_code=True` or untrusted model loading |
 | torch 2.5.0+cpu | 9 advisories (CVE-2025-32434, CVE-2025-46148, CVE-2025-2999, CVE-2025-2998, CVE-2025-3000, CVE-2025-2149, CVE-2025-2148, CVE-2025-3730, CVE-2025-63396) | Require `torch.load`, RNN ops, JIT, profiler, or CTC loss — none used |
-| setuptools 78.1.0 | PYSEC-2025-49, PYSEC-2026-3447 | Build-time only, not imported at runtime |
+| setuptools 78.1.0 | PYSEC-2025-49, PYSEC-2026-3447, GHSA-xmj3-9gf7-h52w | Build-time only, not imported at runtime; Windows-only path escape |
+
+### Update 2026-10-25
+
+PyPA/OSV advisory database added 5 new entries between 2026-10-12 and 2026-10-25. Actions:
+
+- **certifi** upgraded `2026.7.22 -> 2026.10.19` (PYSEC-2026-4320, compromised intermediate CA).
+- **filelock** upgraded `3.32.3 -> 4.2.1` (CVE-2026-112940, CVE-2026-112913, CVE-2026-112907).
+- **setuptools** `GHSA-xmj3-9gf7-h52w` accepted as risk (build-time only, upgrade blocked by torch).
+
+Full classification: `docs/security/advisory-exclusions-audit.md`.
 
 ### Tooling limitations
 
