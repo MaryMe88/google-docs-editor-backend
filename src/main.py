@@ -5,12 +5,13 @@ import os
 import time
 from contextlib import asynccontextmanager
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from slowapi import _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
+from starlette.types import ExceptionHandler
 
 from src.auth import get_expected_api_key
 from src.error_mapping import (  # noqa: F401
@@ -172,7 +173,13 @@ app = FastAPI(
 
 # limiter imported from src.rate_limit (iteration 8, step 3).
 app.state.limiter = limiter
-app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
+# slowapi handler принимает RateLimitExceeded, Starlette ожидает Exception:
+# runtime-совместимо (Starlette вызывает handler только для этого типа),
+# но типово требует cast. cast — no-op во время выполнения.
+app.add_exception_handler(
+    RateLimitExceeded,
+    cast(ExceptionHandler, _rate_limit_exceeded_handler),
+)
 
 app.add_middleware(
     CORSMiddleware,

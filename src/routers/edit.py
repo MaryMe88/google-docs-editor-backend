@@ -91,7 +91,7 @@ async def edit_text(
             provider for provider in sorted(ALLOWED_PROVIDERS) if provider != body.provider
         ]
 
-        response, edited_text, report = await _generate_clean_edit(
+        llm_response, edited_text, report = await _generate_clean_edit(
             prompt=prompt,
             providers=providers_to_try,
             body=body,
@@ -101,12 +101,12 @@ async def edit_text(
         return EditResponse(
             edited_text=edited_text,
             report=report,
-            model=response.model,
-            provider=response.provider,
+            model=llm_response.model,
+            provider=llm_response.provider,
             dry_run=False,
-            usage={"tokens_used": response.tokens_used},
+            usage={"tokens_used": llm_response.tokens_used},
             raw_response={
-                "finish_reason": response.finish_reason,
+                "finish_reason": llm_response.finish_reason,
             },
             retrieval_meta=(retrieval_meta if body.include_retrieval_meta else None),
         )
