@@ -62,6 +62,7 @@ jobs:
         # PYSEC-2026-4174  — remote Python file write без consent
         # PYSEC-2025-49    — setuptools: build-time only, pulled by torch
         # PYSEC-2026-3447  — setuptools: build-time only, pulled by torch
+        # GHSA-xmj3-9gf7-h52w — setuptools: Windows build-time path escape, pulled by torch
         run: |
           pip-audit \
             --progress-spinner off \
@@ -74,7 +75,8 @@ jobs:
             --ignore-vuln PYSEC-2026-3929 \
             --ignore-vuln PYSEC-2026-4174 \
             --ignore-vuln PYSEC-2025-49 \
-            --ignore-vuln PYSEC-2026-3447
+            --ignore-vuln PYSEC-2026-3447 \
+            --ignore-vuln GHSA-xmj3-9gf7-h52w
 
       - name: Upload runtime audit report
         if: always()
@@ -116,7 +118,8 @@ jobs:
             --ignore-vuln PYSEC-2026-3929 \
             --ignore-vuln PYSEC-2026-4174 \
             --ignore-vuln PYSEC-2025-49 \
-            --ignore-vuln PYSEC-2026-3447
+            --ignore-vuln PYSEC-2026-3447 \
+            --ignore-vuln GHSA-xmj3-9gf7-h52w
 
       - name: Upload dev audit report
         if: always()
