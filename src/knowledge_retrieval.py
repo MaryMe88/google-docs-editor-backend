@@ -707,19 +707,19 @@ def _select_ranked_entries(
 
     # Если ни одна стадия не сработала
     _log_stage_debug(params.debug_context, FallbackStage.EMPTY, candidates, [])
-    res: list[dict[str, Any]] | RetrievalResult
+    empty_res: list[dict[str, Any]] | RetrievalResult
     if params.return_meta:
-        res = RetrievalResult([], FallbackStage.EMPTY, 0)
+        empty_res = RetrievalResult([], FallbackStage.EMPTY, 0)
     else:
-        res = []
-    return _ensure_return_type(res, params.return_meta)
+        empty_res = []
+    return _ensure_return_type(empty_res, params.return_meta)
 
 
 # ---------------------------------------------------------------------------
 # Публичные функции
 # ---------------------------------------------------------------------------
 
-_CATEGORY_CONFIG = {
+_CATEGORY_CONFIG: dict[str, dict[str, Any]] = {
     "grammar": {
         "attr": "grammar_errors",
         "default_tags": ["grammar"],
@@ -758,9 +758,9 @@ def select_entries(
     candidate_limit: int | None = None,
     min_score: int = 1,
     char_budget: int | None = None,
-    return_meta: bool = False,
+    return_meta: Literal[True] = True,
     semantic_rerank: bool = False,
-) -> list[dict[str, Any]]: ...
+) -> RetrievalResult: ...
 
 
 @overload
@@ -774,9 +774,9 @@ def select_entries(
     candidate_limit: int | None = None,
     min_score: int = 1,
     char_budget: int | None = None,
-    return_meta: Literal[True] = True,
+    return_meta: bool = False,
     semantic_rerank: bool = False,
-) -> RetrievalResult: ...
+) -> list[dict[str, Any]]: ...
 
 
 def select_entries(
