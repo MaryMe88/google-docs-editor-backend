@@ -349,6 +349,15 @@ def _check_tag_map_coverage(
 # Проверки explainability (не блокирующие)
 # ============================================================================
 
+# Ключи, которые resolve_prompt_features обязан вернуть в результат.
+_REQUIRED_RESOLUTION_KEYS: tuple[str, ...] = (
+    "activated_features",
+    "activation_reasons",
+    "suppression_reasons",
+    "recognized_aliases",
+    "ignored_unknown_values",
+)
+
 
 def _check_feature_resolution_invariants(config_path: Path) -> None:
     try:
@@ -398,21 +407,9 @@ def _check_feature_resolution_invariants(config_path: Path) -> None:
                 intent_config=intent_config,
                 overlay_configs=overlay_configs,
             )
-            assert (
-                "activated_features" in result_dict
-            ), f"Missing activated_features for {domain}/{intent}"
-            assert (
-                "activation_reasons" in result_dict
-            ), f"Missing activation_reasons for {domain}/{intent}"
-            assert (
-                "suppression_reasons" in result_dict
-            ), f"Missing suppression_reasons for {domain}/{intent}"
-            assert (
-                "recognized_aliases" in result_dict
-            ), f"Missing recognized_aliases for {domain}/{intent}"
-            assert (
-                "ignored_unknown_values" in result_dict
-            ), f"Missing ignored_unknown_values for {domain}/{intent}"
+            missing = [k for k in _REQUIRED_RESOLUTION_KEYS if k not in result_dict]
+            if missing:
+                raise RuntimeError(f"{domain}/{intent}: missing keys {missing}")
 
             for flag, expected_value in expected.items():
                 actual = result_dict.get(flag)

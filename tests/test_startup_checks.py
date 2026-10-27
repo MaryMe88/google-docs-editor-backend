@@ -4,8 +4,12 @@
 from __future__ import annotations
 
 import json
+import os
 import re
+import subprocess
+import sys
 import tempfile
+import textwrap
 from pathlib import Path
 from unittest.mock import patch
 
@@ -13,6 +17,7 @@ import pytest
 
 from src.startup_checks import (
     StartupCheckParams,
+    _check_feature_resolution_invariants,
     _check_scoring_weights_file,
     _check_tags_vs_kb,
     run_startup_checks,
@@ -208,3 +213,155 @@ def test_run_startup_checks_does_not_fail_due_to_tag_map() -> None:
         run_startup_checks(params)
         # Если дошли сюда — тест пройден
         assert True
+
+
+class _FakePromptBuilder:
+    """Минимальная заглушка PromptBuilder для проверки feature resolution."""
+
+    def __init__(self, config_path: Path | None = None) -> None:
+        self.config_path = config_path
+
+    def startup_check(self) -> None:
+        return None
+
+    def get_domain_config(self, domain: str) -> dict[str, str]:
+        return {"domain": domain}
+
+    def get_intent_config(self, intent: str | None) -> dict[str, str | None]:
+        return {"intent": intent}
+
+    def get_overlay_configs(self, overlays: list[str]) -> list[dict[str, str]]:
+        return []
+
+
+def test_feature_resolution_missing_key_logs_warning_without_raising(caplog) -> None:
+    """Отсутствие обязательного ключа — warning, а не падение startup (итерация 4)."""
+    result_without_suppression = {
+        "activated_features": [],
+        "activation_reasons": {},
+        "recognized_aliases": [],
+        "ignored_unknown_values": [],
+    }
+
+    with (
+        patch("src.prompt_builder.PromptBuilder", _FakePromptBuilder),
+        patch(
+            "src.prompt_builder.resolve_prompt_features",
+            return_value=result_without_suppression,
+        ),
+        caplog.at_level("WARNING"),
+    ):
+        _check_feature_resolution_invariants(Path("."))
+
+    assert "missing keys" in caplog.text
+    assert "suppression_reasons" in caplog.text
+
+
+def test_feature_resolution_complete_result_does_not_warn_about_missing_keys(caplog) -> None:
+    """Полный результат не вызывает warning про missing keys (итерация 4)."""
+    complete_result = {
+        "activated_features": [],
+        "activation_reasons": {},
+        "suppression_reasons": {},
+        "recognized_aliases": [],
+        "ignored_unknown_values": [],
+    }
+
+    with (
+        patch("src.prompt_builder.PromptBuilder", _FakePromptBuilder),
+        patch("src.prompt_builder.resolve_prompt_features", return_value=complete_result),
+        caplog.at_level("WARNING"),
+    ):
+        _check_feature_resolution_invariants(Path("."))
+
+    assert "missing keys" not in caplog.text
+
+
+_SUBPROCESS_PROBE = textwrap.dedent(
+    """
+    import logging
+    from pathlib import Path
+    from unittest.mock import patch
+
+    import src.startup_checks as sc
+
+    captured = []
+
+    class _Cap(logging.Handler):
+        def emit(self, record):
+            captured.append(record.getMessage())
+
+    sc.logger.addHandler(_Cap())
+    sc.logger.setLevel(logging.WARNING)
+
+    class _PB:
+        def __init__(self, config_path=None):
+            pass
+
+        def startup_check(self):
+            return None
+
+        def get_domain_config(self, domain):
+            return {}
+
+        def get_intent_config(self, intent):
+            return {}
+
+        def get_overlay_configs(self, overlays):
+            return []
+
+    def _fake(**kwargs):
+        return {
+            "activated_features": [],
+            "activation_reasons": {},
+            "recognized_aliases": [],
+            "ignored_unknown_values": [],
+        }
+
+    with patch("src.prompt_builder.PromptBuilder", _PB), patch(
+        "src.prompt_builder.resolve_prompt_features", _fake
+    ):
+        sc._check_feature_resolution_invariants(Path("."))
+
+    hits = sum(1 for m in captured if "missing keys" in m)
+    print(f"missing_keys_warnings={hits}")
+    """
+)
+
+
+def _run_feature_resolution_probe(optimized: bool) -> str:
+    args = [sys.executable]
+    if optimized:
+        args.append("-O")
+    args += ["-c", _SUBPROCESS_PROBE]
+
+    project_root = Path(__file__).resolve().parents[1]
+    env = os.environ.copy()
+    env["PYTHONPATH"] = str(project_root) + os.pathsep + env.get("PYTHONPATH", "")
+
+    completed = subprocess.run(
+        args,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        env=env,
+        check=False,
+    )
+    assert completed.returncode == 0, completed.stderr
+    return completed.stdout
+
+
+def _extract_missing_keys_count(stdout: str) -> int:
+    match = re.search(r"missing_keys_warnings=(\d+)", stdout)
+    assert match is not None, stdout
+    return int(match.group(1))
+
+
+def test_feature_resolution_missing_key_warns_under_optimize_flag() -> None:
+    """Под `python -O` предупреждение о недостающем ключе сохраняется (итерация 4)."""
+    normal_count = _extract_missing_keys_count(_run_feature_resolution_probe(optimized=False))
+    optimized_count = _extract_missing_keys_count(_run_feature_resolution_probe(optimized=True))
+
+    assert normal_count > 0, "Обычный Python: warning про missing keys должен быть"
+    assert optimized_count > 0, "Python -O: warning про missing keys должен сохраниться"
+    assert normal_count == optimized_count
