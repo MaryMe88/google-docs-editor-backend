@@ -9,6 +9,10 @@ httpx==0.27.2
 certifi==2026.10.19
 anyio==4.15.1
 slowapi==0.1.9
+# Транзитивная зависимость slowapi -> limits. Deprecated 3.0.0 требует
+# Python 3.12+, из-за чего mypy src с target 3.11 падает на deprecated/sphinx.py.
+# Пин согласован как dependency-решение карты №2 (вход в итерацию 5).
+Deprecated<3.0.0
 torch==2.5.0+cpu
 filelock==4.2.1
 sentence-transformers==5.6.1
