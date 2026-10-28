@@ -265,3 +265,45 @@ def test_normalize_tag_local_behavior() -> None:
     assert _normalize_tag_local("FOO BAR") == "foo_bar"
     assert _normalize_tag_local("foo") == "foo"
     assert _normalize_tag_local("UPPER-CASE String") == "upper_case_string"
+
+
+def test_tag_registry_has_no_config_types_import_at_all() -> None:
+    """После 6.2 в tag_registry.py нет импорта src.config_types (ни top-level, ни lazy)."""
+    path = PROJECT_ROOT / "src" / "tag_registry.py"
+    source = path.read_text(encoding="utf-8")
+    tree = ast.parse(source)
+
+    found: list[tuple[int, str]] = []
+    for node in ast.walk(tree):
+        if isinstance(node, ast.ImportFrom) and node.module == "src.config_types":
+            found.append((node.lineno, "from src.config_types import ..."))
+        elif isinstance(node, ast.Import):
+            for alias in node.names:
+                if alias.name == "src.config_types" or alias.name.startswith("src.config_types."):
+                    found.append((node.lineno, f"import {alias.name}"))
+
+    assert not found, (
+        f"После 6.2 в tag_registry.py не должно быть импорта src.config_types. " f"Найдено: {found}"
+    )
+
+
+def test_tag_constants_has_no_toplevel_src_imports() -> None:
+    """В tag_constants.py нет top-level импортов из src.* (только stdlib)."""
+    path = PROJECT_ROOT / "src" / "config_models" / "tag_constants.py"
+    source = path.read_text(encoding="utf-8")
+    tree = ast.parse(source)
+
+    offenders: list[tuple[int, str]] = []
+    for node in tree.body:
+        if isinstance(node, ast.ImportFrom):
+            if node.module and node.module.startswith("src."):
+                offenders.append((node.lineno, f"from {node.module} import ..."))
+        elif isinstance(node, ast.Import):
+            for alias in node.names:
+                if alias.name.startswith("src."):
+                    offenders.append((node.lineno, f"import {alias.name}"))
+
+    assert not offenders, (
+        f"tag_constants.py должен быть чистым (только stdlib). "
+        f"Найдено top-level импортов из src: {offenders}"
+    )
