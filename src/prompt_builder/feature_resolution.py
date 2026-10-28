@@ -101,7 +101,7 @@ def _prepare_resolution_context(
     intent: str | None,
     overlays: Sequence[str],
     overlay_configs: list[OverlayConfig],
-) -> tuple[FeatureResolutionResult, str, list[str], list[str]]:
+) -> tuple[FeatureResolutionResult, str | None, list[str], list[str], list[str], list[str]]:
     norm_intent = normalize_intent(intent)
     known_overlay_names = {
         cfg.name.lower().strip()
@@ -157,12 +157,12 @@ def _apply_domain_incompatibility(
     result: FeatureResolutionResult,
     domain: str,
     domain_config: DomainConfig,
-    effective_intent: str,
+    effective_intent: str | None,
     effective_overlays: list[str],
     tags: list[str],
     suppressed_layers: list[str],
     warnings: list[str],
-) -> tuple[str, list[str], list[str]]:
+) -> tuple[str | None, list[str], list[str]]:
     if _is_incompatible_intent(effective_intent, domain_config.incompatible_intents):
         suppressed_layers.append(f"intent '{effective_intent}' suppressed by domain '{domain}'")
         warnings.append(
@@ -519,7 +519,7 @@ def _activate_editorial(
 def _activate_features_from_tags(
     result: FeatureResolutionResult,
     domain_config: DomainConfig,
-    effective_intent: str,
+    effective_intent: str | None,
     effective_overlays: list[str],
     domain: str,
 ) -> set[str]:

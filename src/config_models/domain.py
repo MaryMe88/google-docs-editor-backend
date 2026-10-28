@@ -104,7 +104,7 @@ class IntentConfig:
     """Конфигурация цели обработки."""
 
     name: str
-    instructions: list[str]
+    instructions: tuple[str, ...]
     priority: int = 50
     suppresses: tuple = field(default_factory=tuple)
     conflicts_with: tuple = field(default_factory=tuple)

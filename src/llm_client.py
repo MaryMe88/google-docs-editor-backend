@@ -21,6 +21,7 @@ import logging
 import os
 import random
 from abc import ABC, abstractmethod
+from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any
 
@@ -753,7 +754,7 @@ def create_llm_client(
         max_retries=max_retries,
     )
 
-    client_classes = {
+    client_classes: dict[LLMProvider, Callable[[LLMConfig], BaseLLMClient]] = {
         LLMProvider.PERPLEXITY: PerplexityClient,
         LLMProvider.OPENAI: OpenAIClient,
         LLMProvider.ANTHROPIC: AnthropicClient,
