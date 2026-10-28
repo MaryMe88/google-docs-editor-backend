@@ -19,7 +19,7 @@ import math
 import os
 import re
 from dataclasses import dataclass
-from typing import Literal
+from typing import Literal, cast
 
 # ---------------------------------------------------------------------------
 # Константы по умолчанию
@@ -343,13 +343,13 @@ def _get_mode(provider_upper: str) -> ContextBudgetMode:
     mode = os.getenv(specific_var)
     if mode is not None:
         if mode in ("observe", "cap", "enforce"):
-            return mode
+            return cast(ContextBudgetMode, mode)
 
     global_var = "LLM_CONTEXT_BUDGET_MODE"
     mode = os.getenv(global_var)
     if mode is not None:
         if mode in ("observe", "cap", "enforce"):
-            return mode
+            return cast(ContextBudgetMode, mode)
 
     return DEFAULT_MODE
 

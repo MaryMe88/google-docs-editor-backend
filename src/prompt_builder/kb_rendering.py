@@ -298,8 +298,10 @@ def _warn_if_empty_retrieval(
 class KBBlockConfig:
     name: str
     budget_key: str
-    retrieval_fn: Callable
-    append_fn: Callable
+    # None допустим для недоделанных блоков (см. evaluation_techniques);
+    # guard в _process_kb_block защищает от вызова None.
+    retrieval_fn: Callable | None
+    append_fn: Callable | None
     title: str
     kb_attr: str | None = None
     uses_structural_call: bool = False
@@ -495,6 +497,13 @@ def _process_kb_block(config: KBBlockConfig, ctx: ProcessContext) -> int:
     Обрабатывает один блок знаний: выполняет retrieval, рендерит правила и few-shot.
     Возвращает обновлённое количество использованных few-shot примеров.
     """
+    # Guard: блок зарегистрирован, но не сконфигурирован (например,
+    # evaluation_techniques — см. отчёт 5.3). Пока retrieval/append не
+    # подключены, безопасно пропускаем, чтобы не упасть с
+    # TypeError: 'NoneType' object is not callable.
+    if config.retrieval_fn is None or config.append_fn is None:
+        return ctx.total_few_shot_used
+
     if not config.uses_structural_call:
         candidate_limit = (
             getattr(ctx.limits, config.candidate_attr) if config.candidate_attr else None

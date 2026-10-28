@@ -5,9 +5,10 @@ import json
 import logging
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 from src.config_types import (
+    AssemblyTrace,
     DomainConfig,
     IntentConfig,
     OverlayConfig,
@@ -546,12 +547,11 @@ def _check_assembly_diagnostics_invariants(config_path: Path) -> None:
             editorial_enabled=editorial_enabled,
             return_trace=True,
         )
-        # TODO(5.3): заменить на overload-аннотацию _build_knowledge_block.
-        # Функция возвращает 4-tuple при req.return_trace=True, но аннотация
-        # в builder.py объявляет union 3- и 4-tuple, поэтому mypy не видит
-        # связи через флаг return_trace. Этот ignore удалится в 5.3
-        # (warn_unused_ignores=true не даст его забыть).
-        _, _, _, trace = pb._build_knowledge_block(req)  # type: ignore[misc]
+        block_result = cast(
+            tuple[str, dict[str, Any], int, AssemblyTrace],
+            pb._build_knowledge_block(req),
+        )
+        _, _, _, trace = block_result
 
         for diag in trace.blocks:
             if diag.included and not diag.eligible:

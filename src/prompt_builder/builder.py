@@ -14,6 +14,7 @@ from pathlib import Path
 from typing import (
     Any,
     Literal,
+    cast,
     overload,
 )
 
@@ -750,7 +751,7 @@ class PromptBuilder:
         self._process_nkrj_block(kb, req, lines, trace)
 
         if req.return_trace:
-            return "\n".join(lines), meta, current_total, trace
+            return "\n".join(lines), meta, current_total, cast(AssemblyTrace, trace)
         return "\n".join(lines), meta, current_total
 
     def _assemble_prompt(self, blocks: list[str]) -> str:
@@ -977,7 +978,11 @@ class PromptBuilder:
                 return_trace=True,
                 semantic_rerank=deep_semantic_search,
             )
-            knowledge_block, block_meta, _, trace = self._build_knowledge_block(req)
+            block_result = cast(
+                tuple[str, dict[str, Any], int, AssemblyTrace | None],
+                self._build_knowledge_block(req),
+            )
+            knowledge_block, block_meta, _, trace = block_result
             retrieval_meta_total = block_meta
             if knowledge_block:
                 blocks.append("База знаний:\n" + knowledge_block)
