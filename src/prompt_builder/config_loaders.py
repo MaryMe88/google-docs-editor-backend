@@ -63,7 +63,7 @@ def load_core_config(base_path: Path = Path("config")) -> CoreConfig:
     )
 
 
-def load_domain_config(domain: str, base_path: Path = Path("config")) -> DomainConfig:
+def load_domain_config(domain: str, base_path: Path = Path("config")) -> DomainConfig:  # noqa: C901  # see #93
     normalized_domain = domain.strip().lower()
     domain_path = base_path / "domains" / f"{normalized_domain}.json"
     if not domain_path.exists():

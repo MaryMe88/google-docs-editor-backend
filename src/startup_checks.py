@@ -93,7 +93,7 @@ def _check_intent_files_strict(
     intents_with_files = allowed_intents - {"neutral"}
 
     missing = []
-    for intent in intents_with_files:
+    for intent in intents_with_files:  # noqa: PLR1702  # see #93
         file_path = intents_dir / f"{intent}.json"
         if not file_path.is_file():
             missing.append(intent)
@@ -244,7 +244,7 @@ _KB_FILES_WITHOUT_TAGS: set[str] = {
 }
 
 
-def _collect_kb_tags(kb_path: Path) -> set[str]:
+def _collect_kb_tags(kb_path: Path) -> set[str]:  # noqa: C901  # see #93
     kb_tags: set[str] = set()
     if not kb_path.is_dir():
         logger.warning("Knowledge base directory not found: %s", kb_path)
@@ -256,7 +256,7 @@ def _collect_kb_tags(kb_path: Path) -> set[str]:
         logger.warning("No KB JSON files found in %s", kb_path)
         return kb_tags
 
-    for file_path in kb_files:
+    for file_path in kb_files:  # noqa: PLR1702  # see #93
         try:
             with open(file_path, encoding="utf-8") as f:
                 data = json.load(f)
@@ -360,7 +360,7 @@ _REQUIRED_RESOLUTION_KEYS: tuple[str, ...] = (
 )
 
 
-def _check_feature_resolution_invariants(config_path: Path) -> None:
+def _check_feature_resolution_invariants(config_path: Path) -> None:  # noqa: C901  # see #93
     try:
         from src.prompt_builder import PromptBuilder, resolve_prompt_features
     except ImportError as e:
@@ -395,7 +395,7 @@ def _check_feature_resolution_invariants(config_path: Path) -> None:
         ("blog", None, [], {}),
     ]
 
-    for domain, intent, overlays, expected in scenarios:
+    for domain, intent, overlays, expected in scenarios:  # noqa: PLR1702  # see #93
         try:
             domain_config = pb.get_domain_config(domain)
             intent_config = pb.get_intent_config(intent)
@@ -469,7 +469,7 @@ def _check_feature_resolution_invariants(config_path: Path) -> None:
             )
 
 
-def _check_assembly_diagnostics_invariants(config_path: Path) -> None:
+def _check_assembly_diagnostics_invariants(config_path: Path) -> None:  # noqa: C901  # see #93
     try:
         from src.config_types import KnowledgeLevel
         from src.prompt_builder import (
@@ -668,7 +668,7 @@ def _load_all_configs(
     return domains, intents, overlays
 
 
-def _validate_references_in_configs(
+def _validate_references_in_configs(  # noqa: C901  # see #93
     domains: dict[str, DomainConfig],
     intents: dict[str, IntentConfig],
     overlays: dict[str, OverlayConfig],

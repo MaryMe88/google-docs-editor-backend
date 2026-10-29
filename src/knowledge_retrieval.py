@@ -160,7 +160,7 @@ def _estimate_entry_chars(entry: dict[str, Any]) -> int:
         value = entry.get(field)
         if isinstance(value, str):
             total += len(value)
-    for container_key in ("steps", "sections"):
+    for container_key in ("steps", "sections"):  # noqa: PLR1702  # see #93
         container = entry.get(container_key)
         if isinstance(container, list):
             for step in container:
@@ -208,7 +208,7 @@ def score_rule_entry(
     return score, -idx
 
 
-def score_structural_entry(
+def score_structural_entry(  # noqa: C901  # see #93
     entry: dict[str, Any],
     normalized_text: str,
     wanted_tags: set[str],
@@ -241,7 +241,7 @@ def score_structural_entry(
                 if stripped:
                     patterns.append(stripped)
 
-    for container_key in ("steps", "sections"):
+    for container_key in ("steps", "sections"):  # noqa: PLR1702  # see #93
         container = entry.get(container_key)
         if isinstance(container, list):
             for step in container:

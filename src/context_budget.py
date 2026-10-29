@@ -359,7 +359,7 @@ def _get_mode(provider_upper: str) -> ContextBudgetMode:
 # ---------------------------------------------------------------------------
 
 
-def resolve_context_budget(
+def resolve_context_budget(  # noqa: C901  # see #93
     *,
     provider: str,
     model: str | None,

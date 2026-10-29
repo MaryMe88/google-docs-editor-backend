@@ -72,17 +72,17 @@ ignore = [
 # для runtime-аннотаций Pydantic.
 "src/config_types.py"     = ["UP006", "UP035"]
 "src/contracts.py"        = ["UP006", "UP035"]
-"src/knowledge_retrieval.py" = ["UP006", "UP035"]
-"src/llm_client.py"       = ["UP006", "UP035"]
+"src/knowledge_retrieval.py" = ["UP006", "UP035", "RUF100"]
+"src/llm_client.py"       = ["UP006", "UP035", "RUF100"]
 "src/main.py"             = ["UP006", "UP035"]
 "src/output_guard.py"     = ["UP035"]
-"src/startup_checks.py"   = ["UP006", "UP035"]
+"src/startup_checks.py"   = ["UP006", "UP035", "RUF100"]
 "src/kb_manifest_loader.py" = ["UP035"]
-"src/prompt_builder/builder.py"     = ["UP006", "UP035"]
-"src/prompt_builder/kb_rendering.py" = ["UP006", "UP035"]
-"src/prompt_builder/kb_loading.py"   = ["UP006", "UP035"]
-"src/prompt_builder/feature_resolution.py" = ["UP006", "UP035"]
-"src/prompt_builder/config_loaders.py"     = ["UP035"]
+"src/prompt_builder/builder.py"     = ["UP006", "UP035", "RUF100"]
+"src/prompt_builder/kb_rendering.py" = ["UP006", "UP035", "RUF100"]
+"src/prompt_builder/kb_loading.py"   = ["UP006", "UP035", "RUF100"]
+"src/prompt_builder/feature_resolution.py" = ["UP006", "UP035", "RUF100"]
+"src/prompt_builder/config_loaders.py"     = ["UP035", "RUF100"]
 "src/prompt_builder/normalization.py"      = ["UP035"]
 "src/reason_codes.py"     = ["UP035"]
 "src/registry.py"         = ["UP006", "UP035"]
@@ -99,6 +99,27 @@ ignore = [
 "tests/test_knowledge_retrieval.py" = ["UP035"]
 "tests/test_knowledge_retrieval_fallback.py" = ["UP035"]
 "tests/test_prompt_builder_architecture.py"  = ["UP035"]
+
+# RUF100 отключён в файлах с `# noqa: C901/PLR1702` (итерация 9.2, issue #93):
+# C901/PLR1702 не входят в общий select, поэтому Ruff считает эти noqa "unused".
+# Вернуть после рефакторинга (карта №3 удалит noqa вместе с упрощением функций).
+"src/config_models/tag_constants.py"     = ["RUF100"]
+"src/config_models/tags.py"              = ["RUF100"]
+"src/context_budget.py"                  = ["RUF100"]
+
+# ---------------------------------------------------------------------------
+# Пороги сложности (итерация 9.2 карты №2, issue #93)
+# ---------------------------------------------------------------------------
+# C901 (mccabe) — цикломатическая сложность ≤ 10.
+# PLR1702 (pylint, preview) — вложенность ≤ 4.
+# Активируются только в отдельной CI-команде
+# (ruff check src --select C901,PLR1702 --preview);
+# в общий select не входят, чтобы не расширять scope на scripts/tests.
+[tool.ruff.lint.mccabe]
+max-complexity = 10
+
+[tool.ruff.lint.pylint]
+max-nested-blocks = 4
 
 # ---------------------------------------------------------------------------
 # Ruff formatter — настройки совпадают с линтером

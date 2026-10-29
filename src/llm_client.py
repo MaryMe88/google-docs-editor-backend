@@ -148,7 +148,7 @@ def _extract_upstream_status(error: LLMError) -> int | None:
     return None
 
 
-def _classify_error(error: LLMError) -> str:
+def _classify_error(error: LLMError) -> str:  # noqa: C901  # see #93
     """Классифицирует ошибку для LLMFallbackError."""
     if isinstance(error, LLMInvalidResponseError):
         return "invalid_response"
@@ -390,7 +390,7 @@ class BaseLLMClient(ABC):
             return None
         return _backoff_with_jitter(self.config.retry_delay, attempt)
 
-    async def generate(self, prompt: str) -> LLMResponse:
+    async def generate(self, prompt: str) -> LLMResponse:  # noqa: C901  # see #93
         attempt = 0
         last_error: Exception | None = None
 
