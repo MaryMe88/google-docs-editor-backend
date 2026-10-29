@@ -195,7 +195,6 @@ class EditResponse(BaseModel):
 
     edited_text: str
     report: str | None = None  # PR-2 (НП-2): добавлено для режима text_and_report
-    # prompt: str  # УДАЛЕНО: не возвращаем промпт клиенту
     provider: str | None = None
     model: str | None = None
     dry_run: bool = False

@@ -1049,35 +1049,3 @@ async def generate_text(
     ) as client:
         response = await client.generate(prompt)
         return response.content
-
-
-if __name__ == "__main__":
-    import asyncio as _asyncio
-
-    async def _test_client() -> None:
-        logging.basicConfig(
-            level=logging.INFO,
-            format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
-        )
-
-        test_prompt = "Напиши короткий дружелюбный абзац о пользе хорошей редактуры."
-        test_source = "Короткий текст для теста."
-
-        try:
-            response = await call_with_fallback(
-                prompt=test_prompt,
-                providers=["openrouter"],
-                source_text=test_source,
-                temperature=0.3,
-                max_retries_per_provider=1,
-            )
-            print()
-            print(response.content)
-            print(f"\nModel: {response.model}")
-            print(f"Provider: {response.provider}")
-            print(f"Tokens used: {response.tokens_used}")
-            print(f"Finish reason: {response.finish_reason}")
-        except Exception as error:
-            print(f"LLM error: {error}")
-
-    _asyncio.run(_test_client())
