@@ -136,3 +136,13 @@ asyncio_default_fixture_loop_scope = "function"
 markers = [
     "integration: marks tests as integration tests (deselect with '-m \"not integration\"')",
 ]
+
+# ---------------------------------------------------------------------------
+# coverage — порог минимального покрытия (итерация 9)
+# ---------------------------------------------------------------------------
+# Значение рассчитано по CI main на SHA c67fcee (PR #91):
+#   TOTAL: 4257 stmts, 602 miss, 86% (точно 85.86%)
+#   floor(85.86) - 1 = 84
+# Правило: карта №2, итерация 9.
+[tool.coverage.report]
+fail_under = 84
