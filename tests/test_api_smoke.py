@@ -81,7 +81,7 @@ def test_livez_returns_alive_without_openrouter() -> None:
 
 def test_health_returns_expected_structure() -> None:
     """/health возвращает ожидаемую структуру HealthResponse."""
-    from src.main import invalidate_provider_cache
+    from src.services.provider_health import invalidate_provider_cache
 
     invalidate_provider_cache()
 
