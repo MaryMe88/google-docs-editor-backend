@@ -14,26 +14,13 @@ from slowapi.errors import RateLimitExceeded
 from starlette.types import ExceptionHandler
 
 from src.auth import get_expected_api_key
-from src.error_mapping import (  # noqa: F401
-    InvalidLLMOutputError,
-    _llm_error_to_http_exception,
-)
 from src.middleware.body_size import BodySizeLimitMiddleware
 from src.prompt_builder import PromptBuilder
-from src.rate_limit import (
-    _client_ip_key,  # noqa: F401
-    limiter,
-)
+from src.rate_limit import limiter
 from src.routers.edit import router as edit_router
 from src.routers.health import router as health_router
 from src.scoring_weights import load_scoring_weights
 from src.semantic_index import set_semantic_entries
-from src.services.edit_service import _parse_text_and_report  # noqa: F401
-from src.services.provider_health import (  # noqa: F401
-    _PROVIDER_KEY_ENV,
-    _check_providers_availability,
-    invalidate_provider_cache,
-)
 from src.shared_contracts import (
     ALLOWED_DOMAINS,
     ALLOWED_INTENTS,
@@ -47,17 +34,6 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-
-# _client_ip_key moved to src.rate_limit (iteration 8, step 3).
-# Re-export is in the top import block.
-
-
-# ---------------------------------------------------------------------------
-# Кэш доступности провайдеров
-# ---------------------------------------------------------------------------
-# Provider cache and _PROVIDER_KEY_ENV moved to
-# src.services.provider_health (iteration 8, step 1a).
-# Re-exports are declared in the top import block below.
 
 # ---------------------------------------------------------------------------
 # SEC-патч 2.1: Строгий allowlist для CORS
@@ -171,7 +147,6 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
-# limiter imported from src.rate_limit (iteration 8, step 3).
 app.state.limiter = limiter
 # slowapi handler принимает RateLimitExceeded, Starlette ожидает Exception:
 # runtime-совместимо (Starlette вызывает handler только для этого типа),
@@ -223,34 +198,3 @@ async def add_security_headers(request: Request, call_next):
 
 app.include_router(health_router)
 app.include_router(edit_router)
-
-
-# get_prompt_builder moved to src.routers.edit
-# (iteration 8, step 3).
-
-
-# ---------------------------------------------------------------------------
-# Проверка провайдеров
-# ---------------------------------------------------------------------------
-# _check_provider_deep and _check_providers_availability moved to
-# src.services.provider_health (iteration 8, step 1a).
-# Re-exports are declared in the top import block below.
-
-
-# ---------------------------------------------------------------------------
-# Эндпоинты
-# ---------------------------------------------------------------------------
-# Health endpoints (/, /livez, /health) moved to src.routers.health
-# (iteration 8, step 1b).
-
-
-# Edit helpers (_log_edit_request_meta, _split_edit_output,
-# _looks_like_report_instead_of_text, _validate_edit_output,
-# _generate_clean_edit, _build_audience_from_request,
-# _build_dry_run_response) moved to src.services.edit_service
-# (iteration 8, step 2). Re-exports are in the top import block.
-
-
-# /api/edit endpoint moved to src.routers.edit (iteration 8, step 3).
-# Re-export of _parse_text_and_report — in the top import block.
-# Router is registered via app.include_router(edit_router).

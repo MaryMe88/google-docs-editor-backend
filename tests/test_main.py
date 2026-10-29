@@ -17,16 +17,15 @@ import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
+from src.error_mapping import _llm_error_to_http_exception
 from src.llm_client import LLMAPIError, LLMError, LLMFallbackError
-from src.main import (
+from src.main import app, lifespan
+from src.prompt_builder import PromptBuilder
+from src.services.provider_health import (
     _PROVIDER_KEY_ENV,
     _check_providers_availability,
-    _llm_error_to_http_exception,
-    app,
     invalidate_provider_cache,
-    lifespan,
 )
-from src.prompt_builder import PromptBuilder
 
 
 # ------------------------------------------------------------------------------

@@ -70,7 +70,7 @@ async def test_single_attempt_no_sleep() -> None:
 # Фикс 5: парсер сохраняет отчёт при любом порядке маркеров
 # ===========================================================================
 def test_parse_normal_order() -> None:
-    from src.main import _parse_text_and_report
+    from src.services.edit_service import _parse_text_and_report
 
     raw = "===ТЕКСТ===\nОтредактированный текст.\n===ОТЧЁТ===\nмаркеры и ИП"
     text, report = _parse_text_and_report(raw)
@@ -79,7 +79,7 @@ def test_parse_normal_order() -> None:
 
 
 def test_parse_reversed_order_keeps_report() -> None:
-    from src.main import _parse_text_and_report
+    from src.services.edit_service import _parse_text_and_report
 
     raw = "===ОТЧЁТ===\nмаркеры и ИП\n===ТЕКСТ===\nОтредактированный текст."
     text, report = _parse_text_and_report(raw)
@@ -88,7 +88,7 @@ def test_parse_reversed_order_keeps_report() -> None:
 
 
 def test_parse_text_only_no_report() -> None:
-    from src.main import _parse_text_and_report
+    from src.services.edit_service import _parse_text_and_report
 
     raw = "===ТЕКСТ===\nТолько текст без отчёта."
     text, report = _parse_text_and_report(raw)
@@ -97,7 +97,7 @@ def test_parse_text_only_no_report() -> None:
 
 
 def test_parse_no_markers_returns_all_as_text() -> None:
-    from src.main import _parse_text_and_report
+    from src.services.edit_service import _parse_text_and_report
 
     raw = "Ответ модели без маркеров."
     text, report = _parse_text_and_report(raw)

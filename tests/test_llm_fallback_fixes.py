@@ -129,7 +129,7 @@ def _fake_request(headers: dict, client_host: str | None):
 
 def test_client_ip_key_uses_remote_address() -> None:
     """Ключ rate-limit должен быть реальным IP клиента (request.client.host)."""
-    from src.main import _client_ip_key
+    from src.rate_limit import _client_ip_key
 
     req = _fake_request({"X-Forwarded-For": "203.0.113.7, 10.0.0.1"}, client_host="10.0.0.1")
     assert _client_ip_key(req) == "10.0.0.1"
@@ -137,7 +137,7 @@ def test_client_ip_key_uses_remote_address() -> None:
 
 def test_client_ip_key_without_client() -> None:
     """Если request.client отсутствует, возвращается адрес get_remote_address (обычно '127.0.0.1')."""
-    from src.main import _client_ip_key
+    from src.rate_limit import _client_ip_key
 
     req = _fake_request({}, client_host=None)
     # get_remote_address вернёт '127.0.0.1' для пустого client
@@ -146,7 +146,7 @@ def test_client_ip_key_without_client() -> None:
 
 def test_client_ip_key_ignores_forwarded_for() -> None:
     """Проверяем, что подделанный X-Forwarded-For не влияет на ключ."""
-    from src.main import _client_ip_key
+    from src.rate_limit import _client_ip_key
 
     req_a = _fake_request({"X-Forwarded-For": "1.1.1.1"}, client_host="10.0.0.1")
     req_b = _fake_request({"X-Forwarded-For": "2.2.2.2"}, client_host="10.0.0.1")
