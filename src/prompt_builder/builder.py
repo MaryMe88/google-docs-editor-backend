@@ -816,7 +816,7 @@ class PromptBuilder:
         **legacy_kwargs: Any,
     ) -> tuple[str, dict[str, Any]]: ...
 
-    def build(
+    def build(  # noqa: C901  # see #93
         self,
         text: str,
         domain: str,

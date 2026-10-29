@@ -101,7 +101,7 @@ def build_known_tags(mapping: dict[str, Any]) -> set[str]:
     return known
 
 
-def get_canonical_tag_names(
+def get_canonical_tag_names(  # noqa: C901  # see #93
     canonical_tags: dict[str, dict[str, Any]] | None = None,
 ) -> set[str]:
     """
@@ -127,7 +127,7 @@ def get_canonical_tag_names(
     }
 
     tags: set[str] = set()
-    for category_data in canonical_tags.values():
+    for category_data in canonical_tags.values():  # noqa: PLR1702  # see #93
         if not isinstance(category_data, dict):
             continue
         for payload in category_data.values():

@@ -69,7 +69,7 @@ def _load_kb_file(
     return data
 
 
-def load_knowledge_base(
+def load_knowledge_base(  # noqa: C901  # see #93
     kb_path: Path,
     active_tags: set[str] | None = None,
     intent: str | None = None,

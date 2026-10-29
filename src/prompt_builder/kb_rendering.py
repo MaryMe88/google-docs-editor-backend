@@ -146,7 +146,7 @@ def _append_editorial_entries(lines: list[str], title: str, entries: list[dict[s
             lines.append("- " + " | ".join(fragments))
 
 
-def _append_case_study_entries(lines: list[str], title: str, entries: list[dict[str, Any]]) -> None:
+def _append_case_study_entries(lines: list[str], title: str, entries: list[dict[str, Any]]) -> None:  # noqa: C901  # see #93
     if not entries:
         return
     lines.append(title)
@@ -181,7 +181,7 @@ def _append_case_study_entries(lines: list[str], title: str, entries: list[dict[
                     lines.append(f"     Ориентир: {hint}")
 
 
-def _append_evaluation_techniques(lines: list[str], title: str, data: dict[str, Any]) -> None:
+def _append_evaluation_techniques(lines: list[str], title: str, data: dict[str, Any]) -> None:  # noqa: C901  # see #93
     if not data:
         return
     lines.append(title)
@@ -492,7 +492,7 @@ def _derive_seed(text: str) -> int:
     return int(digest[:8], 16)
 
 
-def _process_kb_block(config: KBBlockConfig, ctx: ProcessContext) -> int:
+def _process_kb_block(config: KBBlockConfig, ctx: ProcessContext) -> int:  # noqa: C901  # see #93
     """
     Обрабатывает один блок знаний: выполняет retrieval, рендерит правила и few-shot.
     Возвращает обновлённое количество использованных few-shot примеров.

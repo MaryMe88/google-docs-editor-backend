@@ -40,6 +40,13 @@ jobs:
           mypy src/reason_codes.py src/scoring_weights.py \
                src/shared_contracts.py src/contracts.py src/tag_registry.py
 
+      - name: ruff complexity gate (C901, PLR1702, src only)
+        run: |
+          ruff check src \
+            --select C901,PLR1702 \
+            --preview \
+            --config 'lint.explicit-preview-rules=true'
+
   test:
     runs-on: ubuntu-latest
     strategy:

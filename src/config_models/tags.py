@@ -74,7 +74,7 @@ def _build_known_tags_from_canonical() -> set[str]:
     """Строит множество всех canonical тегов."""
     tags: set[str] = set()
 
-    for category_data in CANONICAL_TAGS.values():
+    for category_data in CANONICAL_TAGS.values():  # noqa: PLR1702  # see #93
         for tag_data in category_data.values():
             if isinstance(tag_data, dict):
                 for tag_list in tag_data.values():

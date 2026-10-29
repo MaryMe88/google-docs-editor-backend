@@ -279,7 +279,7 @@ def _handle_explicit_suppress_in_conflict(
     return None
 
 
-def _resolve_overlay_conflicts(
+def _resolve_overlay_conflicts(  # noqa: C901  # see #93
     result: FeatureResolutionResult,
     effective_overlays: list[str],
     overlay_configs: list[OverlayConfig],
@@ -564,7 +564,7 @@ def _apply_full_level_overrides(
         _add_activation_reason(result, "nkrj", ReasonCode.FULL_LEVEL_OVERRIDE)
 
 
-def _apply_suppress_rules(
+def _apply_suppress_rules(  # noqa: C901  # see #93
     result: FeatureResolutionResult,
     domain_config: DomainConfig,
     intent_config: IntentConfig | None,
