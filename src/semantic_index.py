@@ -58,6 +58,7 @@ class SemanticIndex:
     def build(
         self,
         all_entries: list[SemanticEntry],
+        *,
         force_rebuild: bool = False,
     ) -> None:
         """Строит индекс из записей KB или загружает валидный кэш."""
@@ -370,6 +371,7 @@ def reset_semantic_index() -> None:
 def init_semantic_index(
     all_entries: list[dict[str, Any]],
     model_name: str = "cointegrated/rubert-tiny2",
+    *,
     force_rebuild: bool = False,
 ) -> SemanticIndex:
     """
