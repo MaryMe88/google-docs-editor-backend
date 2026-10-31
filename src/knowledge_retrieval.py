@@ -418,6 +418,7 @@ def _sort_ranked(scored: list[tuple[int, int, dict[str, Any]]]) -> list[dict[str
 
 def _ensure_return_type(
     result: list[dict[str, Any]] | tuple[list[dict[str, Any]], FallbackStage, int],
+    *,
     return_meta: bool,
 ) -> list[dict[str, Any]] | RetrievalResult:
     if return_meta:
@@ -675,7 +676,7 @@ def _select_ranked_entries(
             result = RetrievalResult([], FallbackStage.EMPTY, 0)
         else:
             result = []
-        return _ensure_return_type(result, params.return_meta)
+        return _ensure_return_type(result, return_meta=params.return_meta)
 
     policy = params.fallback_policy or RULE_FALLBACK_POLICY
     candidates = entries if params.candidate_limit is None else entries[: params.candidate_limit]
@@ -703,7 +704,7 @@ def _select_ranked_entries(
                 res = RetrievalResult(result_entries, stage_name, dropped)
             else:
                 res = result_entries
-            return _ensure_return_type(res, params.return_meta)
+            return _ensure_return_type(res, return_meta=params.return_meta)
 
     # Если ни одна стадия не сработала
     _log_stage_debug(params.debug_context, FallbackStage.EMPTY, candidates, [])
@@ -712,7 +713,7 @@ def _select_ranked_entries(
         empty_res = RetrievalResult([], FallbackStage.EMPTY, 0)
     else:
         empty_res = []
-    return _ensure_return_type(empty_res, params.return_meta)
+    return _ensure_return_type(empty_res, return_meta=params.return_meta)
 
 
 # ---------------------------------------------------------------------------
@@ -758,6 +759,7 @@ def select_entries(
     candidate_limit: int | None = None,
     min_score: int = 1,
     char_budget: int | None = None,
+    *,
     return_meta: Literal[True] = True,
     semantic_rerank: bool = False,
 ) -> RetrievalResult: ...
@@ -774,6 +776,7 @@ def select_entries(
     candidate_limit: int | None = None,
     min_score: int = 1,
     char_budget: int | None = None,
+    *,
     return_meta: bool = False,
     semantic_rerank: bool = False,
 ) -> list[dict[str, Any]]: ...
@@ -789,6 +792,7 @@ def select_entries(
     candidate_limit: int | None = None,
     min_score: int = 1,
     char_budget: int | None = None,
+    *,
     return_meta: bool = False,
     semantic_rerank: bool = False,
 ) -> list[dict[str, Any]] | RetrievalResult:
@@ -861,6 +865,7 @@ def select_grammar_rules(
     candidate_limit: int | None = None,
     min_score: int = 1,
     char_budget: int | None = None,
+    *,
     return_meta: bool = False,
     semantic_rerank: bool = False,
 ) -> list[dict[str, Any]] | RetrievalResult:
@@ -894,6 +899,7 @@ def select_style_issues(
     candidate_limit: int | None = None,
     min_score: int = 1,
     char_budget: int | None = None,
+    *,
     return_meta: bool = False,
     semantic_rerank: bool = False,
 ) -> list[dict[str, Any]] | RetrievalResult:
@@ -927,6 +933,7 @@ def select_logic_issues(
     candidate_limit: int | None = None,
     min_score: int = 1,
     char_budget: int | None = None,
+    *,
     return_meta: bool = False,
     semantic_rerank: bool = False,
 ) -> list[dict[str, Any]] | RetrievalResult:
@@ -959,6 +966,7 @@ def select_structural_by_tags_or_all(
     expanded_tags: set[str] | None = None,
     min_score: int | None = None,
     char_budget: int | None = None,
+    *,
     return_meta: bool = False,
 ) -> list[dict[str, Any]] | RetrievalResult:
     params = SelectionParams(
