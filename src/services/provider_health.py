@@ -41,7 +41,7 @@ def _get_cached_availability(provider: str) -> bool | None:
     return None
 
 
-def _set_cached_availability(provider: str, available: bool) -> None:
+def _set_cached_availability(provider: str, *, available: bool) -> None:
     _provider_cache[provider] = _ProviderCacheEntry(available=available)
 
 
@@ -76,6 +76,7 @@ async def _check_provider_deep(provider_name: str) -> bool:
 
 
 async def _check_providers_availability(
+    *,
     deep: bool = False,
 ) -> tuple[bool, dict[str, bool]]:
     results: dict[str, bool] = {}
@@ -87,11 +88,11 @@ async def _check_providers_availability(
                 continue
             env_var = _PROVIDER_KEY_ENV.get(provider.lower())
             available = bool(os.getenv(env_var)) if env_var else False
-            _set_cached_availability(provider, available)
+            _set_cached_availability(provider, available=available)
             results[provider] = available
         else:
             available = await _check_provider_deep(provider)
-            _set_cached_availability(provider, available)
+            _set_cached_availability(provider, available=available)
             results[provider] = available
 
     any_available = any(results.values())

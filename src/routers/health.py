@@ -58,6 +58,7 @@ async def liveness_check() -> dict:
 async def health_check(
     request: Request,
     response: Response,
+    *,
     deep: bool = False,
 ) -> Response:
     if deep and not os.getenv("API_SECRET_KEY"):
