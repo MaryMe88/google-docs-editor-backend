@@ -23,6 +23,7 @@ logger = logging.getLogger(__name__)
 def _load_kb_file(
     path: Path,
     expected_key: str | None = None,
+    *,
     use_known_keys: bool = True,
 ) -> list[dict[str, Any]] | dict[str, Any]:
     if not path.exists():
@@ -73,6 +74,7 @@ def load_knowledge_base(  # noqa: C901  # see #93
     kb_path: Path,
     active_tags: set[str] | None = None,
     intent: str | None = None,
+    *,
     load_all: bool = False,
 ) -> KnowledgeBase:
     manifest = load_manifest(kb_path / "kb_manifest.json")
