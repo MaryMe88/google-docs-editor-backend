@@ -74,6 +74,12 @@ class LLMAPIError(LLMError):
     """Ошибка API провайдера."""
 
     def __init__(self, message: str, status_code: int | None = None) -> None:
+        """Инициализирует ошибку API провайдера.
+
+        Args:
+            message: Текст ошибки.
+            status_code: HTTP-статус ответа, если известен.
+        """
         super().__init__(message)
         self.status_code = status_code
 
@@ -101,6 +107,18 @@ class LLMFallbackError(LLMError):
         upstream_status: int | None = None,
         kind: str = "unknown",
     ) -> None:
+        """Инициализирует ошибку fallback с техническими метаданными попытки.
+
+        Args:
+            message: Текст ошибки.
+            provider: Имя провайдера, на котором произошёл отказ.
+            primary_error: Исходная ошибка основного провайдера.
+            skipped_providers: Провайдеры, пропущенные из-за отсутствия ключа.
+            unknown_providers: Неизвестные имена провайдеров.
+            prompt_length: Длина исходного промпта в символах.
+            upstream_status: HTTP-статус последней ошибки вышестоящего сервиса.
+            kind: Классификация ошибки (rate_limit, timeout и т. п.).
+        """
         super().__init__(message)
         self.provider = provider
         self.primary_error = primary_error
@@ -124,6 +142,12 @@ class LLMInvalidResponseError(LLMError):
         reason_code: str,
         diagnostics: dict[str, Any] | None = None,
     ) -> None:
+        """Инициализирует ошибку некорректного ответа.
+
+        Args:
+            reason_code: Код причины (REASONING_ONLY, EMPTY_CONTENT, ...).
+            diagnostics: Безопасные технические метаданные ответа без текста.
+        """
         self.reason_code = reason_code
         self.diagnostics = diagnostics
         if reason_code == "REASONING_ONLY":
@@ -341,6 +365,7 @@ _RESPONSE_BUDGET_MULTIPLIER = 1.35
 
 
 def estimate_max_tokens(prompt: str) -> int:
+    """Оценивает max_tokens ответа по длине промпта: пропорционально длине, с ограничением снизу и сверху."""
     prompt_length = max(len(prompt), 0)
     estimated_input_tokens = prompt_length // _CHARS_PER_TOKEN
     response_budget = int(estimated_input_tokens * _RESPONSE_BUDGET_MULTIPLIER)
@@ -356,11 +381,21 @@ class BaseLLMClient(ABC):
     """Базовый async-клиент для LLM."""
 
     def __init__(self, config: LLMConfig) -> None:
+        """Инициализирует клиент с заданной конфигурацией и общим httpx-клиентом.
+
+        Args:
+            config: Конфигурация провайдера, модели и политики повторов.
+        """
         self.config = config
         self.client = httpx.AsyncClient(timeout=config.timeout, trust_env=False)
 
     @staticmethod
     def extract_error_message(response: httpx.Response) -> str:
+        """Извлекает человекочитаемое сообщение об ошибке из ответа провайдера.
+
+        Returns:
+            Текст из поля error.message; при отсутствии — HTTP-статус ответа.
+        """
         try:
             error_data = response.json()
             if "error" in error_data:
@@ -377,12 +412,15 @@ class BaseLLMClient(ABC):
             return f"HTTP {response.status_code}"
 
     async def __aenter__(self) -> BaseLLMClient:
+        """Входит в асинхронный контекст; возвращает сам клиент."""
         return self
 
     async def __aexit__(self, exc_type: Any, exc_val: Any, exc_tb: Any) -> None:
+        """Выходит из асинхронного контекста и закрывает httpx-клиент."""
         await self.client.aclose()
 
     async def close(self) -> None:
+        """Закрывает httpx-клиент; идемпотентно."""
         await self.client.aclose()
 
     def _sleep_delay_for(self, attempt: int) -> float | None:
@@ -391,6 +429,21 @@ class BaseLLMClient(ABC):
         return _backoff_with_jitter(self.config.retry_delay, attempt)
 
     async def generate(self, prompt: str) -> LLMResponse:  # noqa: C901  # see #93
+        """Выполняет запрос к провайдеру с повторами и экспоненциальной задержкой.
+
+        Повторяет запрос при rate limit, таймауте, 5xx и некорректном ответе.
+        На 4xx (кроме 429) поднимает LLMAPIError сразу, без повтора.
+
+        Args:
+            prompt: Пользовательский текст для генерации.
+
+        Returns:
+            Нормализованный ответ LLMResponse.
+
+        Raises:
+            LLMError: Все попытки исчерпаны без успеха.
+            LLMAPIError: 4xx-ошибка (кроме rate limit) без повтора.
+        """
         attempt = 0
         last_error: Exception | None = None
 
@@ -492,7 +545,7 @@ class BaseLLMClient(ABC):
 
     @abstractmethod
     async def call_api(self, prompt: str) -> LLMResponse:
-        pass
+        """Отправляет запрос к API провайдера; реализуется в подклассах."""
 
 
 class _OpenAICompatibleClient(BaseLLMClient):
@@ -601,14 +654,20 @@ class _OpenAICompatibleClient(BaseLLMClient):
 
 
 class PerplexityClient(_OpenAICompatibleClient):
+    """Клиент Perplexity (OpenAI-совместимый API)."""
+
     API_URL = "https://api.perplexity.ai/chat/completions"
 
 
 class OpenAIClient(_OpenAICompatibleClient):
+    """Клиент OpenAI Chat Completions API."""
+
     API_URL = "https://api.openai.com/v1/chat/completions"
 
 
 class OpenRouterClient(_OpenAICompatibleClient):
+    """Клиент OpenRouter; отключает reasoning для экономии бюджета."""
+
     API_URL = "https://openrouter.ai/api/v1/chat/completions"
 
     def _build_headers(self) -> dict[str, str]:
@@ -628,10 +687,19 @@ class OpenRouterClient(_OpenAICompatibleClient):
 
 
 class AnthropicClient(BaseLLMClient):
+    """Клиент Anthropic Messages API."""
+
     API_URL = "https://api.anthropic.com/v1/messages"
     API_VERSION = "2023-06-01"
 
     async def call_api(self, prompt: str) -> LLMResponse:
+        """Отправляет запрос в Messages API и нормализует ответ.
+
+        Raises:
+            LLMRateLimitError: HTTP 429.
+            LLMAPIError: Прочие HTTP-ошибки и сетевые сбои.
+            LLMTimeoutError: Таймаут запроса.
+        """
         headers = {
             "x-api-key": self.config.api_key,
             "anthropic-version": self.API_VERSION,
@@ -670,6 +738,11 @@ class AnthropicClient(BaseLLMClient):
             raise LLMAPIError(f"HTTP error: {error}") from error
 
     def parse_response(self, data: dict[str, Any]) -> LLMResponse:
+        """Собирает текстовые блоки Anthropic в один LLMResponse.
+
+        Raises:
+            LLMInvalidResponseError: Нет текстовых блоков или ответ повреждён.
+        """
         try:
             content_blocks = data.get("content", [])
             text_chunks: list[str] = []
@@ -721,6 +794,23 @@ def create_llm_client(
     timeout: float = 60.0,
     max_retries: int = 4,
 ) -> BaseLLMClient:
+    """Создаёт клиент LLM по провайдеру.
+
+    Args:
+        provider: Провайдер; по умолчанию Perplexity.
+        model: Модель; None — из src/model_policy.py.
+        api_key: Ключ; None — из переменной окружения провайдера.
+        temperature: Температура генерации.
+        max_tokens: Лимит токенов ответа.
+        timeout: Таймаут HTTP-запроса в секундах.
+        max_retries: Максимум попыток в generate.
+
+    Returns:
+        Настроенный клиент провайдера.
+
+    Raises:
+        ValueError: Ключ не найден или провайдер не поддерживается.
+    """
     # SEC (model_policy): единый источник default-моделей — src/model_policy.py.
     # Issue #22: openrouter/auto returns reasoning models that consume
     # the entire output budget. Explicit model keeps behavior predictable.
@@ -1042,6 +1132,17 @@ async def generate_text(
     model: str | None = None,
     temperature: float = 0.3,
 ) -> str:
+    """Удобная обёртка: создаёт клиент, генерирует текст и закрывает клиент.
+
+    Args:
+        prompt: Пользовательский текст.
+        provider: Провайдер; по умолчанию Perplexity.
+        model: Модель; None — из model_policy.
+        temperature: Температура генерации.
+
+    Returns:
+        Сгенерированный текст.
+    """
     async with create_llm_client(
         provider=provider,
         model=model,
