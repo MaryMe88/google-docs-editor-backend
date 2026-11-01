@@ -28,6 +28,8 @@ logger = logging.getLogger(__name__)
 
 
 class FallbackStage(str, Enum):
+    """Стадия fallback, на которой сформирован результат retrieval (для метаданных)."""
+
     STRONG = "strong"
     TEXT_ONLY = "text_only"
     TAG_ONLY = "tag_only"
@@ -50,6 +52,8 @@ class RetrievalResult(NamedTuple):
 
 @dataclass(frozen=True)
 class FallbackPolicy:
+    """Правила fallback при скоринге: пороги, разрешённые стадии, neutral-теги."""
+
     min_strong_score: int = 1
     allow_text_only: bool = True
     allow_tag_only: bool = True
@@ -102,6 +106,7 @@ class SelectionParams:
 
 
 def normalize_text_for_match(text: str) -> str:
+    """Нормализует текст для keyword-сравнения: ё→е, пунктуация→пробел, схлопывание пробелов, нижний регистр."""
     text = text.replace("ё", "е").replace("Ё", "Е")
     text = re.sub(r"[^\w\s]", " ", text)
     text = re.sub(r"\s+", " ", text)
@@ -180,6 +185,11 @@ def score_rule_entry(
     idx: int,
     expanded_tags: set[str] | None = None,
 ) -> tuple[int, int]:
+    """Считает скор записи по правилам: совпадения wrong/name/rule/description и тегов.
+
+    Returns:
+        Кортеж (score, -idx) — вторая компонента для стабильной сортировки.
+    """
     score = 0
     wrong_val = entry.get("wrong", "")
     if isinstance(wrong_val, str):
@@ -215,6 +225,11 @@ def score_structural_entry(  # noqa: C901  # see #93
     idx: int,
     expanded_tags: set[str] | None = None,
 ) -> tuple[int, int]:
+    """Считает скор структурной записи с учётом полей name/description/rule и тегов.
+
+    Returns:
+        Кортеж (score, -idx) — вторая компонента для стабильной сортировки.
+    """
     score = 0
     patterns: list[str] = []
 
@@ -796,6 +811,27 @@ def select_entries(
     return_meta: bool = False,
     semantic_rerank: bool = False,
 ) -> list[dict[str, Any]] | RetrievalResult:
+    """Отбирает записи из KB по категории, тексту и тегам с учётом fallback.
+
+    Args:
+        kb_or_entries: KB-объект или список записей (для category="structural").
+        text: Исходный текст для keyword-сравнения.
+        tags: Теги для скоринга.
+        category: Категория отбора.
+        params: Параметры отбора; при None собираются по category.
+        limit: Максимум записей в результате.
+        candidate_limit: Ограничение числа кандидатов до скоринга.
+        min_score: Минимальный скор для включения.
+        char_budget: Бюджет символов на результат.
+        return_meta: Вернуть RetrievalResult с метаданными.
+        semantic_rerank: Применить семантический re-rank после keyword-отбора.
+
+    Returns:
+        Список записей или RetrievalResult при return_meta=True.
+
+    Raises:
+        TypeError: Для category="structural", если kb_or_entries не list.
+    """
     if params is None:
         scorer = score_rule_entry if category != "structural" else score_structural_entry
         fb_policy = STRUCTURAL_FALLBACK_POLICY if category == "structural" else RULE_FALLBACK_POLICY
@@ -869,6 +905,7 @@ def select_grammar_rules(
     return_meta: bool = False,
     semantic_rerank: bool = False,
 ) -> list[dict[str, Any]] | RetrievalResult:
+    """Обёртка для обратной совместимости: select_entries для категории "grammar"."""
     params = SelectionParams(
         scorer=score_rule_entry,
         candidate_limit=candidate_limit,
@@ -903,6 +940,7 @@ def select_style_issues(
     return_meta: bool = False,
     semantic_rerank: bool = False,
 ) -> list[dict[str, Any]] | RetrievalResult:
+    """Обёртка для обратной совместимости: select_entries для категории "style"."""
     params = SelectionParams(
         scorer=score_rule_entry,
         candidate_limit=candidate_limit,
@@ -937,6 +975,7 @@ def select_logic_issues(
     return_meta: bool = False,
     semantic_rerank: bool = False,
 ) -> list[dict[str, Any]] | RetrievalResult:
+    """Обёртка для обратной совместимости: select_entries для категории "logic" (limit по умолчанию 8)."""
     params = SelectionParams(
         scorer=score_rule_entry,
         candidate_limit=candidate_limit,
@@ -969,6 +1008,7 @@ def select_structural_by_tags_or_all(
     *,
     return_meta: bool = False,
 ) -> list[dict[str, Any]] | RetrievalResult:
+    """Обёртка для обратной совместимости: select_entries для структурных записей по тегам с fallback."""
     params = SelectionParams(
         scorer=score_structural_entry,
         candidate_limit=None,
