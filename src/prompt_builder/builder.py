@@ -102,12 +102,21 @@ def _wrap_user_content(label: str, content: str) -> str:
 
 
 class PromptBuilder:
+    """Строитель промптов: кэширующие загрузчики конфигураций и KB, сборка промпта по тексту и параметрам."""
+
     def __init__(
         self,
         config_path: Path = Path("config"),
         kb_path: Path = Path("knowledge_base"),
         limits: LimitsConfig | None = None,
     ) -> None:
+        """Инициализирует пути и кэши; загружает core-конфигурацию.
+
+        Args:
+            config_path: Корень конфигураций.
+            kb_path: Корень базы знаний.
+            limits: Лимиты; по умолчанию LimitsConfig().
+        """
         self.config_path = config_path
         self.kb_path = kb_path
         self._limits = limits or LimitsConfig()
@@ -130,14 +139,17 @@ class PromptBuilder:
         return self._core_cache
 
     def get_core_config(self) -> CoreConfig:
+        """Возвращает core-конфигурацию из кэша; загружает при первом обращении."""
         return self._load_core_config()
 
     def get_domain_config(self, domain: str) -> DomainConfig:
+        """Загружает (с кэшированием) конфигурацию домена по имени."""
         if domain not in self._domain_cache:
             self._domain_cache[domain] = load_domain_config(domain, self.config_path)
         return self._domain_cache[domain]
 
     def get_intent_config(self, intent: str | None) -> IntentConfig | None:
+        """Загружает (с кэшированием) конфигурацию интента; None для None/neutral."""
         if intent is None or intent == "neutral":
             return None
         if intent not in self._intent_cache:
@@ -145,19 +157,23 @@ class PromptBuilder:
         return self._intent_cache[intent]
 
     def get_overlay_config(self, overlay: str) -> OverlayConfig:
+        """Загружает (с кэшированием) конфигурацию оверлея по имени."""
         if overlay not in self._overlay_cache:
             self._overlay_cache[overlay] = load_overlay_config(overlay, self.config_path)
         return self._overlay_cache[overlay]
 
     def get_overlay_configs(self, overlays: Sequence[str]) -> list[OverlayConfig]:
+        """Возвращает список конфигураций для нескольких оверлеев (с кэшированием)."""
         return [self.get_overlay_config(ov) for ov in overlays]
 
     def get_output_format(self, mode: str) -> str:
+        """Загружает (с кэшированием) шаблон вывода для output_mode."""
         if mode not in self._output_format_cache:
             self._output_format_cache[mode] = load_output_format(mode, self.config_path)
         return self._output_format_cache[mode]
 
     def get_knowledge_base(self, primary_tags: set[str], intent: str | None) -> KnowledgeBase:
+        """Возвращает срез KB по primary_tags и intent с кэшированием по (теги, intent)."""
         cache_key = f"kb:{','.join(sorted(primary_tags))}:{intent or 'none'}"
         manifest_path = self.kb_path / "kb_manifest.json"
         kb_files = [manifest_path]
@@ -199,11 +215,13 @@ class PromptBuilder:
         self._loaded_kb = None
 
     def reload_configs(self) -> None:
+        """Сбрасывает все кэши и перезагружает core-конфигурацию."""
         self._invalidate_caches()
         self.core_config = self._load_core_config()
         logger.info("PromptBuilder caches invalidated and reloaded.")
 
     def startup_check(self) -> None:
+        """Проверяет manifest KB и согласованность алиасов; ошибки логируются как warning, не прерывают startup."""
         self.core_config = self.get_core_config()
         self._validate_kb_manifest()
         try:
@@ -217,6 +235,7 @@ class PromptBuilder:
             logger.warning("Alias consistency check failed: %s", e)
 
     def get_available_intents(self) -> set[str]:
+        """Возвращает имена интентов из config/intents/; при отсутствии папки — ALLOWED_INTENTS."""
         intents_dir = self.config_path / "intents"
         if not intents_dir.exists():
             return set(ALLOWED_INTENTS)
@@ -224,6 +243,7 @@ class PromptBuilder:
         return values or set(ALLOWED_INTENTS)
 
     def getavailableintents(self) -> set[str]:
+        """Устаревший псевдоним get_available_intents; используйте его."""
         warnings.warn(
             "getavailableintents() deprecated, use get_available_intents()",
             DeprecationWarning,
@@ -232,6 +252,7 @@ class PromptBuilder:
         return self.get_available_intents()
 
     def get_available_overlays(self) -> set[str]:
+        """Возвращает имена оверлеев из config/overlays/; при отсутствии папки — ALLOWED_OVERLAYS."""
         overlays_dir = self.config_path / "overlays"
         if not overlays_dir.exists():
             return set(ALLOWED_OVERLAYS)
@@ -239,6 +260,7 @@ class PromptBuilder:
         return values or set(ALLOWED_OVERLAYS)
 
     def getavailableoverlays(self) -> set[str]:
+        """Устаревший псевдоним get_available_overlays; используйте его."""
         warnings.warn(
             "getavailableoverlays() deprecated, use get_available_overlays()",
             DeprecationWarning,
@@ -837,6 +859,31 @@ class PromptBuilder:
         deep_semantic_search: bool = False,
         **legacy_kwargs: Any,
     ) -> str | tuple[str, dict[str, Any]]:
+        """Строит промпт для LLM по тексту и параметрам редактирования.
+
+        Args:
+            text: Исходный текст; пустой или пробельный — ValueError.
+            domain: Домен правки; проверяется по ALLOWED_DOMAINS.
+            intent: Намерение правки; None и "neutral" эквивалентны отсутствию.
+            audience: Профиль аудитории или None.
+            overlays: Дополнительные режимы; проверяются на допустимость и конфликты.
+            output_mode: Режим вывода; по умолчанию "text_only".
+            include_knowledge: Включать блоки базы знаний.
+            include_few_shot: Включать few-shot примеры.
+            knowledge_level: Уровень детализации знаний.
+            token_budget: Бюджет токенов или None — без ограничения.
+            include_retrieval_meta: Вернуть также метаданные retrieval.
+            few_shot_seed: Seed для воспроизводимого выбора примеров.
+            deep_semantic_search: Включить углублённый семантический поиск.
+            **legacy_kwargs: Устаревшие kwargs (outputmode, includeknowledge).
+
+        Returns:
+            Промпт строкой или кортеж (промпт, метаданные) при include_retrieval_meta.
+
+        Raises:
+            ValueError: Пустой текст или недопустимые domain/intent/overlays/output_mode.
+            TypeError: Неизвестные legacy kwargs.
+        """
         legacy_output_mode = legacy_kwargs.pop("outputmode", None)
         legacy_include_knowledge = legacy_kwargs.pop("includeknowledge", None)
         if legacy_kwargs:
@@ -1004,6 +1051,7 @@ class PromptBuilder:
         return prompt
 
     def build_prompt(self, **kwargs: Any) -> str:
+        """Устаревший псевдоним build; используйте его."""
         warnings.warn(
             "build_prompt() is deprecated, use build()",
             DeprecationWarning,
