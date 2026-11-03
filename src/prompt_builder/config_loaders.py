@@ -33,6 +33,11 @@ logger = logging.getLogger(__name__)
 
 
 def load_json_file(path: Path) -> dict[str, Any]:
+    """Загружает JSON-файл.
+
+    Raises:
+        FileNotFoundError: Файл не существует.
+    """
     if not path.exists():
         raise FileNotFoundError(f"Config file not found: {path}")
     return json.loads(path.read_text(encoding="utf-8"))
@@ -45,6 +50,11 @@ def _load_optional_json(path: Path, default: Any) -> Any:
 
 
 def load_core_config(base_path: Path = Path("config")) -> CoreConfig:
+    """Загружает core-конфигурацию из core.json с дефолтами.
+
+    Args:
+        base_path: Корень конфигураций.
+    """
     data = load_json_file(base_path / "core.json")
     ip_ceiling_raw = data.get("ip_ceiling", {})
     ip_ceiling_value = (
@@ -64,6 +74,15 @@ def load_core_config(base_path: Path = Path("config")) -> CoreConfig:
 
 
 def load_domain_config(domain: str, base_path: Path = Path("config")) -> DomainConfig:  # noqa: C901  # see #93
+    """Загружает конфигурацию домена; при отсутствии файла — дефолт.
+
+    Args:
+        domain: Имя домена (нормализуется strip/lower).
+        base_path: Корень конфигураций.
+
+    Returns:
+        DomainConfig с провалидированными kb_limits, priority и edit_level.
+    """
     normalized_domain = domain.strip().lower()
     domain_path = base_path / "domains" / f"{normalized_domain}.json"
     if not domain_path.exists():
@@ -167,6 +186,12 @@ def load_domain_config(domain: str, base_path: Path = Path("config")) -> DomainC
 
 
 def load_intent_config(intent: str | None, base_path: Path = Path("config")) -> IntentConfig | None:
+    """Загружает конфигурацию интента; None для None/neutral или отсутствующего файла.
+
+    Args:
+        intent: Имя интента.
+        base_path: Корень конфигураций.
+    """
     if intent is None or intent == "neutral":
         return None
     normalized = normalize_tag(intent)
@@ -193,6 +218,12 @@ def load_intent_config(intent: str | None, base_path: Path = Path("config")) -> 
 
 
 def load_overlay_config(overlay: str, base_path: Path = Path("config")) -> OverlayConfig:
+    """Загружает конфигурацию оверлея; при отсутствии файла — дефолт.
+
+    Args:
+        overlay: Имя оверлея.
+        base_path: Корень конфигураций.
+    """
     overlay_path = base_path / "overlays" / f"{overlay}.json"
     if not overlay_path.exists():
         logger.warning(
@@ -218,10 +249,12 @@ def load_overlay_config(overlay: str, base_path: Path = Path("config")) -> Overl
 def load_overlay_configs(
     overlays: Sequence[str], base_path: Path = Path("config")
 ) -> list[OverlayConfig]:
+    """Загружает конфигурации для нескольких оверлеев (порядок сохраняется)."""
     return [load_overlay_config(ov, base_path) for ov in overlays]
 
 
 def load_output_format(mode: str, base_path: Path = Path("config")) -> str:
+    """Формирует инструкцию output_mode с учётом global_formatting_rules."""
     data = load_json_file(base_path / "output_format.json")
     mode_instruction = data.get(
         mode, data.get("text_only", "Верни только отредактированный текст.")

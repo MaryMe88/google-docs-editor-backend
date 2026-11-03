@@ -146,6 +146,18 @@ class LLMContextLimitError(Exception):
         reason: str,
         mode: str = "enforce",
     ) -> None:
+        """Инициализирует ошибку превышения контекстного окна.
+
+        Args:
+            provider: Имя провайдера.
+            model: Имя модели или None.
+            input_tokens_estimate: Оценка токенов на вход.
+            requested_output_tokens: Запрошенный лимит токенов ответа.
+            available_output_tokens: Доступный лимит токенов ответа.
+            context_window: Размер контекстного окна модели.
+            reason: Причина отказа.
+            mode: Режим обработки (enforce по умолчанию).
+        """
         self.provider = provider
         self.model = model
         self.input_tokens_estimate = input_tokens_estimate

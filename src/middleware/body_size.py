@@ -69,6 +69,15 @@ class BodySizeLimitMiddleware:
         app: ASGIApp,
         max_body_size: int = DEFAULT_MAX_BODY_SIZE,
     ) -> None:
+        """Инициализирует middleware с заданным лимитом тела запроса.
+
+        Args:
+            app: Обёртываемое ASGI-приложение.
+            max_body_size: Максимальный размер тела в байтах.
+
+        Raises:
+            ValueError: max_body_size не положительное число.
+        """
         if max_body_size <= 0:
             raise ValueError("max_body_size must be a positive integer")
         self.app = app
@@ -80,6 +89,10 @@ class BodySizeLimitMiddleware:
         receive: Receive,
         send: Send,
     ) -> None:
+        """Проверяет размер тела запроса и делегирует в приложение.
+
+        Превышение лимита — 413 Payload Too Large; не-HTTP scope — пропускается.
+        """
         if scope["type"] != "http":
             await self.app(scope, receive, send)
             return

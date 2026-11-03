@@ -1,3 +1,5 @@
+"""FastAPI-приложение: точка входа, lifespan, middleware и подключение роутеров."""
+
 import asyncio
 import json
 import logging
@@ -84,6 +86,12 @@ def _collect_semantic_entries(app: FastAPI) -> list[dict[str, Any]]:
 # ---------------------------------------------------------------------------
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    """Управляет жизненным циклом приложения: startup-проверки и shutdown.
+
+    Raises:
+        RuntimeError: Отсутствуют обязательные переменные окружения или
+            не задан API_SECRET_KEY в production.
+    """
     logger.info("Starting up text editor service...")
 
     _required_env = ["OPENROUTER_API_KEY"]
@@ -169,6 +177,7 @@ app.add_middleware(BodySizeLimitMiddleware)
 
 @app.middleware("http")
 async def log_requests(request: Request, call_next):
+    """HTTP-middleware: логирует метод, путь, статус и длительность запроса."""
     start_time = time.perf_counter()
     response = await call_next(request)
     duration_ms = (time.perf_counter() - start_time) * 1000
@@ -187,6 +196,7 @@ async def log_requests(request: Request, call_next):
 
 @app.middleware("http")
 async def add_security_headers(request: Request, call_next):
+    """HTTP-middleware: добавляет security-заголовки к каждому ответу."""
     response = await call_next(request)
     response.headers["X-Content-Type-Options"] = "nosniff"
     response.headers["X-Frame-Options"] = "DENY"

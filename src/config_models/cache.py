@@ -61,6 +61,11 @@ class FileCache:
     """
 
     def __init__(self, policy: CachePolicy | None = None) -> None:
+        """Инициализирует кэш с заданной политикой инвалидации.
+
+        Args:
+            policy: Политика TTL/mtime; по умолчанию check_mtime=True, без TTL.
+        """
         self._policy = policy or CachePolicy(check_mtime=True)
         self._store: dict[str, _CacheEntry[Any]] = {}
 

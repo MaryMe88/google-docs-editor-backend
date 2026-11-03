@@ -192,4 +192,5 @@ class KnowledgeBase:
             raise AttributeError(f"KnowledgeBase has no block '{name}'")
 
     def __repr__(self) -> str:
+        """Возвращает строковое представление со списком имён блоков."""
         return f"KnowledgeBase(blocks={list(self._blocks.keys())})"

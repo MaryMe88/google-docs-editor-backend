@@ -77,6 +77,17 @@ def load_knowledge_base(  # noqa: C901  # see #93
     *,
     load_all: bool = False,
 ) -> KnowledgeBase:
+    """Загружает KB по manifest; load_all=True — все файлы.
+
+    Args:
+        kb_path: Корень базы знаний.
+        active_tags: Теги для отбора (load_all=False).
+        intent: Интент для отбора.
+        load_all: Загрузить все блоки, а не только релевантные.
+
+    Returns:
+        KnowledgeBase с блоками данных.
+    """
     manifest = load_manifest(kb_path / "kb_manifest.json")
     if load_all:
         if manifest:

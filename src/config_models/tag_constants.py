@@ -54,6 +54,13 @@ _ALIAS_MAP: dict[str, str] = {
 
 
 def normalize_tag(value: str) -> str:
+    """Нормализует тег: strip, нижний регистр, алиасы, удаление не-буквенно-цифровых.
+
+    Идемпотентна для канонических форм, перечисленных в _ALIAS_MAP.
+
+    Raises:
+        TypeError: Значение не является строкой.
+    """
     if not isinstance(value, str):
         raise TypeError(f"tag must be str, got {type(value)!r}")
     raw = value.strip().lower()
@@ -66,6 +73,10 @@ def normalize_tag(value: str) -> str:
 
 
 def normalize_tags(values: Iterable[str]) -> list[str]:
+    """Нормализует последовательность тегов с дедупликацией.
+
+    Нестроковые значения пропускаются. Порядок первого вхождения сохраняется.
+    """
     result: list[str] = []
     seen: set[str] = set()
     for value in values:
@@ -79,6 +90,10 @@ def normalize_tags(values: Iterable[str]) -> list[str]:
 
 
 def build_known_tags(mapping: dict[str, Any]) -> set[str]:
+    """Собирает множество нормализованных тегов из вложенного словаря/списка.
+
+    Рекурсивно обходит все ключи и строковые значения.
+    """
     known: set[str] = set()
 
     def _visit(obj: Any) -> None:
