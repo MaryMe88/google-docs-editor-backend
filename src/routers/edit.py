@@ -50,6 +50,11 @@ router = APIRouter()
 
 
 def get_prompt_builder(request: Request) -> PromptBuilder:
+    """Возвращает PromptBuilder из app.state.
+
+    Raises:
+        RuntimeError: PromptBuilder не инициализирован в lifespan.
+    """
     prompt_builder = getattr(request.app.state, "prompt_builder", None)
     if prompt_builder is None:
         raise RuntimeError("PromptBuilder is not initialized")
@@ -67,6 +72,16 @@ async def edit_text(
     response: Response,
     body: EditRequest,
 ) -> EditResponse:
+    """Обрабатывает POST /api/edit.
+
+    Строит промпт через PromptBuilder, вызывает LLM с fallback по провайдерам,
+    возвращает EditResponse. dry_run=True возвращает промпт без вызова LLM.
+
+    Raises:
+        HTTPException: 502 при срабатывании output guard; маппинг LLMError
+            в 4xx/5xx; 422 при ValidationError; 500 при FileNotFoundError
+            и непредвиденных ошибках.
+    """
     try:
         audience = _build_audience_from_request(body)
         prompt_builder = get_prompt_builder(request)

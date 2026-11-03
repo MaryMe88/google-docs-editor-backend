@@ -33,11 +33,13 @@ def _get_pb(request: Request) -> PromptBuilder:
 
 @router.get("/")
 async def root() -> dict:
+    """Liveness-проба: возвращает {"status": "ok"} без обращения к зависимостям."""
     return {"status": "ok"}
 
 
 @router.get("/livez")
 async def liveness_check() -> dict:
+    """Liveness-проба для платформы: {"status": "alive"} без обращения к зависимостям."""
     return {"status": "alive"}
 
 
@@ -61,6 +63,15 @@ async def health_check(
     *,
     deep: bool = False,
 ) -> Response:
+    """Проверяет состояние сервиса и доступность LLM-провайдеров.
+
+    Args:
+        deep: Если True — выполняет реальный запрос к каждому провайдеру
+            (потребляет токены; требует API_SECRET_KEY).
+
+    Returns:
+        HealthResponse с 200, если хотя бы один провайдер доступен, иначе 503.
+    """
     if deep and not os.getenv("API_SECRET_KEY"):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,

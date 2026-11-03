@@ -1,3 +1,10 @@
+"""Pydantic-модели HTTP-контракта и версия контракта.
+
+CONTRACT_VERSION — согласованная версия контракта между бекендом и
+клиентом (Google Apps Script); несовместимые изменения увеличивают
+мажорную версию.
+"""
+
 import re
 from typing import Any
 
@@ -27,6 +34,12 @@ _MODEL_NAME_RE = re.compile(r"^[\w./:-]{1,200}$")
 
 
 class AudienceRequest(BaseModel):
+    """Параметры аудитории для построения промпта.
+
+    kind, expertise и formality валидируются по allowlist; description
+    ограничен по длине для защиты от prompt injection.
+    """
+
     kind: str = Field(default="b2b")
     expertise: str = Field(default="pro")
     formality: str = Field(default="neutral")
@@ -38,6 +51,7 @@ class AudienceRequest(BaseModel):
     @field_validator("kind")
     @classmethod
     def validate_kind(cls, value: str) -> str:
+        """Нормализует и проверяет kind по ALLOWED_KIND."""
         normalized = value.strip().lower()
         if normalized not in ALLOWED_KIND:
             raise ValueError(f"kind must be one of {sorted(ALLOWED_KIND)}")
@@ -46,6 +60,7 @@ class AudienceRequest(BaseModel):
     @field_validator("expertise")
     @classmethod
     def validate_expertise(cls, value: str) -> str:
+        """Нормализует и проверяет expertise по ALLOWED_EXPERTISE."""
         normalized = value.strip().lower()
         if normalized not in ALLOWED_EXPERTISE:
             raise ValueError(f"expertise must be one of {sorted(ALLOWED_EXPERTISE)}")
@@ -54,6 +69,7 @@ class AudienceRequest(BaseModel):
     @field_validator("formality")
     @classmethod
     def validate_formality(cls, value: str) -> str:
+        """Нормализует и проверяет formality по ALLOWED_FORMALITY."""
         normalized = value.strip().lower()
         if normalized not in ALLOWED_FORMALITY:
             raise ValueError(f"formality must be one of {sorted(ALLOWED_FORMALITY)}")
@@ -61,6 +77,12 @@ class AudienceRequest(BaseModel):
 
 
 class EditRequest(BaseModel):
+    """Тело запроса POST /api/edit.
+
+    Поля валидируются по allowlist; overlays дедуплицируются и ограничены
+    по количеству и длине; model проходит через model_policy.
+    """
+
     text: str = Field(..., min_length=1, max_length=10000)
     domain: str = Field(default="marketing")
     intent: str | None = Field(default=None)
@@ -146,6 +168,7 @@ class EditRequest(BaseModel):
     @field_validator("output_mode")
     @classmethod
     def validate_output_mode(cls, value: str) -> str:
+        """Нормализует и проверяет output_mode по ALLOWED_OUTPUT_MODES."""
         normalized = value.strip().lower()
         if normalized not in ALLOWED_OUTPUT_MODES:
             raise ValueError(f"output_mode must be one of {sorted(ALLOWED_OUTPUT_MODES)}")
@@ -154,6 +177,7 @@ class EditRequest(BaseModel):
     @field_validator("provider")
     @classmethod
     def validate_provider(cls, value: str) -> str:
+        """Нормализует и проверяет provider по ALLOWED_PROVIDERS."""
         normalized = value.strip().lower()
         if normalized not in ALLOWED_PROVIDERS:
             raise ValueError(f"provider must be one of {sorted(ALLOWED_PROVIDERS)}")
@@ -163,6 +187,7 @@ class EditRequest(BaseModel):
     @field_validator("model")
     @classmethod
     def validate_model(cls, v: str | None) -> str | None:
+        """Проверяет model по allowlist-регексу (SEC-патч 3.3)."""
         if v is None:
             return v
         # Убираем лишние пробелы? Обычно модель не должна содержать пробелы.
@@ -204,6 +229,8 @@ class EditResponse(BaseModel):
 
 
 class PromptResponse(BaseModel):
+    """Ответ с готовым промптом (диагностический режим)."""
+
     prompt: str
 
 
