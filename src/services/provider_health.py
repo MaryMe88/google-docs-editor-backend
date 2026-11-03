@@ -46,6 +46,7 @@ def _set_cached_availability(provider: str, *, available: bool) -> None:
 
 
 def invalidate_provider_cache() -> None:
+    """Сбрасывает кэш доступности провайдеров (например, после смены ключей)."""
     _provider_cache.clear()
 
 
