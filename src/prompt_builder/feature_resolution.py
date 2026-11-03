@@ -648,6 +648,11 @@ def resolve_prompt_features(
     overlay_configs: list[OverlayConfig],
     knowledge_level: KnowledgeLevel | None = None,
 ) -> dict[str, Any]:
+    """Вычисляет итоговый набор фич промпта с учётом домена, интента и оверлеев.
+
+    Применяет несовместимости, подавления и конфликты; результат
+    содержит effective_overlays, storytelling_enabled и т. п.
+    """
     result, effective_intent, effective_overlays, tags, suppressed_layers, warnings = (
         _prepare_resolution_context(domain, intent, overlays, overlay_configs)
     )

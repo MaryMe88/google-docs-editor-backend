@@ -1,3 +1,5 @@
+"""Startup-проверки: валидация KB, алиасов тегов, конфигов и feature resolution."""
+
 # src/startup_checks.py
 from __future__ import annotations
 

@@ -97,6 +97,7 @@ class AssemblyTrace:
     total_blocks_empty: int = 0
 
     def add_block(self, diag: AssemblyBlockDiagnostics) -> None:
+        """Добавляет диагностику блока и обновляет агрегированную статистику."""
         self.blocks.append(diag)
         if diag.included:
             self.total_blocks_included += 1

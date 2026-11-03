@@ -151,6 +151,11 @@ class KnowledgeBudget:
     )
 
     def __init__(self, budgets: dict[str, BlockBudget]) -> None:
+        """Инициализирует бюджет из словаря блоков.
+
+        Args:
+            budgets: Словарь BlockBudget по именам блоков.
+        """
         self._budgets = budgets
 
     def get(self, block_name: str) -> BlockBudget | None:
@@ -173,6 +178,11 @@ class KnowledgeBudget:
         )
 
     def __getattr__(self, name: str) -> BlockBudget:
+        """Возвращает BlockBudget по имени атрибута (шорткат для budget.grammar).
+
+        Raises:
+            AttributeError: Имя начинается с "_" или блока нет в бюджете.
+        """
         if name.startswith("_"):
             raise AttributeError(name)
         block_budget = self._budgets.get(name)
@@ -181,6 +191,7 @@ class KnowledgeBudget:
         return block_budget
 
     def __repr__(self) -> str:
+        """Возвращает строковое представление с содержимым бюджетов."""
         return f"KnowledgeBudget({self._budgets!r})"
 
 

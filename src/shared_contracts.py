@@ -1,3 +1,5 @@
+"""Общие контракты: allowlist-константы доменов, интентов, провайдеров и т. д."""
+
 from __future__ import annotations
 
 import logging

@@ -45,6 +45,11 @@ class SemanticIndex:
     """
 
     def __init__(self, model_name: str = "cointegrated/rubert-tiny2") -> None:
+        """Инициализирует индекс с заданной моделью (загрузка ленивая).
+
+        Args:
+            model_name: Имя sentence-transformers модели.
+        """
         self.model_name = model_name
         self._model = None  # ленивая загрузка
         self.entries: list[SemanticEntry] = []

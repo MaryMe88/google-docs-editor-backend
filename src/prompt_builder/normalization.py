@@ -15,6 +15,7 @@ logger = logging.getLogger(__name__)
 
 
 def normalize_intent(intent: str | None) -> str | None:
+    """Нормализует intent; None для None/neutral и неизвестных значений."""
     if intent is None or intent == "neutral":
         return None
     normalized = intent.lower().strip()
@@ -51,6 +52,7 @@ def normalize_overlays(
 
 
 def normalize_string_list(value: list[str]) -> list[str]:
+    """Нормализует список строк: strip, нижний регистр; не-список → []."""
     if not isinstance(value, list):
         return []
     result = []

@@ -14,7 +14,14 @@ from src.llm_client import LLMError, LLMFallbackError
 
 
 class InvalidLLMOutputError(Exception):
+    """Ошибка: LLM вернула ответ, не прошедший output guard."""
+
     def __init__(self, reasons: list[str]) -> None:
+        """Инициализирует ошибку.
+
+        Args:
+            reasons: Список причин отклонения ответа.
+        """
         self.reasons = reasons
         super().__init__(f"Invalid LLM output: {reasons}")
 

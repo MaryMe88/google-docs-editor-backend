@@ -296,6 +296,8 @@ def _warn_if_empty_retrieval(
 
 @dataclass(frozen=True)
 class KBBlockConfig:
+    """Конфигурация одного блока знаний для рендеринга в промпт."""
+
     name: str
     budget_key: str
     # None допустим для недоделанных блоков (см. evaluation_techniques);
