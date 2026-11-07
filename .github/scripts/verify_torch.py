@@ -18,7 +18,7 @@ import torch
 # Единственная версия torch, для которой проведён security-аудит.
 # При обновлении — перепроверить вручную и обновить
 # docs/security/torch-risk-assessment.md.
-EXPECTED_VERSION_PREFIX = "2.5.0"
+EXPECTED_VERSION_PREFIX = "2.12.1"
 EXPECTED_SUFFIX = "+cpu"
 
 
