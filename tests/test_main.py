@@ -115,18 +115,10 @@ def test_cors_configuration_allows_credentials_with_specific_origins() -> None:
     headers = kwargs.get("allow_headers")
     assert headers is not None
     assert "*" not in headers
-    assert "https://script.google.com" in origins
-    assert "https://docs.google.com" in origins
-
-
-def test_cors_origins_can_be_overridden_by_env(monkeypatch: pytest.MonkeyPatch) -> None:
-    """
-    Шаг 3: переменная CORS_ALLOWED_ORIGINS переопределяет список источников.
-    """
-    monkeypatch.setenv("CORS_ALLOWED_ORIGINS", "https://example.com,https://test.com")
-    # Здесь мы не перезагружаем модуль, поэтому просто проверяем,
-    # что логика формирования списка работает корректно (она уже проверена).
-    # Оставляем как заглушку, чтобы тест проходил.
+    assert set(origins) == {
+        "https://script.google.com",
+        "https://docs.google.com",
+    }
 
 
 # ---------- Шаг 4: утечка промпта и содержимого ----------
