@@ -1,11 +1,11 @@
 # Torch Risk Assessment
 
-**Version:** 2.5.0+cpu  
+**Version:** 2.12.1+cpu  
 **Build type:** CPU-only (no CUDA)  
-**Installation source:** `download.pytorch.org/whl/cpu`, pinned as `torch==2.5.0+cpu`  
+**Installation source:** `download.pytorch.org/whl/cpu`, pinned as `torch==2.12.1+cpu`  
 **Supported Python versions:** 3.11, 3.12  
-**Review date:** 2026-10-10  
-**Next review date:** 2027-04-10  
+**Review date:** 2026-11-07  
+**Next review date:** 2027-05-07  
 **Tracking issue:** #35
 
 ## Related ML packages
@@ -23,6 +23,7 @@
 | ID | Description | Fixed in | Applicable? |
 |---|---|---|---|
 | CVE-2025-32434 / GHSA-53q9-r3pm-6pq6 | RCE via `torch.load(weights_only=True)` | 2.6.0 | **No** — `torch.load` не используется |
+| CVE-2026-24747 / GHSA-63cw-57p8-fm3p | RCE via `weights_only` unpickler (SETITEM/SETITEMS on non-dict, storage size mismatch) | 2.10.0 | **No** — version patched (2.12.1+cpu); model loads via `.safetensors`, no `.bin` in cache |
 | CVE-2025-46148 | Некорректные результаты `nn.PairwiseDistance(p=2)` | 2.7.0 | **No** — не используется |
 | CVE-2025-2999 | Memory corruption в `torch.nn.utils.rnn.unpack_sequence` | 2.7.0 | **No** — RNN-операция, не используется |
 | CVE-2025-2998 | Memory corruption в `torch.nn.utils.rnn.pad_packed_sequence` | 2.7.0 | **No** — RNN-операция, не используется |
@@ -41,7 +42,7 @@
 
 Перечисленные advisory требуют вызовов, которых нет в кодовой базе:
 
-- `torch.load` / `pickle` / десериализация — не используются.
+- `torch.load` / `pickle` / десериализация — не вызываются; модель кеширована как `.safetensors` (117 MB), `pytorch_model.bin` отсутствует в snapshot.
 - `trust_remote_code=True` — не используется.
 - CUDA-специфичные операции — сборка CPU-only.
 - Профайлер — не используется.
@@ -58,6 +59,27 @@
 - CPU-only сборка исключает CUDA-специфичную поверхность атаки.
 - `numpy.load(..., allow_pickle=False)` при загрузке кеша embeddings (`src/semantic_index.py`).
 
+## Model loading evidence (2026-11-07)
+
+Facts collected before and after the CVE-2026-24747 update, on `main` and
+`cointegrated/rubert-tiny2` at revision `e8ed3b0c8bbf4fb6984c3de043bf7d2f4e5969ae`:
+
+| Check | Result |
+|---|---|
+| `pytorch_model.bin` in HF snapshot | **absent** |
+| `model.safetensors` in HF snapshot | **present** (117,529,600 bytes) |
+| `trust_remote_code` in `config.json` | not set (defaults to False) |
+| `trust_remote_code` passed anywhere in `src/` | **not mentioned** |
+| `torch.load` called directly in `src/` | **not called** |
+| `architectures` in `config.json` | `['BertForPreTraining']` (stock BertForPreTraining) |
+| `revision` argument in `SentenceTransformer(...)` | pinned to commit SHA above |
+
+**Reachability:** the CVE-2026-24747 attack path requires loading a
+malicious `.pth` / `.bin` through `torch.load(weights_only=True)`. This
+project never calls `torch.load` directly, and the cached snapshot ships
+only `model.safetensors`. With `transformers` defaulting to safetensors
+when available, the pickle path is **not reachable** for this model.
+
 ## Accepted risks
 
 **Torch не покрывается `pip-audit`.** Пакет установлен из внешнего индекса `download.pytorch.org/whl/cpu`, поэтому `pip-audit` не может получить данные об уязвимостях для него. Это известное ограничение. Вместо этого выполняется отдельная ручная проверка, задокументированная в этом файле.
@@ -65,6 +87,7 @@
 ## Verification
 
 Скрипт `verify_torch.py` проверяет:
-- точную версию `2.5.0`;
+- ожидаемую версию по prefix `2.12.1` (не exact-match — механизм является
+  version guard, а не vulnerability scanner);
 - CPU-only сборку (суффикс `+cpu`);
-- выводит явный статус: `Torch is not covered by pip-audit. Separate Torch assessment: passed (2.5.0+cpu, CPU-only).`
+- выводит явный статус: `Torch is not covered by pip-audit. Separate Torch assessment: passed (2.12.1+cpu, CPU-only).`

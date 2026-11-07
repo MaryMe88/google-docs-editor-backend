@@ -13,7 +13,7 @@ slowapi==0.1.9
 # Python 3.12+, из-за чего mypy src с target 3.11 падает на deprecated/sphinx.py.
 # Пин согласован как dependency-решение карты №2 (вход в итерацию 5).
 Deprecated<3.0.0
-torch==2.5.0+cpu
+torch==2.12.1+cpu
 filelock==4.2.1
 sentence-transformers==5.6.1
 transformers==4.57.6
