@@ -218,7 +218,76 @@ def score_rule_entry(
     return score, -idx
 
 
-def score_structural_entry(  # noqa: C901  # see #93
+def _str_pattern(value: Any) -> str | None:
+    if not isinstance(value, str):
+        return None
+    stripped = value.strip()
+    return stripped or None
+
+
+def _patterns_from_str_or_list(value: Any) -> list[str]:
+    single = _str_pattern(value)
+    if single is not None:
+        return [single]
+    if not isinstance(value, list):
+        return []
+    result: list[str] = []
+    for item in value:
+        pattern = _str_pattern(item)
+        if pattern is not None:
+            result.append(pattern)
+    return result
+
+
+def _patterns_from_containers(entry: dict[str, Any]) -> list[str]:
+    result: list[str] = []
+    for container_key in ("steps", "sections"):
+        container = entry.get(container_key)
+        if not isinstance(container, list):
+            continue
+        for step in container:
+            if not isinstance(step, dict):
+                continue
+            for field in ("name", "description"):
+                pattern = _str_pattern(step.get(field))
+                if pattern is not None:
+                    result.append(pattern)
+    return result
+
+
+def _collect_structural_patterns(entry: dict[str, Any]) -> list[str]:
+    raw: list[str] = []
+    for field in ("name", "description", "rule"):
+        pattern = _str_pattern(entry.get(field))
+        if pattern is not None:
+            raw.append(pattern)
+    raw.extend(_patterns_from_str_or_list(entry.get("when_to_use")))
+    raw.extend(_patterns_from_containers(entry))
+
+    unique: list[str] = []
+    seen: set[str] = set()
+    for pattern in raw:
+        if pattern not in seen:
+            seen.add(pattern)
+            unique.append(pattern)
+    return unique
+
+
+def _text_match_score(
+    patterns: list[str],
+    name_stripped: str,
+    normalized_text: str,
+) -> int:
+    for pattern in patterns:
+        if not _contains_pattern(normalized_text, pattern):
+            continue
+        if name_stripped and pattern == name_stripped:
+            return get_scoring_weight("name_exact_match")
+        return get_scoring_weight("partial_text_match")
+    return 0
+
+
+def score_structural_entry(
     entry: dict[str, Any],
     normalized_text: str,
     wanted_tags: set[str],
@@ -230,63 +299,9 @@ def score_structural_entry(  # noqa: C901  # see #93
     Returns:
         Кортеж (score, -idx) — вторая компонента для стабильной сортировки.
     """
-    score = 0
-    patterns: list[str] = []
-
-    def add_field(field: str) -> None:
-        value = entry.get(field)
-        if isinstance(value, str):
-            stripped = value.strip()
-            if stripped:
-                patterns.append(stripped)
-
-    add_field("name")
-    add_field("description")
-    add_field("rule")
-
-    when_to_use = entry.get("when_to_use")
-    if isinstance(when_to_use, str):
-        stripped = when_to_use.strip()
-        if stripped:
-            patterns.append(stripped)
-    elif isinstance(when_to_use, list):
-        for item in when_to_use:
-            if isinstance(item, str):
-                stripped = item.strip()
-                if stripped:
-                    patterns.append(stripped)
-
-    for container_key in ("steps", "sections"):  # noqa: PLR1702  # see #93
-        container = entry.get(container_key)
-        if isinstance(container, list):
-            for step in container:
-                if not isinstance(step, dict):
-                    continue
-                for field in ("name", "description"):
-                    value = step.get(field)
-                    if isinstance(value, str):
-                        stripped = value.strip()
-                        if stripped:
-                            patterns.append(stripped)
-
-    unique_patterns: list[str] = []
-    seen: set[str] = set()
-    for pattern in patterns:
-        if pattern not in seen:
-            seen.add(pattern)
-            unique_patterns.append(pattern)
-
-    name_val = entry.get("name", "")
-    name_stripped = name_val.strip() if isinstance(name_val, str) else ""
-
-    for pattern in unique_patterns:
-        if not _contains_pattern(normalized_text, pattern):
-            continue
-        if name_stripped and pattern == name_stripped:
-            score += get_scoring_weight("name_exact_match")
-        else:
-            score += get_scoring_weight("partial_text_match")
-        break
+    patterns = _collect_structural_patterns(entry)
+    name_stripped = _str_pattern(entry.get("name")) or ""
+    score = _text_match_score(patterns, name_stripped, normalized_text)
 
     entry_tags = entry.get("tags", [])
     if not isinstance(entry_tags, list | tuple):
