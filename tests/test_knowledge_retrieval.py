@@ -31,6 +31,8 @@ from src.knowledge_retrieval import (
     _select_ranked_entries,
     score_rule_entry,
     score_structural_entry,
+    select_entries,
+    select_entries_with_meta,
     select_grammar_rules,
     select_structural_by_tags_or_all,
 )
@@ -968,3 +970,77 @@ def test_score_structural_entry_empty_entry_returns_zero() -> None:
     score, neg_idx = score_structural_entry({}, "любой текст", set(), 2)
     assert score == 0
     assert neg_idx == -2
+
+
+# ---------------------------------------------------------------------------
+# Характеристические тесты для select_entries_with_meta (итерация 14)
+# ---------------------------------------------------------------------------
+
+
+def test_select_entries_with_meta_always_returns_retrieval_result() -> None:
+    """С params=None новый API возвращает RetrievalResult, не list."""
+    kb = SimpleNamespace(
+        grammar_errors=[
+            {"wrong": "тест", "name": "Тест", "tags": ["grammar"]},
+        ],
+    )
+    result = select_entries_with_meta(
+        kb_or_entries=kb,
+        text="тест",
+        tags={"grammar"},
+        category="grammar",
+        params=None,
+    )
+    assert isinstance(result, RetrievalResult)
+    assert isinstance(result.entries, list)
+    assert isinstance(result.stage, FallbackStage)
+    assert isinstance(result.dropped_count, int)
+
+
+def test_select_entries_with_meta_forces_return_meta_true() -> None:
+    """Даже при params.return_meta=False новый API возвращает RetrievalResult."""
+    kb = SimpleNamespace(
+        grammar_errors=[
+            {"wrong": "тест", "name": "Тест", "tags": ["grammar"]},
+        ],
+    )
+    params = SelectionParams(
+        scorer=score_rule_entry,
+        return_meta=False,
+    )
+    result = select_entries_with_meta(
+        kb_or_entries=kb,
+        text="тест",
+        tags={"grammar"},
+        category="grammar",
+        params=params,
+    )
+    assert isinstance(result, RetrievalResult)
+
+
+def test_select_entries_with_meta_equals_select_entries_return_meta_true() -> None:
+    """Новый API даёт тот же результат, что старый с return_meta=True."""
+    kb = SimpleNamespace(
+        grammar_errors=[
+            {"wrong": "тест", "name": "Тест", "tags": ["grammar"]},
+            {"wrong": "проверка", "name": "Проверка", "tags": ["grammar"]},
+        ],
+    )
+    old_result = select_entries(
+        kb_or_entries=kb,
+        text="тест проверка",
+        tags={"grammar"},
+        category="grammar",
+        return_meta=True,
+    )
+    new_result = select_entries_with_meta(
+        kb_or_entries=kb,
+        text="тест проверка",
+        tags={"grammar"},
+        category="grammar",
+    )
+    assert isinstance(old_result, RetrievalResult)
+    assert isinstance(new_result, RetrievalResult)
+    assert old_result.entries == new_result.entries
+    assert old_result.stage == new_result.stage
+    assert old_result.dropped_count == new_result.dropped_count

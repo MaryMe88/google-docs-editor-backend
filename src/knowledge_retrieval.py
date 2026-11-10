@@ -12,7 +12,7 @@ from __future__ import annotations
 import logging
 import re
 from collections.abc import Iterable
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from enum import Enum
 from typing import (
     Any,
@@ -828,6 +828,9 @@ def select_entries(
 ) -> list[dict[str, Any]] | RetrievalResult:
     """Отбирает записи из KB по категории, тексту и тегам с учётом fallback.
 
+    Совместимая обёртка. При return_meta=True делегирует в
+    select_entries_with_meta; при return_meta=False возвращает список.
+
     Args:
         kb_or_entries: KB-объект или список записей (для category="structural").
         text: Исходный текст для keyword-сравнения.
@@ -847,6 +850,81 @@ def select_entries(
     Raises:
         TypeError: Для category="structural", если kb_or_entries не list.
     """
+    if return_meta:
+        return select_entries_with_meta(
+            kb_or_entries=kb_or_entries,
+            text=text,
+            tags=tags,
+            category=category,
+            params=params,
+            limit=limit,
+            candidate_limit=candidate_limit,
+            min_score=min_score,
+            char_budget=char_budget,
+            semantic_rerank=semantic_rerank,
+        )
+
+    p, entries_source, normalized_text, effective_tags, early = _resolve_selection_inputs(
+        kb_or_entries=kb_or_entries,
+        text=text,
+        tags=tags,
+        category=category,
+        params=params,
+        limit=limit,
+        candidate_limit=candidate_limit,
+        min_score=min_score,
+        char_budget=char_budget,
+        semantic_rerank=semantic_rerank,
+        return_meta=False,
+    )
+    if early is not None:
+        return []
+    if entries_source is None:
+        return []
+
+    raw = _select_ranked_entries(
+        entries=entries_source,
+        normalized_text=normalized_text,
+        wanted_tags=effective_tags,
+        limit=limit,
+        params=p,
+    )
+    result = _apply_semantic_rerank_if_needed(
+        raw, category, text, semantic_rerank=p.semantic_rerank, return_meta=False
+    )
+    if not isinstance(result, list):
+        raise RuntimeError(
+            "select_entries: expected list when return_meta=False, " f"got {type(result).__name__}"
+        )
+    return result
+
+
+_SelectionInputs = tuple[
+    SelectionParams, list[dict[str, Any]] | None, str, list[str], tuple[int, int] | None
+]
+
+
+def _resolve_selection_inputs(
+    kb_or_entries: Any,
+    text: str,
+    tags: Iterable[str],
+    category: Literal["grammar", "style", "logic", "structural"],
+    params: SelectionParams | None,
+    limit: int,
+    candidate_limit: int | None,
+    min_score: int,
+    char_budget: int | None,
+    *,
+    semantic_rerank: bool,
+    return_meta: bool,
+) -> _SelectionInputs:
+    """Готовит params, источник записей и нормализованные входы для select_*.
+
+    Возвращает кортеж (params, entries_source, normalized_text, effective_tags,
+    early_return). Если early_return не None — это (score, -idx) для
+    раннего возврата (пустой блок), и вызывающий должен вернуть пустой
+    результат соответствующей формы.
+    """
     if params is None:
         scorer = score_rule_entry if category != "structural" else score_structural_entry
         fb_policy = STRUCTURAL_FALLBACK_POLICY if category == "structural" else RULE_FALLBACK_POLICY
@@ -862,45 +940,130 @@ def select_entries(
             return_meta=return_meta,
             semantic_rerank=semantic_rerank,
         )
+    else:
+        params = replace(params, return_meta=return_meta)
 
+    entries_source: list[dict[str, Any]] | None
     if category == "structural":
         if not isinstance(kb_or_entries, list):
             raise TypeError("For category 'structural', kb_or_entries must be a list of entries.")
         entries_source = kb_or_entries
+        normalized_text = ""
+        effective_tags = list(tags) or []
     else:
         config = _CATEGORY_CONFIG[category]
         attr = config["attr"]
         entries_source = getattr(kb_or_entries, attr, [])
         if not entries_source:
             logger.warning("select_entries: %s пустой. Блок %s не будет добавлен.", attr, category)
-            if params.return_meta:
-                return RetrievalResult([], FallbackStage.EMPTY, 0)
-            return []
-
-    if category == "structural":
-        normalized_text = ""
-        effective_tags = list(tags) or []
-    else:
+            return params, None, "", [], (0, 0)  # early return
         normalized_text = normalize_text_for_match(text)
         effective_tags = list(tags) or config.get("default_tags", [category])
+
+    return params, entries_source, normalized_text, effective_tags, None
+
+
+def _apply_semantic_rerank_if_needed(
+    raw: list[dict[str, Any]] | RetrievalResult,
+    category: str,
+    text: str,
+    *,
+    semantic_rerank: bool,
+    return_meta: bool,
+) -> list[dict[str, Any]] | RetrievalResult:
+    if category == "structural":
+        return raw
+    weight = 0.35 if semantic_rerank else 0.0
+    if return_meta:
+        if not isinstance(raw, RetrievalResult):
+            raise RuntimeError(
+                "_apply_semantic_rerank_if_needed: expected RetrievalResult "
+                f"when return_meta=True, got {type(raw).__name__}"
+            )
+        reranked = _semantic_rerank(raw.entries, text, semantic_weight=weight)
+        return RetrievalResult(reranked, raw.stage, raw.dropped_count)
+    if not isinstance(raw, list):
+        raise RuntimeError(
+            "_apply_semantic_rerank_if_needed: expected list "
+            f"when return_meta=False, got {type(raw).__name__}"
+        )
+    return _semantic_rerank(raw, text, semantic_weight=weight)
+
+
+def select_entries_with_meta(
+    kb_or_entries: Any,
+    text: str,
+    tags: Iterable[str],
+    category: Literal["grammar", "style", "logic", "structural"],
+    params: SelectionParams | None = None,
+    limit: int = 10,
+    candidate_limit: int | None = None,
+    min_score: int = 1,
+    char_budget: int | None = None,
+    *,
+    semantic_rerank: bool = False,
+) -> RetrievalResult:
+    """Стабильный контракт: всегда возвращает RetrievalResult.
+
+    В отличие от select_entries, не принимает return_meta. Если передан
+    params с return_meta=False, он будет заменён на return_meta=True
+    через dataclasses.replace: новый метод по определению возвращает
+    metadata.
+
+    Args:
+        kb_or_entries: KB-объект или список записей (для category="structural").
+        text: Исходный текст для keyword-сравнения.
+        tags: Теги для скоринга.
+        category: Категория отбора.
+        params: Параметры отбора; при None собираются по category.
+        limit: Максимум записей в результате.
+        candidate_limit: Ограничение числа кандидатов до скоринга.
+        min_score: Минимальный скор для включения.
+        char_budget: Бюджет символов на результат.
+        semantic_rerank: Применить семантический re-rank после keyword-отбора.
+
+    Returns:
+        RetrievalResult(entries, stage, dropped_count).
+
+    Raises:
+        TypeError: Для category="structural", если kb_or_entries не list.
+        RuntimeError: Внутренний контракт _select_ranked_entries нарушен
+            (защита от случайного возврата list вместо RetrievalResult).
+    """
+    p, entries_source, normalized_text, effective_tags, early = _resolve_selection_inputs(
+        kb_or_entries=kb_or_entries,
+        text=text,
+        tags=tags,
+        category=category,
+        params=params,
+        limit=limit,
+        candidate_limit=candidate_limit,
+        min_score=min_score,
+        char_budget=char_budget,
+        semantic_rerank=semantic_rerank,
+        return_meta=True,
+    )
+    if early is not None:
+        return RetrievalResult([], FallbackStage.EMPTY, 0)
+    if entries_source is None:
+        return RetrievalResult([], FallbackStage.EMPTY, 0)
 
     raw = _select_ranked_entries(
         entries=entries_source,
         normalized_text=normalized_text,
         wanted_tags=effective_tags,
         limit=limit,
-        params=params,
+        params=p,
     )
-
-    if category != "structural":
-        weight = 0.35 if params.semantic_rerank else 0.0
-        if params.return_meta:
-            assert isinstance(raw, RetrievalResult)
-            reranked = _semantic_rerank(raw.entries, text, semantic_weight=weight)
-            return RetrievalResult(reranked, raw.stage, raw.dropped_count)
-        assert isinstance(raw, list)
-        return _semantic_rerank(raw, text, semantic_weight=weight)
-    return raw
+    reranked = _apply_semantic_rerank_if_needed(
+        raw, category, text, semantic_rerank=p.semantic_rerank, return_meta=True
+    )
+    if not isinstance(reranked, RetrievalResult):
+        raise RuntimeError(
+            "select_entries_with_meta: expected RetrievalResult "
+            f"after rerank, got {type(reranked).__name__}"
+        )
+    return reranked
 
 
 # ---------------------------------------------------------------------------
