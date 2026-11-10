@@ -6,6 +6,7 @@ from __future__ import annotations
 from src.config_types import (
     DomainConfig,
     FeatureResolutionResult,
+    IntentConfig,
     KnowledgeLevel,
     OverlayConfig,
 )
@@ -217,6 +218,183 @@ def test_apply_suppress_rules_domain_suppresses_storytelling():
     )
     assert result.storytelling_enabled is False
     assert "storytelling" in result.suppressed_features
+
+
+def _make_result(**overrides):
+    """Создаёт FeatureResolutionResult с дефолтами; переопределения через kwargs."""
+    defaults = dict(
+        tags=[],
+        effective_intent=None,
+        effective_overlays=[],
+        suppressed_layers=[],
+        warnings=[],
+        storytelling_enabled=False,
+        marketing_enabled=False,
+        antiai_enabled=False,
+        rhetoric_enabled=False,
+        nkrj_enabled=False,
+        editorial_enabled=False,
+        activated_features=[],
+        suppressed_features=[],
+        activation_reasons={},
+        suppression_reasons={},
+        recognized_aliases={},
+        ignored_unknown_values=[],
+    )
+    defaults.update(overrides)
+    return FeatureResolutionResult(**defaults)
+
+
+def test_apply_suppress_rules_domain_aliases_yield_single_reason():
+    """Домен с обоими алиасами marketing даёт одну запись (or-семантика)."""
+    domain_config = DomainConfig(
+        name="blog",
+        system_rules="",
+        tone="neutral",
+        suppresses=("marketing", "marketingpush"),
+    )
+    result = _make_result(marketing_enabled=True)
+    _apply_suppress_rules(
+        result,
+        domain_config,
+        None,
+        [],
+        [],
+        result.suppressed_layers,
+        result.warnings,
+    )
+    assert result.marketing_enabled is False
+    assert result.suppression_reasons["marketing"] == [
+        ReasonCode.SUPPRESSED_BY_DOMAIN_RULE,
+    ]
+    assert result.suppressed_layers == ["marketing suppressed by domain"]
+    assert result.warnings == [
+        "Marketing disabled by domain 'suppresses' rule.",
+    ]
+
+
+def test_apply_suppress_rules_intent_aliases_yield_duplicate_reasons():
+    """Интент с обоими алиасами marketing даёт две записи (for+elif-семантика)."""
+    intent_config = IntentConfig(
+        name="fix_flow",
+        instructions=(),
+        suppresses=("marketing", "marketingpush"),
+    )
+    result = _make_result(marketing_enabled=True)
+    _apply_suppress_rules(
+        result,
+        DomainConfig(name="blog", system_rules="", tone="neutral"),
+        intent_config,
+        [],
+        [],
+        result.suppressed_layers,
+        result.warnings,
+    )
+    assert result.marketing_enabled is False
+    assert result.suppression_reasons["marketing"] == [
+        ReasonCode.SUPPRESSED_BY_INTENT_RULE,
+        ReasonCode.SUPPRESSED_BY_INTENT_RULE,
+    ]
+    # intent не пишет в suppressed_layers/warnings
+    assert result.suppressed_layers == []
+    assert result.warnings == []
+
+
+def test_apply_suppress_rules_overlay_not_in_effective_overlays_is_ignored():
+    """Оверлей не в effective_overlays — suppress не применяется."""
+    overlay_cfg = OverlayConfig(
+        name="finalcheck",
+        instructions=(),
+        suppresses=("storytelling",),
+    )
+    result = _make_result(storytelling_enabled=True)
+    _apply_suppress_rules(
+        result,
+        DomainConfig(name="blog", system_rules="", tone="neutral"),
+        None,
+        [],
+        [overlay_cfg],
+        result.suppressed_layers,
+        result.warnings,
+    )
+    assert result.storytelling_enabled is True
+    assert result.suppression_reasons == {}
+    assert result.suppressed_features == []
+    assert result.suppressed_layers == []
+    assert result.warnings == []
+
+
+def test_apply_suppress_rules_intent_none_is_noop():
+    """intent=None — никаких изменений в результате."""
+    result = _make_result(storytelling_enabled=True, marketing_enabled=True)
+    _apply_suppress_rules(
+        result,
+        DomainConfig(name="blog", system_rules="", tone="neutral"),
+        None,
+        [],
+        [],
+        result.suppressed_layers,
+        result.warnings,
+    )
+    assert result.storytelling_enabled is True
+    assert result.marketing_enabled is True
+    assert result.suppression_reasons == {}
+    assert result.suppressed_features == []
+    assert result.suppressed_layers == []
+    assert result.warnings == []
+
+
+def test_apply_suppress_rules_golden_all_three_layers():
+    """Golden: домен+оверлей+интент подавляют storytelling.
+
+    Фиксирует текущее поведение:
+    - 3 записи в suppression_reasons["storytelling"] — DOMAIN, OVERLAY, INTENT
+      (в этом порядке);
+    - 1 запись в suppressed_features (dedup через _add_suppression_reason);
+    - 2 записи в suppressed_layers (domain и overlay; intent не пишет);
+    - 2 warning'а (domain и overlay).
+    """
+    domain_config = DomainConfig(
+        name="blog",
+        system_rules="",
+        tone="neutral",
+        suppresses=("storytelling",),
+    )
+    overlay_cfg = OverlayConfig(
+        name="finalcheck",
+        instructions=(),
+        suppresses=("storytelling",),
+    )
+    intent_config = IntentConfig(
+        name="fix_flow",
+        instructions=(),
+        suppresses=("storytelling",),
+    )
+    result = _make_result(storytelling_enabled=True)
+    _apply_suppress_rules(
+        result,
+        domain_config,
+        intent_config,
+        ["finalcheck"],
+        [overlay_cfg],
+        result.suppressed_layers,
+        result.warnings,
+    )
+    assert result.storytelling_enabled is False
+    assert result.suppression_reasons["storytelling"] == [
+        ReasonCode.SUPPRESSED_BY_DOMAIN_RULE,
+        ReasonCode.SUPPRESSED_BY_OVERLAY_RULE,
+        ReasonCode.SUPPRESSED_BY_INTENT_RULE,
+    ]
+    assert result.suppressed_features == ["storytelling"]
+    assert result.suppressed_layers == [
+        "storytelling suppressed by domain",
+        "storytelling suppressed by overlay 'finalcheck'",
+    ]
+    assert result.warnings == [
+        "Storytelling disabled by domain 'suppresses' rule.",
+        "Storytelling disabled by overlay 'finalcheck' suppress rule.",
+    ]
 
 
 # ---------------------------------------------------------------------------
