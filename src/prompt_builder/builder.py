@@ -59,6 +59,7 @@ from ._patchable import (
     load_overlay_config,
     resolve_prompt_features,
 )
+from .contracts import BuildOptions, BuildRequest, BuildResult
 from .kb_rendering import ProcessContext
 
 logger = logging.getLogger(__name__)
@@ -841,7 +842,7 @@ class PromptBuilder:
         **legacy_kwargs: Any,
     ) -> tuple[str, dict[str, Any]]: ...
 
-    def build(  # noqa: C901  # see #93
+    def build(
         self,
         text: str,
         domain: str,
@@ -892,6 +893,57 @@ class PromptBuilder:
             output_mode = legacy_output_mode
         if legacy_include_knowledge is not None:
             include_knowledge = legacy_include_knowledge
+
+        request = BuildRequest(
+            text=text,
+            domain=domain,
+            intent=intent,
+            audience=audience,
+            overlays=overlays,
+            output_mode=output_mode,
+            options=BuildOptions(
+                include_knowledge=include_knowledge,
+                include_few_shot=include_few_shot,
+                knowledge_level=knowledge_level,
+                token_budget=token_budget,
+                include_retrieval_meta=include_retrieval_meta,
+                few_shot_seed=few_shot_seed,
+                deep_semantic_search=deep_semantic_search,
+            ),
+        )
+        result = self.build_prompt(request)
+        if include_retrieval_meta:
+            return result.prompt, cast(dict[str, Any], result.retrieval_meta)
+        return result.prompt
+
+    def build_prompt(  # noqa: C901  # see #93
+        self,
+        request: BuildRequest,
+    ) -> BuildResult:
+        """Собирает промпт по BuildRequest без legacy-параметров.
+
+        Args:
+            request: BuildRequest с текстом, доменом и опциями.
+
+        Returns:
+            BuildResult с промптом и опциональными метаданными retrieval.
+
+        Raises:
+            ValueError: Пустой текст или недопустимые domain/intent/overlays/output_mode.
+        """
+        text = request.text
+        domain = request.domain
+        intent = request.intent
+        audience = request.audience
+        overlays = request.overlays
+        output_mode = request.output_mode
+        include_knowledge = request.options.include_knowledge
+        include_few_shot = request.options.include_few_shot
+        knowledge_level = request.options.knowledge_level
+        token_budget = request.options.token_budget
+        include_retrieval_meta = request.options.include_retrieval_meta
+        few_shot_seed = request.options.few_shot_seed
+        deep_semantic_search = request.options.deep_semantic_search
 
         if not text or not text.strip():
             raise ValueError("Text must not be empty")
@@ -1046,15 +1098,8 @@ class PromptBuilder:
         blocks.append("Исходный текст:\n" + _wrap_user_content("USER_TEXT", text.strip()))
 
         prompt = self._assemble_prompt(blocks)
-        if include_retrieval_meta:
-            return prompt, retrieval_meta_total
-        return prompt
 
-    def build_prompt(self, **kwargs: Any) -> str:
-        """Устаревший псевдоним build; используйте его."""
-        warnings.warn(
-            "build_prompt() is deprecated, use build()",
-            DeprecationWarning,
-            stacklevel=2,
+        return BuildResult(
+            prompt=prompt,
+            retrieval_meta=retrieval_meta_total if include_retrieval_meta else None,
         )
-        return self.build(**kwargs)
