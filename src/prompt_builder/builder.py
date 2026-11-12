@@ -916,7 +916,210 @@ class PromptBuilder:
             return result.prompt, cast(dict[str, Any], result.retrieval_meta)
         return result.prompt
 
-    def build_prompt(  # noqa: C901  # see #93
+    def _resolve_and_validate_configs(
+        self, request: BuildRequest
+    ) -> tuple[
+        CoreConfig,
+        DomainConfig,
+        IntentConfig | None,
+        list[OverlayConfig],
+        str,
+        str | None,
+        list[str],
+        str,
+        dict[str, Any],
+    ]:
+        """Валидирует request, грузит конфиги и выполняет feature resolution."""
+        text = request.text
+        if not text or not text.strip():
+            raise ValueError("Text must not be empty")
+
+        validated_domain = self._validate_domain(request.domain)
+        validated_intent = self._validate_intent(request.intent)
+        validated_overlays = self._validate_overlays(request.overlays or [])
+        validated_output_mode = self._validate_output_mode(request.output_mode)
+
+        if self.core_config is None:
+            self.core_config = self.get_core_config()
+        core_config = self.core_config
+        if core_config is None:
+            raise RuntimeError("core_config failed to load")
+
+        domain_config = self.get_domain_config(validated_domain)
+        intent_config = self.get_intent_config(validated_intent)
+        overlay_configs = self.get_overlay_configs(validated_overlays)
+        output_format = self.get_output_format(validated_output_mode)
+
+        features = resolve_prompt_features(
+            domain=validated_domain,
+            intent=validated_intent,
+            overlays=validated_overlays,
+            domain_config=domain_config,
+            intent_config=intent_config,
+            overlay_configs=overlay_configs,
+            knowledge_level=request.options.knowledge_level,
+        )
+        for warn in features["warnings"]:
+            logger.warning("PromptBuilder feature resolution: %s", warn)
+
+        return (
+            core_config,
+            domain_config,
+            intent_config,
+            overlay_configs,
+            validated_domain,
+            validated_intent,
+            validated_overlays,
+            output_format,
+            features,
+        )
+
+    def _collect_all_retrieval_tags(
+        self,
+        domain: str,
+        intent: str | None,
+        overlays: Sequence[str],
+        features: dict[str, Any],
+    ) -> dict[str, set[str]]:
+        """_collect_retrieval_tags + feature-теги в primary."""
+        tag_sets = _collect_retrieval_tags(domain, intent, overlays)
+        if features["editorial_enabled"]:
+            tag_sets["primary"].add("editorial")
+        if features["storytelling_enabled"]:
+            tag_sets["primary"].add("storytelling")
+        if features["marketing_enabled"]:
+            tag_sets["primary"].add("marketing")
+        if features["rhetoric_enabled"]:
+            tag_sets["primary"].add("rhetoric")
+        if features["nkrj_enabled"]:
+            tag_sets["primary"].add("nkrj")
+        if features["antiai_enabled"]:
+            tag_sets["primary"].add("antiai")
+        return tag_sets
+
+    def _build_core_and_domain_blocks(
+        self,
+        core_config: CoreConfig,
+        domain_config: DomainConfig,
+    ) -> list[str]:
+        """Блоки: роль, приоритеты, домен, тон, правила, mode, edit_level,
+        задачи, ограничения, audit, forbidden."""
+        blocks: list[str] = [
+            f"Роль: {core_config.role}",
+            f"Приоритеты: {core_config.priorities}",
+            f"Домен: {domain_config.name}",
+            f"Тон: {domain_config.tone}",
+        ]
+        if domain_config.system_rules:
+            blocks.append("Правила домена:\n" + domain_config.system_rules)
+        mode_constraints = self._build_mode_constraints_block(domain_config)
+        if mode_constraints:
+            blocks.append(mode_constraints)
+        edit_level_block = self._build_edit_level_block(domain_config)
+        if edit_level_block:
+            blocks.append(edit_level_block)
+        if domain_config.tasks:
+            blocks.append("Задачи редактора в этом домене:\n- " + "\n- ".join(domain_config.tasks))
+        if domain_config.constraints:
+            blocks.append("Ограничения домена:\n- " + "\n- ".join(domain_config.constraints))
+        if core_config.basic_audit_instructions:
+            blocks.append(
+                "Базовые инструкции:\n- " + "\n- ".join(core_config.basic_audit_instructions)
+            )
+        if core_config.forbidden:
+            blocks.append("Запрещено:\n- " + "\n- ".join(core_config.forbidden))
+        return blocks
+
+    def _build_intent_overlay_audience_blocks(
+        self,
+        intent_config: IntentConfig | None,
+        overlay_configs: list[OverlayConfig],
+        effective_overlays: list[str],
+        audience: AudienceProfile | None,
+    ) -> list[str]:
+        """Блоки: intent, overlay-инструкции, аудитория."""
+        blocks: list[str] = []
+        if intent_config and intent_config.instructions:
+            blocks.append(
+                f"Intent: {intent_config.name}\n- " + "\n- ".join(intent_config.instructions)
+            )
+        effective_overlay_configs = [
+            cfg for cfg in overlay_configs if cfg.name in effective_overlays
+        ]
+        if effective_overlay_configs:
+            overlay_lines: list[str] = []
+            for overlay in effective_overlay_configs:
+                if overlay.instructions:
+                    overlay_lines.append(f"[{overlay.name}] " + " | ".join(overlay.instructions))
+            if overlay_lines:
+                blocks.append("Overlay-инструкции:\n- " + "\n- ".join(overlay_lines))
+        audience_block = self._build_audience_block(audience)
+        if audience_block:
+            blocks.append("Аудитория:\n" + audience_block)
+        return blocks
+
+    def _build_knowledge_section(
+        self,
+        request: BuildRequest,
+        domain_config: DomainConfig,
+        features: dict[str, Any],
+        tag_sets: dict[str, set[str]],
+        validated_domain: str,
+        validated_intent: str | None,
+        effective_overlays: list[str],
+    ) -> tuple[str | None, dict[str, Any], AssemblyTrace | None]:
+        """Knowledge-block: budget, seed, KnowledgeBlockRequest, сборка.
+
+        При include_knowledge=False возвращает (None, {}, None).
+        """
+        if not request.options.include_knowledge:
+            return None, {}, None
+
+        effective_limits = self._merge_domain_limits(domain_config)
+        budget = KnowledgeBudgetManager(request.options.token_budget).allocate(
+            limits=effective_limits,
+            level=request.options.knowledge_level,
+        )
+        if not features["storytelling_enabled"]:
+            budget.disable("storytelling")
+        if not features["marketing_enabled"]:
+            budget.disable("marketing")
+
+        effective_seed = (
+            request.options.few_shot_seed
+            if request.options.few_shot_seed is not None
+            else _derive_seed(request.text)
+        )
+
+        req = KnowledgeBlockRequest(
+            text=request.text,
+            primary_tags=tag_sets["primary"],
+            expanded_tags=tag_sets["expanded"],
+            budget=budget,
+            domain=validated_domain,
+            intent=validated_intent,
+            overlays=effective_overlays,
+            include_few_shot=request.options.include_few_shot,
+            total_few_shot_used=0,
+            few_shot_seed=effective_seed,
+            limits=effective_limits,
+            storytelling_enabled=features["storytelling_enabled"],
+            marketing_enabled=features["marketing_enabled"],
+            antiai_enabled=features["antiai_enabled"],
+            rhetoric_enabled=features["rhetoric_enabled"],
+            nkrj_enabled=features["nkrj_enabled"],
+            editorial_enabled=features["editorial_enabled"],
+            return_trace=True,
+            semantic_rerank=request.options.deep_semantic_search,
+        )
+        block_result = cast(
+            tuple[str, dict[str, Any], int, AssemblyTrace | None],
+            self._build_knowledge_block(req),
+        )
+        knowledge_block, block_meta, _, trace = block_result
+        return knowledge_block or None, block_meta, trace
+
+    def build_prompt(
         self,
         request: BuildRequest,
     ) -> BuildResult:
@@ -931,175 +1134,53 @@ class PromptBuilder:
         Raises:
             ValueError: Пустой текст или недопустимые domain/intent/overlays/output_mode.
         """
-        text = request.text
-        domain = request.domain
-        intent = request.intent
-        audience = request.audience
-        overlays = request.overlays
-        output_mode = request.output_mode
-        include_knowledge = request.options.include_knowledge
-        include_few_shot = request.options.include_few_shot
-        knowledge_level = request.options.knowledge_level
-        token_budget = request.options.token_budget
-        include_retrieval_meta = request.options.include_retrieval_meta
-        few_shot_seed = request.options.few_shot_seed
-        deep_semantic_search = request.options.deep_semantic_search
+        (
+            core_config,
+            domain_config,
+            intent_config,
+            overlay_configs,
+            validated_domain,
+            validated_intent,
+            _validated_overlays,
+            output_format,
+            features,
+        ) = self._resolve_and_validate_configs(request)
 
-        if not text or not text.strip():
-            raise ValueError("Text must not be empty")
-
-        validated_domain = self._validate_domain(domain)
-        validated_intent = self._validate_intent(intent)
-        validated_overlays = self._validate_overlays(overlays or [])
-        validated_output_mode = self._validate_output_mode(output_mode)
-
-        if self.core_config is None:
-            self.core_config = self.get_core_config()
-
-        domain_config = self.get_domain_config(validated_domain)
-        intent_config = self.get_intent_config(validated_intent)
-        overlay_configs = self.get_overlay_configs(validated_overlays)
-        output_format = self.get_output_format(validated_output_mode)
-
-        features = resolve_prompt_features(
-            domain=validated_domain,
-            intent=validated_intent,
-            overlays=validated_overlays,
-            domain_config=domain_config,
-            intent_config=intent_config,
-            overlay_configs=overlay_configs,
-            knowledge_level=knowledge_level,
-        )
         effective_overlays = features["effective_overlays"]
-        storytelling_enabled = features["storytelling_enabled"]
-        marketing_enabled = features["marketing_enabled"]
-        antiai_enabled = features["antiai_enabled"]
-        rhetoric_enabled = features["rhetoric_enabled"]
-        nkrj_enabled = features["nkrj_enabled"]
-        editorial_enabled = features["editorial_enabled"]
-        warnings_list = features["warnings"]
-        for warn in warnings_list:
-            logger.warning("PromptBuilder feature resolution: %s", warn)
-
-        tag_sets = _collect_retrieval_tags(validated_domain, validated_intent, effective_overlays)
-
-        if editorial_enabled:
-            tag_sets["primary"].add("editorial")
-        if storytelling_enabled:
-            tag_sets["primary"].add("storytelling")
-        if marketing_enabled:
-            tag_sets["primary"].add("marketing")
-        if rhetoric_enabled:
-            tag_sets["primary"].add("rhetoric")
-        if nkrj_enabled:
-            tag_sets["primary"].add("nkrj")
-        if antiai_enabled:
-            tag_sets["primary"].add("antiai")
+        tag_sets = self._collect_all_retrieval_tags(
+            validated_domain, validated_intent, effective_overlays, features
+        )
 
         blocks: list[str] = []
-
-        blocks.append(f"Роль: {self.core_config.role}")
-        blocks.append(f"Приоритеты: {self.core_config.priorities}")
-        blocks.append(f"Домен: {domain_config.name}")
-        blocks.append(f"Тон: {domain_config.tone}")
-
-        if domain_config.system_rules:
-            blocks.append("Правила домена:\n" + domain_config.system_rules)
-
-        mode_constraints = self._build_mode_constraints_block(domain_config)
-        if mode_constraints:
-            blocks.append(mode_constraints)
-
-        edit_level_block = self._build_edit_level_block(domain_config)
-        if edit_level_block:
-            blocks.append(edit_level_block)
-
-        if domain_config.tasks:
-            blocks.append("Задачи редактора в этом домене:\n- " + "\n- ".join(domain_config.tasks))
-        if domain_config.constraints:
-            blocks.append("Ограничения домена:\n- " + "\n- ".join(domain_config.constraints))
-
-        if self.core_config.basic_audit_instructions:
-            blocks.append(
-                "Базовые инструкции:\n- " + "\n- ".join(self.core_config.basic_audit_instructions)
+        blocks.extend(self._build_core_and_domain_blocks(core_config, domain_config))
+        blocks.extend(
+            self._build_intent_overlay_audience_blocks(
+                intent_config, overlay_configs, effective_overlays, request.audience
             )
-        if self.core_config.forbidden:
-            blocks.append("Запрещено:\n- " + "\n- ".join(self.core_config.forbidden))
+        )
 
-        if intent_config and intent_config.instructions:
-            blocks.append(
-                f"Intent: {intent_config.name}\n- " + "\n- ".join(intent_config.instructions)
-            )
-
-        effective_overlay_configs = [
-            cfg for cfg in overlay_configs if cfg.name in effective_overlays
-        ]
-        if effective_overlay_configs:
-            overlay_lines = []
-            for overlay in effective_overlay_configs:
-                if overlay.instructions:
-                    overlay_lines.append(f"[{overlay.name}] " + " | ".join(overlay.instructions))
-            if overlay_lines:
-                blocks.append("Overlay-инструкции:\n- " + "\n- ".join(overlay_lines))
-
-        audience_block = self._build_audience_block(audience)
-        if audience_block:
-            blocks.append("Аудитория:\n" + audience_block)
-
-        retrieval_meta_total: dict[str, Any] = {}
-        if include_knowledge:
-            effective_limits = self._merge_domain_limits(domain_config)
-            budget = KnowledgeBudgetManager(token_budget).allocate(
-                limits=effective_limits,
-                level=knowledge_level,
-            )
-            if not storytelling_enabled:
-                budget.disable("storytelling")
-            if not marketing_enabled:
-                budget.disable("marketing")
-
-            effective_seed = few_shot_seed if few_shot_seed is not None else _derive_seed(text)
-
-            req = KnowledgeBlockRequest(
-                text=text,
-                primary_tags=tag_sets["primary"],
-                expanded_tags=tag_sets["expanded"],
-                budget=budget,
-                domain=validated_domain,
-                intent=validated_intent,
-                overlays=effective_overlays,
-                include_few_shot=include_few_shot,
-                total_few_shot_used=0,
-                few_shot_seed=effective_seed,
-                limits=effective_limits,
-                storytelling_enabled=storytelling_enabled,
-                marketing_enabled=marketing_enabled,
-                antiai_enabled=antiai_enabled,
-                rhetoric_enabled=rhetoric_enabled,
-                nkrj_enabled=nkrj_enabled,
-                editorial_enabled=editorial_enabled,
-                return_trace=True,
-                semantic_rerank=deep_semantic_search,
-            )
-            block_result = cast(
-                tuple[str, dict[str, Any], int, AssemblyTrace | None],
-                self._build_knowledge_block(req),
-            )
-            knowledge_block, block_meta, _, trace = block_result
-            retrieval_meta_total = block_meta
+        knowledge_block, retrieval_meta_total, trace = self._build_knowledge_section(
+            request,
+            domain_config,
+            features,
+            tag_sets,
+            validated_domain,
+            validated_intent,
+            effective_overlays,
+        )
+        if request.options.include_knowledge:
             if knowledge_block:
                 blocks.append("База знаний:\n" + knowledge_block)
-
             self._last_trace = trace
 
         blocks.append(self._build_ip_ceiling_block(domain_config))
         blocks.append("Формат ответа:\n" + output_format)
-        # SEC-патч 2.2: оборачиваем пользовательский текст в маркеры
-        blocks.append("Исходный текст:\n" + _wrap_user_content("USER_TEXT", text.strip()))
+        blocks.append("Исходный текст:\n" + _wrap_user_content("USER_TEXT", request.text.strip()))
 
         prompt = self._assemble_prompt(blocks)
-
         return BuildResult(
             prompt=prompt,
-            retrieval_meta=retrieval_meta_total if include_retrieval_meta else None,
+            retrieval_meta=(
+                retrieval_meta_total if request.options.include_retrieval_meta else None
+            ),
         )
