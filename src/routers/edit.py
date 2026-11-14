@@ -34,7 +34,7 @@ from src.error_mapping import (
     _llm_error_to_http_exception,
 )
 from src.llm_client import LLMError, LLMFallbackError
-from src.prompt_builder import PromptBuilder
+from src.prompt_builder import BuildOptions, BuildRequest, PromptBuilder
 from src.rate_limit import RATE_LIMIT, limiter
 from src.services.edit_service import (
     _build_audience_from_request,
@@ -86,18 +86,24 @@ async def edit_text(
         audience = _build_audience_from_request(body)
         prompt_builder = get_prompt_builder(request)
 
-        prompt, retrieval_meta = prompt_builder.build(
-            text=body.text,
-            domain=body.domain,
-            intent=body.intent,
-            audience=audience,
-            overlays=body.overlays,
-            output_mode=body.output_mode,
-            include_knowledge=body.include_knowledge,
-            include_few_shot=body.include_few_shot,
-            include_retrieval_meta=True,
-            deep_semantic_search=body.deep_semantic_search,
+        build_result = prompt_builder.build_prompt(
+            BuildRequest(
+                text=body.text,
+                domain=body.domain,
+                intent=body.intent,
+                audience=audience,
+                overlays=body.overlays,
+                output_mode=body.output_mode,
+                options=BuildOptions(
+                    include_knowledge=body.include_knowledge,
+                    include_few_shot=body.include_few_shot,
+                    include_retrieval_meta=True,
+                    deep_semantic_search=body.deep_semantic_search,
+                ),
+            )
         )
+        prompt = build_result.prompt
+        retrieval_meta = build_result.retrieval_meta or {}
 
         if body.dry_run:
             return _build_dry_run_response(body, prompt, retrieval_meta)

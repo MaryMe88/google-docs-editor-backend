@@ -20,7 +20,7 @@ from fastapi.testclient import TestClient
 from src.error_mapping import _llm_error_to_http_exception
 from src.llm_client import LLMAPIError, LLMError, LLMFallbackError
 from src.main import app, lifespan
-from src.prompt_builder import PromptBuilder
+from src.prompt_builder import BuildResult, PromptBuilder
 from src.services.provider_health import (
     _PROVIDER_KEY_ENV,
     _check_providers_availability,
@@ -134,7 +134,10 @@ def test_edit_response_does_not_contain_prompt_or_content(
     Шаг 4а и 4б: ответ /api/edit не содержит полей prompt и content.
     """
     mock_builder = MagicMock()
-    mock_builder.build.return_value = ("built prompt", {"meta": "data"})
+    mock_builder.build_prompt.return_value = BuildResult(
+        prompt="built prompt",
+        retrieval_meta={"meta": "data"},
+    )
     mock_get_builder.return_value = mock_builder
 
     mock_response = MagicMock()
@@ -191,9 +194,9 @@ def test_edit_response_does_not_log_prompt_entirely(
     caplog.set_level(logging.INFO)
 
     mock_builder = MagicMock()
-    mock_builder.build.return_value = (
-        "super secret system prompt with instructions",
-        {"meta": "data"},
+    mock_builder.build_prompt.return_value = BuildResult(
+        prompt="super secret system prompt with instructions",
+        retrieval_meta={"meta": "data"},
     )
     mock_get_builder.return_value = mock_builder
 
