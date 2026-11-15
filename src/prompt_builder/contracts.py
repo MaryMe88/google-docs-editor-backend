@@ -7,9 +7,12 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 from dataclasses import dataclass, field
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from src.config_types import AudienceProfile, KnowledgeLevel
+
+if TYPE_CHECKING:
+    from src.semantic_index import SemanticIndexService
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -23,6 +26,7 @@ class BuildOptions:
     include_retrieval_meta: bool = False
     few_shot_seed: int | None = None
     deep_semantic_search: bool = False
+    semantic_index_service: SemanticIndexService | None = None
 
 
 @dataclass(frozen=True)

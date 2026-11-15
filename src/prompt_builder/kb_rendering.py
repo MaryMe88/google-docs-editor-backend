@@ -11,6 +11,7 @@ import random
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from typing import (
+    TYPE_CHECKING,
     Any,
 )
 
@@ -28,6 +29,9 @@ from src.knowledge_retrieval import (
     select_structural_by_tags_or_all,
     select_style_issues,
 )
+
+if TYPE_CHECKING:
+    from src.semantic_index import SemanticIndexService
 
 logger = logging.getLogger(__name__)
 
@@ -332,6 +336,7 @@ class ProcessContext:
     limits: LimitsConfig
     few_shot_seed: int | None = None
     semantic_rerank: bool = False
+    semantic_index_service: SemanticIndexService | None = None
 
 
 KB_BLOCK_REGISTRY: list[KBBlockConfig] = [
@@ -521,6 +526,7 @@ def _process_kb_block(config: KBBlockConfig, ctx: ProcessContext) -> int:  # noq
             char_budget=getattr(ctx.budget, "char_budget", None),
             return_meta=True,
             semantic_rerank=ctx.semantic_rerank,
+            semantic_index_service=ctx.semantic_index_service,
         )
     else:
         if not config.kb_attr:

@@ -85,6 +85,7 @@ async def edit_text(
     try:
         audience = _build_audience_from_request(body)
         prompt_builder = get_prompt_builder(request)
+        semantic_index_service = getattr(request.app.state, "semantic_index", None)
 
         build_result = prompt_builder.build_prompt(
             BuildRequest(
@@ -99,6 +100,7 @@ async def edit_text(
                     include_few_shot=body.include_few_shot,
                     include_retrieval_meta=True,
                     deep_semantic_search=body.deep_semantic_search,
+                    semantic_index_service=semantic_index_service,
                 ),
             )
         )
