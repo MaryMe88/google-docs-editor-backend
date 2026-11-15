@@ -314,63 +314,98 @@ class SemanticIndex:
 
 
 # ------------------------------------------------------------------
-# Глобальный экземпляр (singleton) — инициализируется в main.py
+# Сервис-владелец состояния (singleton) — инициализируется в main.py
 # ------------------------------------------------------------------
-_global_index: SemanticIndex | None = None
-_entries_for_index: list[dict[str, Any]] | None = None
+class SemanticIndexService:
+    """Владелец состояния SemanticIndex: записи, индекс, ленивое построение.
+
+    Заменяет прежние модульные глобалы _global_index и _entries_for_index.
+    Поведение и контракт совпадают: индекс строится лениво при первом
+    обращении ensure(), модель загружается только в момент build().
+    """
+
+    def __init__(self) -> None:
+        """Инициализирует сервис с пустым состоянием."""
+        self._index: SemanticIndex | None = None
+        self._entries: list[dict[str, Any]] | None = None
+
+    def get(self) -> SemanticIndex | None:
+        """Возвращает текущий индекс (без построения)."""
+        return self._index
+
+    def set_entries(self, entries: list[dict[str, Any]]) -> None:
+        """Сохраняет записи для ленивого построения индекса."""
+        self._entries = entries
+        logger.info(
+            "SemanticIndex: сохранено %d записей для ленивой инициализации",
+            len(entries),
+        )
+
+    def ensure(self, model_name: str) -> SemanticIndex | None:
+        """Возвращает индекс, строя его лениво при первом обращении."""
+        index = self._index
+        if index is not None and index.is_ready():
+            return index
+
+        entries = self._entries
+        if not entries:
+            logger.warning("SemanticIndex is not initialized: no entries were stored for indexing")
+            return None
+
+        logger.info("SemanticIndex: lazy initialization on first request")
+        index = SemanticIndex(model_name=model_name)
+        index.build(entries)
+        if not index.is_ready():
+            return None
+        self._index = index
+        return index
+
+    def reset(self) -> None:
+        """Сбрасывает состояние сервиса (для тестов)."""
+        self._index = None
+        self._entries = None
+
+    def init(
+        self,
+        all_entries: list[dict[str, Any]],
+        model_name: str,
+        *,
+        force_rebuild: bool = False,
+    ) -> SemanticIndex:
+        """Создаёт и строит индекс немедленно (eager)."""
+        index = SemanticIndex(model_name=model_name)
+        index.build(all_entries, force_rebuild=force_rebuild)
+        self._index = index
+        logger.info(
+            "SemanticIndex: глобальный индекс готов (%d записей)",
+            len(all_entries),
+        )
+        return index
+
+
+_default_service = SemanticIndexService()
 
 
 def get_semantic_index() -> SemanticIndex | None:
     """Возвращает глобальный индекс, если он инициализирован."""
-    return _global_index
+    return _default_service.get()
 
 
 def set_semantic_entries(entries: list[dict[str, Any]]) -> None:
-    """
-    Сохраняет записи для ленивого построения индекса.
-    Вызывается один раз при старте приложения после загрузки полной KB.
-    """
-    global _entries_for_index
-    _entries_for_index = entries
-    logger.info(
-        "SemanticIndex: сохранено %d записей для ленивой инициализации",
-        len(entries),
-    )
+    """Сохраняет записи для ленивого построения индекса (делегирует в сервис)."""
+    _default_service.set_entries(entries)
 
 
 def ensure_semantic_index(
     model_name: str = "cointegrated/rubert-tiny2",
 ) -> SemanticIndex | None:
-    """Return the global semantic index, lazily building it if needed.
-
-    Lazily builds the index from entries previously stored via
-    set_semantic_entries(). Returns None if no entries were stored or
-    if the index could not be built.
-    """
-    global _global_index
-
-    index = _global_index
-    if index is not None and index.is_ready():
-        return index
-
-    if not _entries_for_index:
-        logger.warning("SemanticIndex is not initialized: no entries were stored for indexing")
-        return None
-
-    logger.info("SemanticIndex: lazy initialization on first request")
-    index = SemanticIndex(model_name=model_name)
-    index.build(_entries_for_index)
-    if not index.is_ready():
-        return None
-    _global_index = index
-    return index
+    """Возвращает глобальный индекс, строя его лениво при необходимости."""
+    return _default_service.ensure(model_name)
 
 
 def reset_semantic_index() -> None:
-    """Reset global semantic index state (intended for tests)."""
-    global _global_index, _entries_for_index
-    _global_index = None
-    _entries_for_index = None
+    """Сбрасывает глобальное состояние SemanticIndex (для тестов)."""
+    _default_service.reset()
 
 
 def init_semantic_index(
@@ -379,13 +414,9 @@ def init_semantic_index(
     *,
     force_rebuild: bool = False,
 ) -> SemanticIndex:
-    """
-    Инициализирует и строит глобальный семантический индекс.
-    Вызывается один раз при старте приложения (например, в lifespan FastAPI).
-    """
-    global _global_index
-    index = SemanticIndex(model_name=model_name)
-    index.build(all_entries, force_rebuild=force_rebuild)
-    _global_index = index
-    logger.info("SemanticIndex: глобальный индекс готов (%d записей)", len(all_entries))
-    return index
+    """Создаёт и строит глобальный индекс немедленно (eager)."""
+    return _default_service.init(
+        all_entries,
+        model_name,
+        force_rebuild=force_rebuild,
+    )
