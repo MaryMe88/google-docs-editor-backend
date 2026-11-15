@@ -365,6 +365,10 @@ class SemanticIndexService:
         self._index = None
         self._entries = None
 
+    def has_entries(self) -> bool:
+        """Возвращает True, если записи для ленивого построения сохранены."""
+        return bool(self._entries)
+
     def init(
         self,
         all_entries: list[dict[str, Any]],
@@ -384,6 +388,16 @@ class SemanticIndexService:
 
 
 _default_service = SemanticIndexService()
+
+
+def get_default_semantic_index_service() -> SemanticIndexService:
+    """Возвращает сервис-владелец состояния SemanticIndex по умолчанию.
+
+    Используется HTTP-слоем для привязки к app.state и явной передачи
+    вглубь цепочки. Возвращает тот же экземпляр, над которым работают
+    модульные обёртки get_semantic_index/set_semantic_entries/...
+    """
+    return _default_service
 
 
 def get_semantic_index() -> SemanticIndex | None:

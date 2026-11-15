@@ -22,7 +22,7 @@ from src.rate_limit import limiter
 from src.routers.edit import router as edit_router
 from src.routers.health import router as health_router
 from src.scoring_weights import load_scoring_weights
-from src.semantic_index import set_semantic_entries
+from src.semantic_index import get_default_semantic_index_service, set_semantic_entries
 from src.shared_contracts import (
     ALLOWED_DOMAINS,
     ALLOWED_INTENTS,
@@ -125,6 +125,7 @@ async def lifespan(app: FastAPI):
 
     logger.info("PromptBuilder initialized successfully")
     app.state.prompt_builder = prompt_builder
+    app.state.semantic_index = get_default_semantic_index_service()
 
     try:
         prompt_builder.load_full_kb()
