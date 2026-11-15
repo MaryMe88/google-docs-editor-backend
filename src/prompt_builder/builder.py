@@ -12,6 +12,7 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import (
+    TYPE_CHECKING,
     Any,
     Literal,
     cast,
@@ -42,6 +43,9 @@ from src.shared_contracts import (
     ALLOWED_OUTPUT_MODES,
     ALLOWED_OVERLAYS,
 )
+
+if TYPE_CHECKING:
+    from src.semantic_index import SemanticIndexService
 
 from ._patchable import (
     KB_BLOCK_REGISTRY,
@@ -88,6 +92,7 @@ class KnowledgeBlockRequest:
     editorial_enabled: bool = False
     return_trace: bool = False
     semantic_rerank: bool = False
+    semantic_index_service: SemanticIndexService | None = None
 
 
 def _wrap_user_content(label: str, content: str) -> str:
@@ -720,6 +725,7 @@ class PromptBuilder:
             limits=effective_limits,
             few_shot_seed=req.few_shot_seed,
             semantic_rerank=req.semantic_rerank,
+            semantic_index_service=req.semantic_index_service,
         )
 
         before_len = len("".join(lines))
@@ -1111,6 +1117,7 @@ class PromptBuilder:
             editorial_enabled=features["editorial_enabled"],
             return_trace=True,
             semantic_rerank=request.options.deep_semantic_search,
+            semantic_index_service=request.options.semantic_index_service,
         )
         block_result = cast(
             tuple[str, dict[str, Any], int, AssemblyTrace | None],

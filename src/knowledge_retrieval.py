@@ -15,6 +15,7 @@ from collections.abc import Iterable
 from dataclasses import dataclass, replace
 from enum import Enum
 from typing import (
+    TYPE_CHECKING,
     Any,
     Literal,
     NamedTuple,
@@ -23,6 +24,9 @@ from typing import (
 
 from src.scoring_weights import get_scoring_weight
 from src.tag_registry import normalize_tag
+
+if TYPE_CHECKING:
+    from src.semantic_index import SemanticIndexService
 
 logger = logging.getLogger(__name__)
 
@@ -475,13 +479,18 @@ def _semantic_rerank(
     query: str,
     semantic_weight: float = 0.35,
     top_k_factor: int = 3,
+    *,
+    service: SemanticIndexService | None = None,
 ) -> list[dict[str, Any]]:
     if not entries or not query or not query.strip() or semantic_weight <= 0:
         return entries
     try:
-        from src.semantic_index import ensure_semantic_index
+        if service is not None:
+            index = service.ensure("cointegrated/rubert-tiny2")
+        else:
+            from src.semantic_index import ensure_semantic_index
 
-        index = ensure_semantic_index()
+            index = ensure_semantic_index()
         if index is None or not index.is_ready():
             return entries
     except ImportError:
@@ -792,6 +801,7 @@ def select_entries(
     *,
     return_meta: Literal[True] = True,
     semantic_rerank: bool = False,
+    semantic_index_service: SemanticIndexService | None = None,
 ) -> RetrievalResult: ...
 
 
@@ -809,6 +819,7 @@ def select_entries(
     *,
     return_meta: bool = False,
     semantic_rerank: bool = False,
+    semantic_index_service: SemanticIndexService | None = None,
 ) -> list[dict[str, Any]]: ...
 
 
@@ -825,6 +836,7 @@ def select_entries(
     *,
     return_meta: bool = False,
     semantic_rerank: bool = False,
+    semantic_index_service: SemanticIndexService | None = None,
 ) -> list[dict[str, Any]] | RetrievalResult:
     """Отбирает записи из KB по категории, тексту и тегам с учётом fallback.
 
@@ -862,6 +874,7 @@ def select_entries(
             min_score=min_score,
             char_budget=char_budget,
             semantic_rerank=semantic_rerank,
+            semantic_index_service=semantic_index_service,
         )
 
     p, entries_source, normalized_text, effective_tags, early = _resolve_selection_inputs(
@@ -890,7 +903,12 @@ def select_entries(
         params=p,
     )
     result = _apply_semantic_rerank_if_needed(
-        raw, category, text, semantic_rerank=p.semantic_rerank, return_meta=False
+        raw,
+        category,
+        text,
+        semantic_rerank=p.semantic_rerank,
+        return_meta=False,
+        semantic_index_service=semantic_index_service,
     )
     if not isinstance(result, list):
         raise RuntimeError(
@@ -970,6 +988,7 @@ def _apply_semantic_rerank_if_needed(
     *,
     semantic_rerank: bool,
     return_meta: bool,
+    semantic_index_service: SemanticIndexService | None = None,
 ) -> list[dict[str, Any]] | RetrievalResult:
     if category == "structural":
         return raw
@@ -980,14 +999,19 @@ def _apply_semantic_rerank_if_needed(
                 "_apply_semantic_rerank_if_needed: expected RetrievalResult "
                 f"when return_meta=True, got {type(raw).__name__}"
             )
-        reranked = _semantic_rerank(raw.entries, text, semantic_weight=weight)
+        reranked = _semantic_rerank(
+            raw.entries,
+            text,
+            semantic_weight=weight,
+            service=semantic_index_service,
+        )
         return RetrievalResult(reranked, raw.stage, raw.dropped_count)
     if not isinstance(raw, list):
         raise RuntimeError(
             "_apply_semantic_rerank_if_needed: expected list "
             f"when return_meta=False, got {type(raw).__name__}"
         )
-    return _semantic_rerank(raw, text, semantic_weight=weight)
+    return _semantic_rerank(raw, text, semantic_weight=weight, service=semantic_index_service)
 
 
 def select_entries_with_meta(
@@ -1002,6 +1026,7 @@ def select_entries_with_meta(
     char_budget: int | None = None,
     *,
     semantic_rerank: bool = False,
+    semantic_index_service: SemanticIndexService | None = None,
 ) -> RetrievalResult:
     """Стабильный контракт: всегда возвращает RetrievalResult.
 
@@ -1056,7 +1081,12 @@ def select_entries_with_meta(
         params=p,
     )
     reranked = _apply_semantic_rerank_if_needed(
-        raw, category, text, semantic_rerank=p.semantic_rerank, return_meta=True
+        raw,
+        category,
+        text,
+        semantic_rerank=p.semantic_rerank,
+        return_meta=True,
+        semantic_index_service=semantic_index_service,
     )
     if not isinstance(reranked, RetrievalResult):
         raise RuntimeError(
@@ -1082,6 +1112,7 @@ def select_grammar_rules(
     *,
     return_meta: bool = False,
     semantic_rerank: bool = False,
+    semantic_index_service: SemanticIndexService | None = None,
 ) -> list[dict[str, Any]] | RetrievalResult:
     """Обёртка для обратной совместимости: select_entries для категории "grammar"."""
     params = SelectionParams(
@@ -1103,6 +1134,7 @@ def select_grammar_rules(
         limit=limit,
         return_meta=return_meta,
         semantic_rerank=semantic_rerank,
+        semantic_index_service=semantic_index_service,
     )
 
 
@@ -1117,6 +1149,7 @@ def select_style_issues(
     *,
     return_meta: bool = False,
     semantic_rerank: bool = False,
+    semantic_index_service: SemanticIndexService | None = None,
 ) -> list[dict[str, Any]] | RetrievalResult:
     """Обёртка для обратной совместимости: select_entries для категории "style"."""
     params = SelectionParams(
@@ -1138,6 +1171,7 @@ def select_style_issues(
         limit=limit,
         return_meta=return_meta,
         semantic_rerank=semantic_rerank,
+        semantic_index_service=semantic_index_service,
     )
 
 
@@ -1152,6 +1186,7 @@ def select_logic_issues(
     *,
     return_meta: bool = False,
     semantic_rerank: bool = False,
+    semantic_index_service: SemanticIndexService | None = None,
 ) -> list[dict[str, Any]] | RetrievalResult:
     """Обёртка для обратной совместимости: select_entries для категории "logic" (limit по умолчанию 8)."""
     params = SelectionParams(
@@ -1173,6 +1208,7 @@ def select_logic_issues(
         limit=limit,
         return_meta=return_meta,
         semantic_rerank=semantic_rerank,
+        semantic_index_service=semantic_index_service,
     )
 
 
