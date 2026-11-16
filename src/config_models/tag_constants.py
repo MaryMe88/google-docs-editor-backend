@@ -10,7 +10,7 @@ tag_registry ↔ config_types ↔ config_models.tags.
 from __future__ import annotations
 
 import re
-from collections.abc import Iterable
+from collections.abc import Iterable, Iterator
 from typing import Any
 
 _ALIAS_MAP: dict[str, str] = {
@@ -116,7 +116,53 @@ def build_known_tags(mapping: dict[str, Any]) -> set[str]:
     return known
 
 
-def get_canonical_tag_names(  # noqa: C901  # see #93
+def _iter_primary_tag_payloads(
+    canonical_tags: dict[str, dict[str, Any]],
+) -> Iterator[Any]:
+    """Yields payloads (dict-with-primary или list) из вложенной структуры CANONICAL_TAGS."""
+    for category_data in canonical_tags.values():
+        if not isinstance(category_data, dict):
+            continue
+        yield from category_data.values()
+
+
+def _extract_primary_tags(payload: Any) -> Iterator[str]:
+    """Yields raw primary tag strings из одного payload."""
+    if isinstance(payload, dict):
+        for tag in payload.get("primary", []):
+            if isinstance(tag, str):
+                yield tag
+    elif isinstance(payload, list):
+        for tag in payload:
+            if isinstance(tag, str):
+                yield tag
+
+
+def _normalize_canonical_primary_tag(tag: str, known_aliases: set[str]) -> str | None:
+    """Нормализует один primary-тег; None если это known alias."""
+    norm = normalize_tag(tag)
+    if norm == "basicedit":
+        norm = "editorial"
+    if norm in known_aliases:
+        return None
+    return norm
+
+
+def _collect_canonical_primary_tags(
+    canonical_tags: dict[str, dict[str, Any]],
+    known_aliases: set[str],
+) -> set[str]:
+    """Собирает нормализованные primary-теги, отфильтровывая known_aliases."""
+    result: set[str] = set()
+    for payload in _iter_primary_tag_payloads(canonical_tags):
+        for tag in _extract_primary_tags(payload):
+            norm = _normalize_canonical_primary_tag(tag, known_aliases)
+            if norm is not None:
+                result.add(norm)
+    return result
+
+
+def get_canonical_tag_names(
     canonical_tags: dict[str, dict[str, Any]] | None = None,
 ) -> set[str]:
     """
@@ -140,26 +186,4 @@ def get_canonical_tag_names(  # noqa: C901  # see #93
         "cleanup",
         "story",
     }
-
-    tags: set[str] = set()
-    for category_data in canonical_tags.values():  # noqa: PLR1702  # see #93
-        if not isinstance(category_data, dict):
-            continue
-        for payload in category_data.values():
-            if isinstance(payload, dict):
-                for tag in payload.get("primary", []):
-                    if isinstance(tag, str):
-                        norm = normalize_tag(tag)
-                        if norm == "basicedit":
-                            norm = "editorial"
-                        if norm not in known_aliases:
-                            tags.add(norm)
-            elif isinstance(payload, list):
-                for tag in payload:
-                    if isinstance(tag, str):
-                        norm = normalize_tag(tag)
-                        if norm == "basicedit":
-                            norm = "editorial"
-                        if norm not in known_aliases:
-                            tags.add(norm)
-    return tags
+    return _collect_canonical_primary_tags(canonical_tags, known_aliases)
