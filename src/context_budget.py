@@ -371,7 +371,89 @@ def _get_mode(provider_upper: str) -> ContextBudgetMode:
 # ---------------------------------------------------------------------------
 
 
-def resolve_context_budget(  # noqa: C901  # see #93
+def _resolve_budget_inputs(
+    *,
+    provider: str,
+    model: str | None,
+    context_window: int | None,
+    safety_margin: int | None,
+    mode: ContextBudgetMode | None,
+) -> tuple[int, int, ContextBudgetMode]:
+    """Дополняет параметры бюджета значениями из env, если что-то не задано."""
+    if context_window is None or safety_margin is None or mode is None:
+        profile = get_context_profile_from_env(provider, model)
+        if context_window is None:
+            context_window = profile.context_window
+        if safety_margin is None:
+            safety_margin = profile.safety_margin
+        if mode is None:
+            mode = profile.mode
+    return context_window, safety_margin, mode
+
+
+def _raise_if_input_too_large(
+    *,
+    provider: str,
+    model: str | None,
+    input_tokens: int,
+    requested_output: int,
+    available: int,
+    context_window: int,
+    safety_margin: int,
+    mode: ContextBudgetMode,
+) -> None:
+    """В режиме enforce выбрасывает LLMContextLimitError, если промпт не помещается."""
+    if input_tokens < context_window - safety_margin:
+        return
+    if mode == "enforce":
+        raise LLMContextLimitError(
+            provider=provider,
+            model=model,
+            input_tokens_estimate=input_tokens,
+            requested_output_tokens=requested_output,
+            available_output_tokens=available,
+            context_window=context_window,
+            reason="input_too_large",
+            mode=mode,
+        )
+
+
+def _raise_if_output_too_small(
+    *,
+    provider: str,
+    model: str | None,
+    input_tokens: int,
+    requested_output: int,
+    available: int,
+    context_window: int,
+    mode: ContextBudgetMode,
+) -> None:
+    """В режиме enforce выбрасывает LLMContextLimitError, если available < MIN_USEFUL_OUTPUT_TOKENS."""
+    if available >= MIN_USEFUL_OUTPUT_TOKENS:
+        return
+    if mode == "enforce":
+        raise LLMContextLimitError(
+            provider=provider,
+            model=model,
+            input_tokens_estimate=input_tokens,
+            requested_output_tokens=requested_output,
+            available_output_tokens=available,
+            context_window=context_window,
+            reason="insufficient_output_budget",
+            mode=mode,
+        )
+
+
+def _compute_effective_output(requested_output: int, available: int) -> tuple[int, bool]:
+    """Возвращает (effective_output, was_capped)."""
+    if available < 0:
+        return 0, True
+    if requested_output <= available:
+        return requested_output, False
+    return available, True
+
+
+def resolve_context_budget(
     *,
     provider: str,
     model: str | None,
@@ -385,92 +467,50 @@ def resolve_context_budget(  # noqa: C901  # see #93
     Рассчитывает итоговый контекстный бюджет.
 
     Алгоритм:
-    1. Если context_window или safety_margin не переданы, загружаем из env
-       (через get_context_profile_from_env).
+    1. Если context_window или safety_margin не переданы, загружаем из env.
     2. Оцениваем входные токены.
     3. Оцениваем запрошенный выходной бюджет (на основе source_text).
-    4. Вычисляем доступное место под ответ:
-         available = context_window - input_tokens_estimate - safety_margin
-    5. Если available < MIN_USEFUL_OUTPUT_TOKENS:
-         - в режиме enforce — выбрасываем LLMContextLimitError
-         - в режиме observe/cap — логируем предупреждение, но не выбрасываем
-           (будет обработано выше)
-    6. Иначе effective = min(requested_output_tokens, available).
-
-    Args:
-        provider: Имя провайдера
-        model: Имя модели (None = default)
-        prompt: Полный промпт
-        source_text: Исходный текст пользователя
-        context_window: Размер контекстного окна (если None — берём из env)
-        safety_margin: Запас безопасности (если None — берём из env)
-        mode: Режим работы (если None — берём из env)
-
-    Returns:
-        ContextBudget с результатами расчёта
+    4. available = context_window - input_tokens - safety_margin.
+    5. Если input_tokens >= context_window - safety_margin и mode == "enforce" — raise.
+    6. Если available < MIN_USEFUL_OUTPUT_TOKENS и mode == "enforce" — raise.
+    7. Иначе effective = min(requested_output, available) или 0 при available < 0.
 
     Raises:
-        LLMContextLimitError: Если запрос не помещается в контекстное окно
-                              и режим == "enforce"
+        LLMContextLimitError: Если запрос не помещается и режим == "enforce".
     """
-    # Загружаем профиль из env, если не переданы параметры
-    if context_window is None or safety_margin is None or mode is None:
-        profile = get_context_profile_from_env(provider, model)
-        if context_window is None:
-            context_window = profile.context_window
-        if safety_margin is None:
-            safety_margin = profile.safety_margin
-        if mode is None:
-            mode = profile.mode
+    context_window, safety_margin, mode = _resolve_budget_inputs(
+        provider=provider,
+        model=model,
+        context_window=context_window,
+        safety_margin=safety_margin,
+        mode=mode,
+    )
 
     input_tokens = estimate_input_tokens(prompt)
     requested_output = estimate_edit_output_tokens(source_text)
-
     available = context_window - input_tokens - safety_margin
 
-    # Проверка: если сам промпт не помещается
-    if input_tokens >= context_window - safety_margin:
-        if mode == "enforce":
-            raise LLMContextLimitError(
-                provider=provider,
-                model=model,
-                input_tokens_estimate=input_tokens,
-                requested_output_tokens=requested_output,
-                available_output_tokens=available,
-                context_window=context_window,
-                reason="input_too_large",
-                mode=mode,
-            )
-        # В режимах observe/cap — просто возвращаем бюджет с available < 0
-        # Это позволит вызывающему коду залогировать и принять решение
+    _raise_if_input_too_large(
+        provider=provider,
+        model=model,
+        input_tokens=input_tokens,
+        requested_output=requested_output,
+        available=available,
+        context_window=context_window,
+        safety_margin=safety_margin,
+        mode=mode,
+    )
+    _raise_if_output_too_small(
+        provider=provider,
+        model=model,
+        input_tokens=input_tokens,
+        requested_output=requested_output,
+        available=available,
+        context_window=context_window,
+        mode=mode,
+    )
 
-    # Проверка: недостаточно места для полезного ответа
-    if available < MIN_USEFUL_OUTPUT_TOKENS:
-        if mode == "enforce":
-            raise LLMContextLimitError(
-                provider=provider,
-                model=model,
-                input_tokens_estimate=input_tokens,
-                requested_output_tokens=requested_output,
-                available_output_tokens=available,
-                context_window=context_window,
-                reason="insufficient_output_budget",
-                mode=mode,
-            )
-        # В режимах observe/cap — продолжаем, но effective_output будет = available
-        # (если доступно > 0) или 0, если available отрицательный.
-
-    # Определяем эффективный выходной бюджет
-    if available < 0:
-        # Даже если режим observe, мы не можем дать отрицательный max_tokens
-        effective_output = 0
-        was_capped = True
-    elif requested_output <= available:
-        effective_output = requested_output
-        was_capped = False
-    else:
-        effective_output = available
-        was_capped = True
+    effective_output, was_capped = _compute_effective_output(requested_output, available)
 
     return ContextBudget(
         input_tokens_estimate=input_tokens,
