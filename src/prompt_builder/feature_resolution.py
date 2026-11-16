@@ -279,7 +279,129 @@ def _handle_explicit_suppress_in_conflict(
     return None
 
 
-def _resolve_overlay_conflicts(  # noqa: C901  # see #93
+def _collect_conflict_pairs(
+    effective_overlays: list[str],
+    overlay_map: dict[str, OverlayConfig],
+) -> list[tuple[str, str]]:
+    """Собирает пары (ov, conflict_name) активных конфликтов между оверлеями."""
+    pairs: list[tuple[str, str]] = []
+    for ov in effective_overlays:
+        cfg = overlay_map.get(ov)
+        if not cfg or not cfg.conflicts_with:
+            continue
+        for conflict in cfg.conflicts_with:
+            conflict_name = _normalize_overlay_ref(conflict)
+            if conflict_name in effective_overlays and conflict_name != ov:
+                pairs.append((ov, conflict_name))
+    return pairs
+
+
+def _remove_suppressed_overlay(
+    result: FeatureResolutionResult,
+    name: str,
+    effective_overlays: list[str],
+    tags: list[str],
+    suppressed_layers: list[str],
+    warnings: list[str],
+    layer_msg: str,
+    warning_msg: str,
+    reason_code: str,
+) -> list[str]:
+    """Удаляет overlay из active-списков, логирует причину; возвращает обновлённые tags."""
+    effective_overlays.remove(name)
+    suppressed_layers.append(layer_msg)
+    warnings.append(warning_msg)
+    _add_suppression_reason(result, f"overlay:{name}", reason_code)
+    return [t for t in tags if t != name]
+
+
+def _resolve_conflict_by_priority(
+    result: FeatureResolutionResult,
+    ov: str,
+    conflict: str,
+    cfg_ov: OverlayConfig,
+    cfg_conflict: OverlayConfig,
+    effective_overlays: list[str],
+    tags: list[str],
+    suppressed_layers: list[str],
+    warnings: list[str],
+) -> tuple[list[str], list[str]] | None:
+    """Разрешает конфликт по приоритету. None — если приоритеты равны (tie-break вне)."""
+    if cfg_ov.priority > cfg_conflict.priority:
+        tags = _remove_suppressed_overlay(
+            result,
+            conflict,
+            effective_overlays,
+            tags,
+            suppressed_layers,
+            warnings,
+            layer_msg=(
+                f"overlay '{conflict}' suppressed due to conflict with '{ov}' " f"(higher priority)"
+            ),
+            warning_msg=(
+                f"Overlay conflict: '{conflict}' removed "
+                f"(priority {cfg_conflict.priority}) < "
+                f"'{ov}' (priority {cfg_ov.priority})."
+            ),
+            reason_code=ReasonCode.SUPPRESSED_BY_OVERLAY_CONFLICT,
+        )
+        return effective_overlays, tags
+
+    if cfg_conflict.priority > cfg_ov.priority:
+        tags = _remove_suppressed_overlay(
+            result,
+            ov,
+            effective_overlays,
+            tags,
+            suppressed_layers,
+            warnings,
+            layer_msg=(
+                f"overlay '{ov}' suppressed due to conflict with '{conflict}' " f"(higher priority)"
+            ),
+            warning_msg=(
+                f"Overlay conflict: '{ov}' removed "
+                f"(priority {cfg_ov.priority}) < "
+                f"'{conflict}' (priority {cfg_conflict.priority})."
+            ),
+            reason_code=ReasonCode.SUPPRESSED_BY_OVERLAY_CONFLICT,
+        )
+        return effective_overlays, tags
+
+    return None
+
+
+def _resolve_conflict_by_order(
+    result: FeatureResolutionResult,
+    ov: str,
+    conflict: str,
+    effective_overlays: list[str],
+    tags: list[str],
+    suppressed_layers: list[str],
+    warnings: list[str],
+) -> tuple[list[str], list[str]]:
+    """Tie-break при равных приоритетах: остаётся оверлей, идущий раньше в списке."""
+    if effective_overlays.index(ov) < effective_overlays.index(conflict):
+        loser, winner = conflict, ov
+    else:
+        loser, winner = ov, conflict
+    tags = _remove_suppressed_overlay(
+        result,
+        loser,
+        effective_overlays,
+        tags,
+        suppressed_layers,
+        warnings,
+        layer_msg=(
+            f"overlay '{loser}' suppressed due to conflict "
+            f"with '{winner}' (equal priority, deterministic fallback)"
+        ),
+        warning_msg=f"Overlay conflict: '{loser}' removed (equal priority, fallback).",
+        reason_code=ReasonCode.SUPPRESSED_BY_OVERLAY_CONFLICT,
+    )
+    return effective_overlays, tags
+
+
+def _resolve_overlay_conflicts(
     result: FeatureResolutionResult,
     effective_overlays: list[str],
     overlay_configs: list[OverlayConfig],
@@ -288,26 +410,16 @@ def _resolve_overlay_conflicts(  # noqa: C901  # see #93
     warnings: list[str],
 ) -> tuple[list[str], list[str]]:
     overlay_map = _build_overlay_slug_map(effective_overlays, overlay_configs)
-    conflicts_to_resolve = []
-    for ov in effective_overlays:
-        cfg = overlay_map.get(ov)
-        if cfg and cfg.conflicts_with:
-            for conflict in cfg.conflicts_with:
-                conflict_name = _normalize_overlay_ref(conflict)
-                if conflict_name in effective_overlays and conflict_name != ov:
-                    conflicts_to_resolve.append((ov, conflict_name))
+    conflicts_to_resolve = _collect_conflict_pairs(effective_overlays, overlay_map)
 
     for ov, conflict in conflicts_to_resolve:
         if ov not in effective_overlays or conflict not in effective_overlays:
             continue
-
         cfg_ov = overlay_map.get(ov)
         cfg_conflict = overlay_map.get(conflict)
-
         if cfg_ov is None or cfg_conflict is None:
             continue
 
-        # Проверяем явный suppress
         suppressed = _handle_explicit_suppress_in_conflict(
             result,
             ov,
@@ -323,69 +435,30 @@ def _resolve_overlay_conflicts(  # noqa: C901  # see #93
             effective_overlays, tags = suppressed
             continue
 
-        # Сравнение приоритетов
-        if cfg_ov.priority > cfg_conflict.priority:
-            effective_overlays.remove(conflict)
-            suppressed_layers.append(
-                f"overlay '{conflict}' suppressed due to conflict with '{ov}' (higher priority)"
-            )
-            warnings.append(
-                f"Overlay conflict: '{conflict}' removed "
-                f"(priority {cfg_conflict.priority}) < "
-                f"'{ov}' (priority {cfg_ov.priority})."
-            )
-            _add_suppression_reason(
-                result,
-                f"overlay:{conflict}",
-                ReasonCode.SUPPRESSED_BY_OVERLAY_CONFLICT,
-            )
-            tags = [t for t in tags if t != conflict]
-        elif cfg_conflict.priority > cfg_ov.priority:
-            effective_overlays.remove(ov)
-            suppressed_layers.append(
-                f"overlay '{ov}' suppressed due to conflict with '{conflict}' (higher priority)"
-            )
-            warnings.append(
-                f"Overlay conflict: '{ov}' removed "
-                f"(priority {cfg_ov.priority}) < "
-                f"'{conflict}' (priority {cfg_conflict.priority})."
-            )
-            _add_suppression_reason(
-                result,
-                f"overlay:{ov}",
-                ReasonCode.SUPPRESSED_BY_OVERLAY_CONFLICT,
-            )
-            tags = [t for t in tags if t != ov]
-        else:
-            # Equal priority fallback
-            if effective_overlays.index(ov) < effective_overlays.index(conflict):
-                effective_overlays.remove(conflict)
-                suppressed_layers.append(
-                    f"overlay '{conflict}' suppressed due to conflict "
-                    f"with '{ov}' (equal priority, deterministic fallback)"
-                )
-                warnings.append(
-                    f"Overlay conflict: '{conflict}' removed (equal priority, fallback)."
-                )
-                _add_suppression_reason(
-                    result,
-                    f"overlay:{conflict}",
-                    ReasonCode.SUPPRESSED_BY_OVERLAY_CONFLICT,
-                )
-                tags = [t for t in tags if t != conflict]
-            else:
-                effective_overlays.remove(ov)
-                suppressed_layers.append(
-                    f"overlay '{ov}' suppressed due to conflict "
-                    f"with '{conflict}' (equal priority, deterministic fallback)"
-                )
-                warnings.append(f"Overlay conflict: '{ov}' removed (equal priority, fallback).")
-                _add_suppression_reason(
-                    result,
-                    f"overlay:{ov}",
-                    ReasonCode.SUPPRESSED_BY_OVERLAY_CONFLICT,
-                )
-                tags = [t for t in tags if t != ov]
+        by_priority = _resolve_conflict_by_priority(
+            result,
+            ov,
+            conflict,
+            cfg_ov,
+            cfg_conflict,
+            effective_overlays,
+            tags,
+            suppressed_layers,
+            warnings,
+        )
+        if by_priority is not None:
+            effective_overlays, tags = by_priority
+            continue
+
+        effective_overlays, tags = _resolve_conflict_by_order(
+            result,
+            ov,
+            conflict,
+            effective_overlays,
+            tags,
+            suppressed_layers,
+            warnings,
+        )
 
     return effective_overlays, tags
 
