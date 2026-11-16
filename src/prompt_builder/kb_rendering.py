@@ -150,39 +150,55 @@ def _append_editorial_entries(lines: list[str], title: str, entries: list[dict[s
             lines.append("- " + " | ".join(fragments))
 
 
-def _append_case_study_entries(lines: list[str], title: str, entries: list[dict[str, Any]]) -> None:  # noqa: C901  # see #93
+def _format_case_study_header(entry: dict[str, Any]) -> str:
+    """Собирает header case-study: «- name: description» / «- name» / «- description»."""
+    name = str(entry.get("name", "")).strip()
+    description = str(entry.get("description", "")).strip()
+    if name and description:
+        return f"- {name}: {description}"
+    if name:
+        return f"- {name}"
+    if description:
+        return f"- {description}"
+    return "-"
+
+
+def _append_case_study_constraints(lines: list[str], constraints: Any) -> None:
+    """Пишет до 4 непустых constraints в формате «  Ограничение: ...»."""
+    if not isinstance(constraints, list):
+        return
+    for constraint in constraints[:4]:
+        text = str(constraint).strip()
+        if text:
+            lines.append(f"  Ограничение: {text}")
+
+
+def _append_case_study_sections(lines: list[str], sections: Any) -> None:
+    """Пишет до 8 секций в формате «  N. name — goal» + опциональный «     Ориентир: hint»."""
+    if not isinstance(sections, list):
+        return
+    for index, section in enumerate(sections[:8], start=1):
+        if not isinstance(section, dict):
+            continue
+        section_name = str(section.get("name", "")).strip()
+        goal = str(section.get("goal", "")).strip()
+        hint = str(section.get("hint", "")).strip()
+        if not (section_name or goal):
+            continue
+        parts = [p for p in (section_name, goal) if p]
+        lines.append(f"  {index}. " + " — ".join(parts))
+        if hint:
+            lines.append(f"     Ориентир: {hint}")
+
+
+def _append_case_study_entries(lines: list[str], title: str, entries: list[dict[str, Any]]) -> None:
     if not entries:
         return
     lines.append(title)
     for entry in entries:
-        name = str(entry.get("name", "")).strip()
-        description = str(entry.get("description", "")).strip()
-        header = f"- {name}" if name else "-"
-        if description:
-            header = f"{header}: {description}" if name else f"- {description}"
-        lines.append(header)
-
-        constraints = entry.get("constraints", [])
-        if isinstance(constraints, list):
-            for constraint in constraints[:4]:
-                text = str(constraint).strip()
-                if text:
-                    lines.append(f"  Ограничение: {text}")
-
-        sections = entry.get("sections", [])
-        if isinstance(sections, list):
-            for index, section in enumerate(sections[:8], start=1):
-                if not isinstance(section, dict):
-                    continue
-                section_name = str(section.get("name", "")).strip()
-                goal = str(section.get("goal", "")).strip()
-                hint = str(section.get("hint", "")).strip()
-                if not (section_name or goal):
-                    continue
-                parts = [p for p in (section_name, goal) if p]
-                lines.append(f"  {index}. " + " — ".join(parts))
-                if hint:
-                    lines.append(f"     Ориентир: {hint}")
+        lines.append(_format_case_study_header(entry))
+        _append_case_study_constraints(lines, entry.get("constraints", []))
+        _append_case_study_sections(lines, entry.get("sections", []))
 
 
 def _append_evaluation_techniques(lines: list[str], title: str, data: dict[str, Any]) -> None:  # noqa: C901  # see #93
