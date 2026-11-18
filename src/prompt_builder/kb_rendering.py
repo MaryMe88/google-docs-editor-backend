@@ -515,25 +515,19 @@ def _derive_seed(text: str) -> int:
     return int(digest[:8], 16)
 
 
-def _process_kb_block(config: KBBlockConfig, ctx: ProcessContext) -> int:  # noqa: C901  # see #93
-    """
-    Обрабатывает один блок знаний: выполняет retrieval, рендерит правила и few-shot.
-    Возвращает обновлённое количество использованных few-shot примеров.
-    """
-    # Guard: блок зарегистрирован, но не сконфигурирован (например,
-    # evaluation_techniques — см. отчёт 5.3). Пока retrieval/append не
-    # подключены, безопасно пропускаем, чтобы не упасть с
-    # TypeError: 'NoneType' object is not callable.
-    if config.retrieval_fn is None or config.append_fn is None:
-        return ctx.total_few_shot_used
-
+def _run_block_retrieval(
+    config: KBBlockConfig,
+    ctx: ProcessContext,
+    retrieval_fn: Callable,
+) -> tuple[list[dict[str, Any]], FallbackStage, int] | None:
+    """Выполняет retrieval для блока. None — если блок не должен попадать в промпт."""
     if not config.uses_structural_call:
         candidate_limit = (
             getattr(ctx.limits, config.candidate_attr) if config.candidate_attr else None
         )
         if candidate_limit is None:
             candidate_limit = DEFAULT_CANDIDATE_LIMIT
-        result = config.retrieval_fn(
+        result = retrieval_fn(
             kb=ctx.kb,
             text=ctx.text,
             tags=ctx.primary_tags,
@@ -546,11 +540,11 @@ def _process_kb_block(config: KBBlockConfig, ctx: ProcessContext) -> int:  # noq
         )
     else:
         if not config.kb_attr:
-            return ctx.total_few_shot_used
+            return None
         entries_source = ctx.kb.get(config.kb_attr)
         if not entries_source:
-            return ctx.total_few_shot_used
-        result = config.retrieval_fn(
+            return None
+        result = retrieval_fn(
             entries=entries_source,
             tags=ctx.primary_tags,
             limit=ctx.budget.entry_limit,
@@ -558,24 +552,36 @@ def _process_kb_block(config: KBBlockConfig, ctx: ProcessContext) -> int:  # noq
             char_budget=getattr(ctx.budget, "char_budget", None),
             return_meta=True,
         )
+    return _unpack_retrieval_result(result)
 
-    entries, stage, dropped = _unpack_retrieval_result(result)
-    pair_entries = [e for e in entries if _has_few_shot_pair(e)]
-    rule_entries = [e for e in entries if not _has_few_shot_pair(e)]
-    few_shot_examples = []
-    if ctx.include_few_shot:
-        allowed = min(3, 5 - ctx.total_few_shot_used)
-        if allowed > 0:
-            few_shot_examples = _select_few_shot_examples(
-                pair_entries, allowed, seed=ctx.few_shot_seed
-            )
 
+def _select_block_few_shot(
+    ctx: ProcessContext, pair_entries: list[dict[str, Any]]
+) -> list[dict[str, Any]]:
+    """Выбирает few-shot примеры для блока согласно include_few_shot и лимитам."""
+    if not ctx.include_few_shot:
+        return []
+    allowed = min(3, 5 - ctx.total_few_shot_used)
+    if allowed <= 0:
+        return []
+    return _select_few_shot_examples(pair_entries, allowed, seed=ctx.few_shot_seed)
+
+
+def _render_block_content(
+    ctx: ProcessContext,
+    config: KBBlockConfig,
+    append_fn: Callable,
+    rule_entries: list[dict[str, Any]],
+    few_shot_examples: list[dict[str, Any]],
+    stage: FallbackStage,
+) -> None:
+    """Пишет в ctx.lines confidence note, rule entries и few-shot примеры."""
     confidence_note = _get_confidence_note(stage)
     if (rule_entries or few_shot_examples) and confidence_note:
         ctx.lines.append(confidence_note)
 
     if rule_entries:
-        config.append_fn(ctx.lines, config.title, rule_entries)
+        append_fn(ctx.lines, config.title, rule_entries)
 
     if few_shot_examples:
         ctx.lines.append("Примеры редактирования:")
@@ -583,8 +589,17 @@ def _process_kb_block(config: KBBlockConfig, ctx: ProcessContext) -> int:  # noq
             ctx.lines.append(_format_few_shot_example(ex))
         ctx.lines.append("")
 
-    new_total = ctx.total_few_shot_used + len(few_shot_examples)
 
+def _record_block_meta(
+    ctx: ProcessContext,
+    config: KBBlockConfig,
+    entries: list[dict[str, Any]],
+    rule_entries: list[dict[str, Any]],
+    few_shot_examples: list[dict[str, Any]],
+    stage: FallbackStage,
+    dropped: int,
+) -> None:
+    """Записывает метаданные блока в ctx.meta и логирует truncation."""
     ctx.meta[config.name] = {
         "stage": stage.value,
         "entries_count": len(entries),
@@ -595,7 +610,6 @@ def _process_kb_block(config: KBBlockConfig, ctx: ProcessContext) -> int:  # noq
         "entry_names": [e.get("name") for e in entries[:5] if e.get("name")],
         "truncated_count": dropped,
     }
-
     if dropped > 0:
         logger.info(
             "Char budget truncated %d records for block='%s'",
@@ -603,6 +617,13 @@ def _process_kb_block(config: KBBlockConfig, ctx: ProcessContext) -> int:  # noq
             config.name,
         )
 
+
+def _warn_if_block_empty(
+    ctx: ProcessContext,
+    config: KBBlockConfig,
+    stage: FallbackStage,
+) -> None:
+    """Предупреждает о пустом/нейтральном retrieval для блока (диагностика)."""
     if stage in (FallbackStage.EMPTY, FallbackStage.NEUTRAL):
         _warn_if_empty_retrieval(
             block=config.name,
@@ -614,4 +635,30 @@ def _process_kb_block(config: KBBlockConfig, ctx: ProcessContext) -> int:  # noq
             primary_tags=ctx.primary_tags,
         )
 
+
+def _process_kb_block(config: KBBlockConfig, ctx: ProcessContext) -> int:
+    """
+    Обрабатывает один блок знаний: выполняет retrieval, рендерит правила и few-shot.
+    Возвращает обновлённое количество использованных few-shot примеров.
+    """
+    # Guard: блок зарегистрирован, но не сконфигурирован (например,
+    # evaluation_techniques — см. отчёт 5.3). Пока retrieval/append не
+    # подключены, безопасно пропускаем.
+    if config.retrieval_fn is None or config.append_fn is None:
+        return ctx.total_few_shot_used
+
+    retrieved = _run_block_retrieval(config, ctx, config.retrieval_fn)
+    if retrieved is None:
+        return ctx.total_few_shot_used
+    entries, stage, dropped = retrieved
+
+    pair_entries = [e for e in entries if _has_few_shot_pair(e)]
+    rule_entries = [e for e in entries if not _has_few_shot_pair(e)]
+
+    few_shot_examples = _select_block_few_shot(ctx, pair_entries)
+    _render_block_content(ctx, config, config.append_fn, rule_entries, few_shot_examples, stage)
+    _record_block_meta(ctx, config, entries, rule_entries, few_shot_examples, stage, dropped)
+    _warn_if_block_empty(ctx, config, stage)
+
+    new_total = ctx.total_few_shot_used + len(few_shot_examples)
     return new_total
