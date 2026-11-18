@@ -172,50 +172,65 @@ def _extract_upstream_status(error: LLMError) -> int | None:
     return None
 
 
-def _classify_error(error: LLMError) -> str:  # noqa: C901  # see #93
+def _classify_cause_if_llm_error(error: LLMError) -> str | None:
+    """Рекурсивная классификация по __cause__, если cause — LLMError. Иначе None."""
+    cause = error.__cause__
+    if cause is None:
+        return None
+    if isinstance(cause, LLMInvalidResponseError):
+        return "invalid_response"
+    if isinstance(cause, LLMError):
+        return _classify_error(cause)
+    return None
+
+
+def _looks_like_context_limit(message: str) -> bool:
+    """True, если сообщение содержит фразы про context limit."""
+    phrases = (
+        "context length",
+        "context window",
+        "maximum context",
+        "max tokens",
+        "token limit",
+        "too many tokens",
+    )
+    lowered = message.lower()
+    return any(phrase in lowered for phrase in phrases)
+
+
+def _classify_api_status(error: LLMAPIError) -> str:
+    """Классифицирует LLMAPIError по status_code и тексту сообщения."""
+    status = _extract_upstream_status(error)
+    if status == 429:
+        return "rate_limit"
+    if status == 401 or status == 403:
+        return "authentication"
+    if status == 413:
+        return "context_limit"
+    if status and 500 <= status < 600:
+        return "upstream_error"
+    if status == 400 and _looks_like_context_limit(str(error)):
+        return "context_limit"
+    return "upstream_error"
+
+
+def _classify_error(error: LLMError) -> str:
     """Классифицирует ошибку для LLMFallbackError."""
     if isinstance(error, LLMInvalidResponseError):
         return "invalid_response"
-    if error.__cause__:
-        cause = error.__cause__
-        if isinstance(cause, LLMInvalidResponseError):
-            return "invalid_response"
-        if isinstance(cause, LLMError):
-            return _classify_error(cause)
+
+    cause_class = _classify_cause_if_llm_error(error)
+    if cause_class is not None:
+        return cause_class
 
     if isinstance(error, LLMRateLimitError):
         return "rate_limit"
     if isinstance(error, LLMTimeoutError):
         return "timeout"
     if isinstance(error, LLMAPIError):
-        status = _extract_upstream_status(error)
-        if status == 429:
-            return "rate_limit"
-        if status == 401 or status == 403:
-            return "authentication"
-        if status == 413:
-            return "context_limit"
-        if status and 500 <= status < 600:
-            return "upstream_error"
-        if status == 400:
-            msg = str(error).lower()
-            if any(
-                phrase in msg
-                for phrase in (
-                    "context length",
-                    "context window",
-                    "maximum context",
-                    "max tokens",
-                    "token limit",
-                    "too many tokens",
-                )
-            ):
-                return "context_limit"
-        return "upstream_error"
-    if error.__cause__:
-        cause = error.__cause__
-        if isinstance(cause, httpx.TimeoutException):
-            return "timeout"
+        return _classify_api_status(error)
+    if isinstance(error.__cause__, httpx.TimeoutException):
+        return "timeout"
     return "unknown"
 
 
@@ -428,7 +443,61 @@ class BaseLLMClient(ABC):
             return None
         return _backoff_with_jitter(self.config.retry_delay, attempt)
 
-    async def generate(self, prompt: str) -> LLMResponse:  # noqa: C901  # see #93
+    async def _retry_rate_limit(self, attempt: int) -> None:
+        """Логирует rate limit и выжидает backoff (если это не последняя попытка)."""
+        delay = self._sleep_delay_for(attempt)
+        if delay is not None:
+            logger.warning(
+                "Rate limit hit, retrying in %.2f seconds",
+                delay,
+                extra={"attempt": attempt + 1},
+            )
+            await asyncio.sleep(delay)
+
+    async def _retry_timeout(self, attempt: int) -> None:
+        """Логирует таймаут и выжидает backoff."""
+        delay = self._sleep_delay_for(attempt)
+        if delay is not None:
+            logger.warning(
+                "Timeout, retrying in %.2f seconds",
+                delay,
+                extra={"attempt": attempt + 1},
+            )
+            await asyncio.sleep(delay)
+
+    async def _retry_server_error(self, error: LLMAPIError, attempt: int) -> None:
+        """5xx — логирует и выжидает backoff; иначе — raise немедленно."""
+        if not (error.status_code and 500 <= error.status_code < 600):
+            raise error
+        delay = self._sleep_delay_for(attempt)
+        if delay is not None:
+            logger.warning(
+                "Server error %s, retrying in %.2f seconds",
+                error.status_code,
+                delay,
+                extra={"attempt": attempt + 1},
+            )
+            await asyncio.sleep(delay)
+
+    async def _retry_invalid_response(self, error: LLMInvalidResponseError, attempt: int) -> None:
+        """Retry при наличии delay; на последней попытке — log error и raise."""
+        delay = self._sleep_delay_for(attempt)
+        diag_str = _format_diagnostics(error.diagnostics, attempt=attempt + 1)
+        if delay is not None:
+            logger.warning(
+                "Invalid response (empty or malformed), retrying in %.2f seconds %s",
+                delay,
+                diag_str,
+            )
+            await asyncio.sleep(delay)
+            return
+        logger.error(
+            "Invalid response (empty or malformed), giving up %s",
+            diag_str,
+        )
+        raise error
+
+    async def generate(self, prompt: str) -> LLMResponse:
         """Выполняет запрос к провайдеру с повторами и экспоненциальной задержкой.
 
         Повторяет запрос при rate limit, таймауте, 5xx и некорректном ответе.
@@ -481,58 +550,19 @@ class BaseLLMClient(ABC):
 
             except LLMRateLimitError as error:
                 last_error = error
-                delay = self._sleep_delay_for(attempt)
-                if delay is not None:
-                    logger.warning(
-                        "Rate limit hit, retrying in %.2f seconds",
-                        delay,
-                        extra={"attempt": attempt + 1},
-                    )
-                    await asyncio.sleep(delay)
+                await self._retry_rate_limit(attempt)
 
             except (LLMTimeoutError, httpx.TimeoutException) as error:
                 last_error = error
-                delay = self._sleep_delay_for(attempt)
-                if delay is not None:
-                    logger.warning(
-                        "Timeout, retrying in %.2f seconds",
-                        delay,
-                        extra={"attempt": attempt + 1},
-                    )
-                    await asyncio.sleep(delay)
+                await self._retry_timeout(attempt)
 
             except LLMAPIError as error:
                 last_error = error
-                if error.status_code and 500 <= error.status_code < 600:
-                    delay = self._sleep_delay_for(attempt)
-                    if delay is not None:
-                        logger.warning(
-                            "Server error %s, retrying in %.2f seconds",
-                            error.status_code,
-                            delay,
-                            extra={"attempt": attempt + 1},
-                        )
-                        await asyncio.sleep(delay)
-                else:
-                    raise
+                await self._retry_server_error(error, attempt)
 
             except LLMInvalidResponseError as error:
                 last_error = error
-                delay = self._sleep_delay_for(attempt)
-                diag_str = _format_diagnostics(error.diagnostics, attempt=attempt + 1)
-                if delay is not None:
-                    logger.warning(
-                        "Invalid response (empty or malformed), retrying " "in %.2f seconds %s",
-                        delay,
-                        diag_str,
-                    )
-                    await asyncio.sleep(delay)
-                else:
-                    logger.error(
-                        "Invalid response (empty or malformed), giving up %s",
-                        diag_str,
-                    )
-                    raise
+                await self._retry_invalid_response(error, attempt)
 
             attempt += 1
 
