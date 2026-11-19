@@ -72,7 +72,7 @@ ignore = [
 # для runtime-аннотаций Pydantic.
 "src/config_types.py"     = ["UP006", "UP035"]
 "src/contracts.py"        = ["UP006", "UP035"]
-"src/knowledge_retrieval.py" = ["UP006", "UP035", "RUF100"]
+"src/knowledge_retrieval.py" = ["UP006", "UP035"]
 "src/llm_client.py"       = ["UP006", "UP035"]
 "src/main.py"             = ["UP006", "UP035"]
 "src/output_guard.py"     = ["UP035"]
