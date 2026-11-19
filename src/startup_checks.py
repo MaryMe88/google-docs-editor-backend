@@ -83,6 +83,31 @@ def _check_domain_files_strict(
         )
 
 
+def _validate_intent_file(intent: str, file_path: Path) -> None:
+    """Читает intent-файл и валидирует поле instructions (list[str]).
+
+    Raises:
+        RuntimeError: JSON невалиден, файл недоступен или instructions некорректны.
+    """
+    try:
+        with open(file_path, encoding="utf-8") as f:
+            data = json.load(f)
+        instructions = data.get("instructions")
+        if not isinstance(instructions, list):
+            raise TypeError(
+                f"Intent {intent}: 'instructions' must be a list, "
+                f"got {type(instructions).__name__}"
+            )
+        for idx, item in enumerate(instructions):
+            if not isinstance(item, str):
+                raise TypeError(
+                    f"Intent {intent}: instructions[{idx}] must be a "
+                    f"string, got {type(item).__name__}"
+                )
+    except (json.JSONDecodeError, OSError, TypeError) as e:
+        raise RuntimeError(f"Invalid intent file {intent}.json: {e}") from e
+
+
 def _check_intent_files_strict(
     config_path: Path,
     allowed_intents: set[str],
@@ -95,28 +120,12 @@ def _check_intent_files_strict(
     intents_with_files = allowed_intents - {"neutral"}
 
     missing = []
-    for intent in intents_with_files:  # noqa: PLR1702  # see #93
+    for intent in intents_with_files:
         file_path = intents_dir / f"{intent}.json"
         if not file_path.is_file():
             missing.append(intent)
         else:
-            try:
-                with open(file_path, encoding="utf-8") as f:
-                    data = json.load(f)
-                instructions = data.get("instructions")
-                if not isinstance(instructions, list):
-                    raise TypeError(
-                        f"Intent {intent}: 'instructions' must be a list, "
-                        f"got {type(instructions).__name__}"
-                    )
-                for idx, item in enumerate(instructions):
-                    if not isinstance(item, str):
-                        raise TypeError(
-                            f"Intent {intent}: instructions[{idx}] must be a "
-                            f"string, got {type(item).__name__}"
-                        )
-            except (json.JSONDecodeError, OSError, TypeError) as e:
-                raise RuntimeError(f"Invalid intent file {intent}.json: {e}") from e
+            _validate_intent_file(intent, file_path)
 
     if missing:
         raise FileNotFoundError(f"Missing intent config files: {', '.join(missing)}")
@@ -246,57 +255,72 @@ _KB_FILES_WITHOUT_TAGS: set[str] = {
 }
 
 
-def _collect_kb_tags(kb_path: Path) -> set[str]:  # noqa: C901  # see #93
+def _add_normalized_tags(raw_tags: Any, target: set[str]) -> None:
+    """Нормализует и добавляет строковые теги в target."""
+    if not isinstance(raw_tags, list):
+        return
+    for tag in raw_tags:
+        if isinstance(tag, str):
+            norm = normalize_tag(tag)
+            if norm:
+                target.add(norm)
+
+
+def _extract_items_and_root_tags(
+    data: Any,
+) -> tuple[list[dict[str, Any]] | None, dict[str, Any]]:
+    """Извлекает items для обхода и root-значения tags/inherit_tags.
+
+    Returns:
+        (items, root_tags) — items=None означает неподдерживаемый формат.
+    """
+    if isinstance(data, list):
+        return data, {}
+    if isinstance(data, dict):
+        items: list[dict[str, Any]] = []
+        root_tags = {k: data.get(k) for k in ("tags", "inherit_tags") if k in data}
+        for key, value in data.items():
+            if key in ("tags", "inherit_tags"):
+                continue
+            if isinstance(value, list):
+                items.extend(value)
+        return items, root_tags
+    return None, {}
+
+
+def _collect_record_tags(items: list[dict[str, Any]], target: set[str]) -> None:
+    """Обходит items через _flatten_records и собирает теги из rec["tags"]."""
+    for item in items:
+        for rec in _flatten_records(item):
+            _add_normalized_tags(rec.get("tags"), target)
+
+
+def _collect_kb_tags(kb_path: Path) -> set[str]:
+    """Собирает нормализованные теги из всех KB JSON-файлов (кроме служебных)."""
     kb_tags: set[str] = set()
     if not kb_path.is_dir():
         logger.warning("Knowledge base directory not found: %s", kb_path)
         return kb_tags
 
     kb_files = sorted(p for p in kb_path.glob("**/*.json") if p.name not in _KB_FILES_WITHOUT_TAGS)
-
     if not kb_files:
         logger.warning("No KB JSON files found in %s", kb_path)
         return kb_tags
 
-    for file_path in kb_files:  # noqa: PLR1702  # see #93
+    for file_path in kb_files:
         try:
             with open(file_path, encoding="utf-8") as f:
                 data = json.load(f)
         except (json.JSONDecodeError, OSError) as e:
             raise RuntimeError(f"Failed to load KB file {file_path.name}: {e}") from e
 
-        items: list[dict[str, Any]] = []
-        if isinstance(data, list):
-            items = data
-        elif isinstance(data, dict):
-            for root_field in ("tags", "inherit_tags"):
-                root_tags = data.get(root_field)
-                if isinstance(root_tags, list):
-                    for tag in root_tags:
-                        if isinstance(tag, str):
-                            norm = normalize_tag(tag)
-                            if norm:
-                                kb_tags.add(norm)
-
-            for key, value in data.items():
-                if key in ("tags", "inherit_tags"):
-                    continue
-                if isinstance(value, list):
-                    items.extend(value)
-        else:
+        items, root_tags = _extract_items_and_root_tags(data)
+        if items is None:
             logger.warning("Unexpected KB file format in %s, skipping", file_path.name)
             continue
-
-        for item in items:
-            for rec in _flatten_records(item):
-                raw_tags = rec.get("tags")
-                if not isinstance(raw_tags, list):
-                    continue
-                for tag in raw_tags:
-                    if isinstance(tag, str):
-                        norm = normalize_tag(tag)
-                        if norm:
-                            kb_tags.add(norm)
+        for raw_tags in root_tags.values():
+            _add_normalized_tags(raw_tags, kb_tags)
+        _collect_record_tags(items, kb_tags)
 
     return kb_tags
 

@@ -154,32 +154,43 @@ def _entry_info_score(entry: dict[str, Any]) -> int:
     return score
 
 
-def _estimate_entry_chars(entry: dict[str, Any]) -> int:
+def _sum_string_field_lengths(mapping: dict[str, Any], fields: tuple[str, ...]) -> int:
+    """Суммирует len(value) по строковым значениям перечисленных полей."""
     total = 0
-    for field in (
-        "wrong",
-        "correct",
-        "rule",
-        "description",
-        "name",
-        "example_wrong",
-        "example_correct",
-        "example_explanation",
-    ):
-        value = entry.get(field)
+    for field in fields:
+        value = mapping.get(field)
         if isinstance(value, str):
             total += len(value)
-    for container_key in ("steps", "sections"):  # noqa: PLR1702  # see #93
-        container = entry.get(container_key)
-        if isinstance(container, list):
-            for step in container:
-                if not isinstance(step, dict):
-                    continue
-                for field in ("name", "description"):
-                    value = step.get(field)
-                    if isinstance(value, str):
-                        total += len(value)
     return total
+
+
+def _sum_container_field_lengths(entry: dict[str, Any]) -> int:
+    """Суммирует len(name/description) по элементам steps/sections."""
+    total = 0
+    for container_key in ("steps", "sections"):
+        container = entry.get(container_key)
+        if not isinstance(container, list):
+            continue
+        for step in container:
+            if isinstance(step, dict):
+                total += _sum_string_field_lengths(step, ("name", "description"))
+    return total
+
+
+def _estimate_entry_chars(entry: dict[str, Any]) -> int:
+    return _sum_string_field_lengths(
+        entry,
+        (
+            "wrong",
+            "correct",
+            "rule",
+            "description",
+            "name",
+            "example_wrong",
+            "example_correct",
+            "example_explanation",
+        ),
+    ) + _sum_container_field_lengths(entry)
 
 
 def score_rule_entry(
