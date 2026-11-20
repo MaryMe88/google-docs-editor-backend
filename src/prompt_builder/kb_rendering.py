@@ -201,57 +201,73 @@ def _append_case_study_entries(lines: list[str], title: str, entries: list[dict[
         _append_case_study_sections(lines, entry.get("sections", []))
 
 
-def _append_evaluation_techniques(lines: list[str], title: str, data: dict[str, Any]) -> None:  # noqa: C901  # see #93
-    if not data:
-        return
-    lines.append(title)
-
+def _append_category_and_description(lines: list[str], data: dict[str, Any]) -> None:
+    """Пишет строки «Категория: ...» и «Описание: ...», если поля есть."""
     if "category" in data:
         lines.append(f"Категория: {data['category']}")
     if "description" in data:
         lines.append(f"Описание: {data['description']}")
 
+
+def _append_editor_rules(lines: list[str], data: dict[str, Any]) -> None:
+    """Пишет до 5 непустых editor_rules в формате «- rule»."""
     editor_rules = data.get("editor_rules", [])
-    if isinstance(editor_rules, list) and editor_rules:
-        lines.append("Правила редактора:")
-        for rule in editor_rules[:5]:
-            if isinstance(rule, str) and rule.strip():
-                lines.append(f"- {rule}")
+    if not isinstance(editor_rules, list) or not editor_rules:
+        return
+    lines.append("Правила редактора:")
+    for rule in editor_rules[:5]:
+        if isinstance(rule, str) and rule.strip():
+            lines.append(f"- {rule}")
 
+
+def _append_replacement_strategies(lines: list[str], data: dict[str, Any]) -> None:
+    """Пишет до 3 replacement_strategies в формате «- name: description» / «- name» / «- description»."""
     strategies = data.get("replacement_strategies", [])
-    if isinstance(strategies, list) and strategies:
-        lines.append("Стратегии замены оценок:")
-        for strategy in strategies[:3]:
-            if not isinstance(strategy, dict):
-                continue
-            name = strategy.get("name", "")
-            desc = strategy.get("description", "")
-            if name or desc:
-                lines.append(f"- {name}: {desc}" if name and desc else f"- {name or desc}")
+    if not isinstance(strategies, list) or not strategies:
+        return
+    lines.append("Стратегии замены оценок:")
+    for strategy in strategies[:3]:
+        if not isinstance(strategy, dict):
+            continue
+        name = strategy.get("name", "")
+        desc = strategy.get("description", "")
+        if name or desc:
+            lines.append(f"- {name}: {desc}" if name and desc else f"- {name or desc}")
 
-    diagnostics = data.get("diagnostics", [])
-    if isinstance(diagnostics, list) and diagnostics:
-        lines.append("Чек-листы для обнаружения оценок:")
-        for diag in diagnostics[:3]:
-            if isinstance(diag, dict):
-                dname = diag.get("name", "")
-                if dname:
-                    lines.append(f"- {dname}")
 
-    tests = data.get("tests", [])
-    if isinstance(tests, list) and tests:
-        lines.append("Тесты на замену оценок:")
-        for test in tests[:3]:
-            if isinstance(test, dict):
-                tname = test.get("name", "")
-                if tname:
-                    lines.append(f"- {tname}")
+def _append_named_entries(lines: list[str], entries: Any, header: str) -> None:
+    """Пишет до 3 непустых dict-элементов с полем name под заданным header."""
+    if not isinstance(entries, list) or not entries:
+        return
+    lines.append(header)
+    for entry in entries[:3]:
+        if not isinstance(entry, dict):
+            continue
+        name = entry.get("name", "")
+        if name:
+            lines.append(f"- {name}")
 
+
+def _append_source_title(lines: list[str], data: dict[str, Any]) -> None:
+    """Пишет «Источник: title», если source — dict с непустым title."""
     source = data.get("source")
-    if isinstance(source, dict):
-        title = source.get("title", "")
-        if title:
-            lines.append(f"Источник: {title}")
+    if not isinstance(source, dict):
+        return
+    title = source.get("title", "")
+    if title:
+        lines.append(f"Источник: {title}")
+
+
+def _append_evaluation_techniques(lines: list[str], title: str, data: dict[str, Any]) -> None:
+    if not data:
+        return
+    lines.append(title)
+    _append_category_and_description(lines, data)
+    _append_editor_rules(lines, data)
+    _append_replacement_strategies(lines, data)
+    _append_named_entries(lines, data.get("diagnostics"), "Чек-листы для обнаружения оценок:")
+    _append_named_entries(lines, data.get("tests"), "Тесты на замену оценок:")
+    _append_source_title(lines, data)
 
 
 def _append_glossary(lines: list[str], glossary: dict[str, Any], limit: int) -> None:
