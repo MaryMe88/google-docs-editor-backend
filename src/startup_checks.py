@@ -740,74 +740,102 @@ def _load_all_configs(
     return domains, intents, overlays
 
 
-def _validate_references_in_configs(  # noqa: C901  # see #93
+def _validate_prefixed_reference(
+    ref_type: str,
+    name: str,
+    source: str,
+    field: str,
+) -> None:
+    """Валидирует prefixed-ссылку (intent:/overlay:/feature:); raise при невалидной."""
+    if ref_type == "intent":
+        if name not in ALLOWED_INTENTS:
+            raise ValueError(
+                f"Invalid {field} reference in {source}: 'intent:{name}' does not exist"
+            )
+        return
+    if ref_type == "overlay":
+        if name not in ALLOWED_OVERLAYS:
+            raise ValueError(
+                f"Invalid {field} reference in {source}: 'overlay:{name}' does not exist"
+            )
+        return
+    # ref_type == "feature"
+    if not _is_valid_feature(name):
+        raise ValueError(f"Invalid {field} reference in {source}: 'feature:{name}' does not exist")
+
+
+def _validate_unprefixed_reference(name: str, source: str, field: str) -> None:
+    """Валидирует unprefixed-ссылку: warning при совпадении с реестром, иначе raise.
+
+    ВНИМАНИЕ: в warning-сообщениях литерал '{name}' (не f-string) — это баг,
+    зафиксирован в PR-10, исправление в отдельном PR-11.
+    """
+    if name in ALLOWED_OVERLAYS:
+        logger.warning(
+            f"Unprefixed overlay reference '{name}' in {source}.{field} – "
+            "consider using 'overlay:{name}' for clarity."
+        )
+    elif name in ALLOWED_INTENTS:
+        logger.warning(
+            f"Unprefixed intent reference '{name}' in {source}.{field} – "
+            "consider using 'intent:{name}' for clarity."
+        )
+    elif _is_valid_feature(name):
+        logger.warning(
+            f"Unprefixed feature reference '{name}' in {source}.{field} – "
+            "consider using 'feature:{name}' for clarity."
+        )
+    else:
+        raise ValueError(
+            f"Invalid {field} reference in {source}: '{name}' not found in any registry"
+        )
+
+
+def _validate_reference(ref: str, source: str, field: str) -> None:
+    """Валидирует одну ссылку: prefixed или unprefixed."""
+    ref_type, name = _normalize_reference(ref)
+    if ref_type is None:
+        _validate_unprefixed_reference(name, source, field)
+    else:
+        _validate_prefixed_reference(ref_type, name, source, field)
+
+
+def _validate_config_references(
+    cfg: Any,
+    entity_label: str,
+    fields: tuple[str, ...],
+) -> None:
+    """Валидирует все ссылки во всех полях одной конфигурации."""
+    for field in fields:
+        refs = getattr(cfg, field, ())
+        for ref in refs:
+            _validate_reference(ref, entity_label, field)
+
+
+def _validate_references_in_configs(
     domains: dict[str, DomainConfig],
     intents: dict[str, IntentConfig],
     overlays: dict[str, OverlayConfig],
 ) -> None:
-    """
-    Проверяет все ссылки (suppresses, conflicts_with, incompatible_*) на существование.
-    """
-
-    def validate_reference(ref: str, source: str, field: str) -> None:
-        ref_type, name = _normalize_reference(ref)
-        if ref_type == "intent":
-            if name not in ALLOWED_INTENTS:
-                raise ValueError(
-                    f"Invalid {field} reference in {source}: " f"'intent:{name}' does not exist"
-                )
-        elif ref_type == "overlay":
-            if name not in ALLOWED_OVERLAYS:
-                raise ValueError(
-                    f"Invalid {field} reference in {source}: " f"'overlay:{name}' does not exist"
-                )
-        elif ref_type == "feature":
-            if not _is_valid_feature(name):
-                raise ValueError(
-                    f"Invalid {field} reference in {source}: " f"'feature:{name}' does not exist"
-                )
-        else:
-            if name in ALLOWED_OVERLAYS:
-                logger.warning(
-                    f"Unprefixed overlay reference '{name}' in {source}.{field} – "
-                    "consider using 'overlay:{name}' for clarity."
-                )
-            elif name in ALLOWED_INTENTS:
-                logger.warning(
-                    f"Unprefixed intent reference '{name}' in {source}.{field} – "
-                    "consider using 'intent:{name}' for clarity."
-                )
-            elif _is_valid_feature(name):
-                logger.warning(
-                    f"Unprefixed feature reference '{name}' in {source}.{field} – "
-                    "consider using 'feature:{name}' for clarity."
-                )
-            else:
-                raise ValueError(
-                    f"Invalid {field} reference in {source}: " f"'{name}' not found in any registry"
-                )
-
+    """Проверяет все ссылки (suppresses, conflicts_with, incompatible_*) на существование."""
     for domain_name, cfg in domains.items():
-        for ref in cfg.suppresses:
-            validate_reference(ref, f"domain {domain_name}", "suppresses")
-        for ref in cfg.conflicts_with:
-            validate_reference(ref, f"domain {domain_name}", "conflicts_with")
-        for ref in cfg.incompatible_intents:
-            validate_reference(ref, f"domain {domain_name}", "incompatible_intents")
-        for ref in cfg.incompatible_overlays:
-            validate_reference(ref, f"domain {domain_name}", "incompatible_overlays")
-
+        _validate_config_references(
+            cfg,
+            f"domain {domain_name}",
+            ("suppresses", "conflicts_with", "incompatible_intents", "incompatible_overlays"),
+        )
     for intent_name, intent_cfg in intents.items():
-        for ref in intent_cfg.suppresses:
-            validate_reference(ref, f"intent {intent_name}", "suppresses")
-        for ref in intent_cfg.conflicts_with:
-            validate_reference(ref, f"intent {intent_name}", "conflicts_with")
-
+        _validate_config_references(
+            intent_cfg,
+            f"intent {intent_name}",
+            ("suppresses", "conflicts_with"),
+        )
     for overlay_name, overlay_cfg in overlays.items():
-        for ref in overlay_cfg.suppresses:
-            validate_reference(ref, f"overlay {overlay_name}", "suppresses")
-        for ref in overlay_cfg.conflicts_with:
-            validate_reference(ref, f"overlay {overlay_name}", "conflicts_with")
+        _validate_config_references(
+            overlay_cfg,
+            f"overlay {overlay_name}",
+            ("suppresses", "conflicts_with"),
+        )
 
 
 def _check_self_conflicts(overlays: dict[str, OverlayConfig]) -> None:
