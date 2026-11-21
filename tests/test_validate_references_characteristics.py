@@ -5,9 +5,8 @@
 - беспрефиксные ссылки — warning при совпадении с реестром, иначе raise;
 - обход полей домена (4), intent (2), overlay (2).
 
-BUG (зафиксирован как есть): в warning-сообщениях для беспрефиксных ссылок
-литерал '{name}' не подставляется (вторая часть — не f-string).
-Исправление — в отдельном PR-11, тогда эти assert изменятся.
+Проверяет, что в warning-сообщениях подставляется фактическое имя ссылки
+(f-string), а не литерал '{name}'. Исправлено в PR-11.
 """
 
 from __future__ import annotations
@@ -46,35 +45,34 @@ def patched_registries(monkeypatch: pytest.MonkeyPatch) -> None:
 # --- unprefixed: warning-ветки (3) + raise (1) -----------------------------
 
 
-def test_unprefixed_overlay_warns_with_literal_placeholder(
+def test_unprefixed_overlay_warns_with_actual_name(
     caplog: pytest.LogCaptureFixture, patched_registries
 ) -> None:
-    """myoverlay in ALLOWED_OVERLAYS → warning; BUG: литерал {name}."""
+    """myoverlay in ALLOWED_OVERLAYS → warning с actual name в подсказке."""
     caplog.set_level(logging.WARNING)
     _validate_references_in_configs({"blog": _cfg(suppresses=["myoverlay"])}, {}, {})
     assert "Unprefixed overlay reference 'myoverlay'" in caplog.text
-    # BUG: литерал {name}, не actual name. Фиксируем до PR-11.
-    assert "consider using 'overlay:{name}'" in caplog.text
+    assert "consider using 'overlay:myoverlay'" in caplog.text
 
 
-def test_unprefixed_intent_warns_with_literal_placeholder(
+def test_unprefixed_intent_warns_with_actual_name(
     caplog: pytest.LogCaptureFixture, patched_registries
 ) -> None:
-    """myintent in ALLOWED_INTENTS → warning; BUG: литерал {name}."""
+    """myintent in ALLOWED_INTENTS → warning с actual name в подсказке."""
     caplog.set_level(logging.WARNING)
     _validate_references_in_configs({"blog": _cfg(suppresses=["myintent"])}, {}, {})
     assert "Unprefixed intent reference 'myintent'" in caplog.text
-    assert "consider using 'intent:{name}'" in caplog.text
+    assert "consider using 'intent:myintent'" in caplog.text
 
 
-def test_unprefixed_feature_warns_with_literal_placeholder(
+def test_unprefixed_feature_warns_with_actual_name(
     caplog: pytest.LogCaptureFixture, patched_registries
 ) -> None:
-    """myfeature → _is_valid_feature True → warning; BUG: литерал {name}."""
+    """myfeature → _is_valid_feature True → warning с actual name в подсказке."""
     caplog.set_level(logging.WARNING)
     _validate_references_in_configs({"blog": _cfg(suppresses=["myfeature"])}, {}, {})
     assert "Unprefixed feature reference 'myfeature'" in caplog.text
-    assert "consider using 'feature:{name}'" in caplog.text
+    assert "consider using 'feature:myfeature'" in caplog.text
 
 
 def test_unprefixed_unknown_raises(patched_registries) -> None:

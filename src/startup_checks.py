@@ -765,25 +765,21 @@ def _validate_prefixed_reference(
 
 
 def _validate_unprefixed_reference(name: str, source: str, field: str) -> None:
-    """Валидирует unprefixed-ссылку: warning при совпадении с реестром, иначе raise.
-
-    ВНИМАНИЕ: в warning-сообщениях литерал '{name}' (не f-string) — это баг,
-    зафиксирован в PR-10, исправление в отдельном PR-11.
-    """
+    """Валидирует unprefixed-ссылку: warning при совпадении с реестром, иначе raise."""
     if name in ALLOWED_OVERLAYS:
         logger.warning(
             f"Unprefixed overlay reference '{name}' in {source}.{field} – "
-            "consider using 'overlay:{name}' for clarity."
+            f"consider using 'overlay:{name}' for clarity."
         )
     elif name in ALLOWED_INTENTS:
         logger.warning(
             f"Unprefixed intent reference '{name}' in {source}.{field} – "
-            "consider using 'intent:{name}' for clarity."
+            f"consider using 'intent:{name}' for clarity."
         )
     elif _is_valid_feature(name):
         logger.warning(
             f"Unprefixed feature reference '{name}' in {source}.{field} – "
-            "consider using 'feature:{name}' for clarity."
+            f"consider using 'feature:{name}' for clarity."
         )
     else:
         raise ValueError(
