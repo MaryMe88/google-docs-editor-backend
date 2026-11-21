@@ -76,9 +76,9 @@ ignore = [
 "src/llm_client.py"       = ["UP006", "UP035"]
 "src/main.py"             = ["UP006", "UP035"]
 "src/output_guard.py"     = ["UP035"]
-"src/startup_checks.py"   = ["UP006", "UP035", "RUF100"]
+"src/startup_checks.py"   = ["UP006", "UP035"]
 "src/kb_manifest_loader.py" = ["UP035"]
-"src/prompt_builder/builder.py"     = ["UP006", "UP035", "RUF100"]
+"src/prompt_builder/builder.py"     = ["UP006", "UP035"]
 "src/prompt_builder/kb_rendering.py" = ["UP006", "UP035"]
 "src/prompt_builder/kb_loading.py"   = ["UP006", "UP035"]
 "src/prompt_builder/feature_resolution.py" = ["UP006", "UP035"]
@@ -100,9 +100,6 @@ ignore = [
 "tests/test_knowledge_retrieval_fallback.py" = ["UP035"]
 "tests/test_prompt_builder_architecture.py"  = ["UP035"]
 
-# RUF100 отключён в файлах с `# noqa: C901/PLR1702` (итерация 9.2, issue #93):
-# C901/PLR1702 не входят в общий select, поэтому Ruff считает эти noqa "unused".
-# Вернуть после рефакторинга (карта №3 удалит noqa вместе с упрощением функций).
 
 
 # FBT001 отключён в тестах и скриптах (итерация 10.3 карты №2):
