@@ -310,7 +310,7 @@ def api_client():
 
     # Отключаем проверку тегов базы знаний, так как в тестовой среде KB может не содержать всех канонических тегов
     with (
-        patch("src.llm_client.create_llm_client", return_value=mock_client),
+        patch("src.llm.fallback.create_llm_client", return_value=mock_client),
         patch("src.startup_checks._check_tags_vs_kb"),
         patch.dict(os.environ, {"API_SECRET_KEY": _TEST_API_KEY}),
     ):
