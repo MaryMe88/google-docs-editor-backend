@@ -34,10 +34,10 @@ def _cfg(**kwargs):
 @pytest.fixture
 def patched_registries(monkeypatch: pytest.MonkeyPatch) -> None:
     """Подменяет реестры и _is_valid_feature для контролируемых имён."""
-    monkeypatch.setattr("src.startup_checks.ALLOWED_OVERLAYS", {"myoverlay"})
-    monkeypatch.setattr("src.startup_checks.ALLOWED_INTENTS", {"myintent"})
+    monkeypatch.setattr("src.startup_checks.providers.ALLOWED_OVERLAYS", {"myoverlay"})
+    monkeypatch.setattr("src.startup_checks.providers.ALLOWED_INTENTS", {"myintent"})
     monkeypatch.setattr(
-        "src.startup_checks._is_valid_feature",
+        "src.startup_checks.providers._is_valid_feature",
         lambda name: name in {"myfeature"},
     )
 
