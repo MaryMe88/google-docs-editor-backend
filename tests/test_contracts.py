@@ -36,7 +36,8 @@ class TestPromptBuilderContract:
     """
 
     @pytest.fixture(scope="class")
-    def pb(self):
+    @classmethod
+    def pb(cls):
         from src.prompt_builder import PromptBuilder
 
         return PromptBuilder()
