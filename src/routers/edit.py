@@ -166,7 +166,7 @@ async def edit_text(
     except ValidationError as error:
         logger.error("Validation error: %s", error, exc_info=True)
         raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             detail=error.errors(),
         ) from error
     except Exception as error:

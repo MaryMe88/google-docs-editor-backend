@@ -36,7 +36,7 @@ def _llm_error_to_http_exception(error: LLMError) -> HTTPException:
             )
         if kind == "context_limit":
             return HTTPException(
-                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
                 detail="The text or editing instructions are too large. Please shorten them.",
             )
         if kind in ("timeout", "upstream_error"):
