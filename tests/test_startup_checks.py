@@ -53,7 +53,7 @@ def test_scoring_weights_missing_file_does_not_raise() -> None:
     """Если файл отсутствует, функция не бросает исключение, только предупреждение."""
     with tempfile.TemporaryDirectory() as tmp:
         config_path = Path(tmp)
-        with patch("src.startup_checks.logger.warning") as mock_warning:
+        with patch("src.startup_checks.providers.logger.warning") as mock_warning:
             _check_scoring_weights_file(config_path)
             mock_warning.assert_called_once_with(
                 "scoring_weights.json not found, will use default weights."
@@ -110,7 +110,7 @@ def test_check_tags_vs_kb_does_not_warn_for_aliases(tmp_path, caplog) -> None:
 
     with (
         patch(
-            "src.startup_checks.get_canonical_tag_names",
+            "src.startup_checks.kb.get_canonical_tag_names",
             return_value={"storytelling", "nkrj", "antiai"},
         ),
         caplog.at_level("WARNING"),
@@ -138,7 +138,7 @@ def test_check_tags_vs_kb_warns_for_missing_canonical_tag(tmp_path, caplog) -> N
     )
 
     with (
-        patch("src.startup_checks.get_canonical_tag_names", return_value={"storytelling"}),
+        patch("src.startup_checks.kb.get_canonical_tag_names", return_value={"storytelling"}),
         caplog.at_level("WARNING"),
     ):
         _check_tags_vs_kb(kb_dir)

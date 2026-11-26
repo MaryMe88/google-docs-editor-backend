@@ -31,9 +31,12 @@ from src.knowledge_retrieval import (
     _select_ranked_entries,
     score_rule_entry,
     score_structural_entry,
+    select_entries,
+    select_entries_with_meta,
     select_grammar_rules,
     select_structural_by_tags_or_all,
 )
+from src.scoring_weights import get_scoring_weight
 from tests.conftest import KB_PATH
 
 
@@ -825,3 +828,219 @@ class TestRetrievalResultContract:
             params=params,
         )
         assert isinstance(result, RetrievalResult)
+
+
+# ---------------------------------------------------------------------------
+# Характеристические тесты для score_structural_entry (итерация 13)
+# ---------------------------------------------------------------------------
+
+
+def test_score_structural_entry_name_exact_match() -> None:
+    """Точное совпадение текста с name даёт name_exact_match + теги."""
+    entry: dict = {
+        "name": "Использование активного залога",
+        "description": "Другое описание",
+        "rule": "Другое правило",
+        "tags": ["style"],
+    }
+    score, neg_idx = score_structural_entry(
+        entry,
+        "использование активного залога",
+        {"style"},
+        3,
+    )
+    expected = (
+        get_scoring_weight("name_exact_match")
+        + get_scoring_weight("tag_primary")
+        + get_scoring_weight("tag_primary_bonus")
+    )
+    assert score == expected
+    assert neg_idx == -3
+
+
+def test_score_structural_entry_partial_match_via_rule() -> None:
+    """Совпадение с rule (не с name) даёт partial_text_match + теги."""
+    entry: dict = {
+        "name": "Другое имя",
+        "description": "Другое описание",
+        "rule": "Избегайте пассивного залога",
+        "tags": ["style"],
+    }
+    score, neg_idx = score_structural_entry(
+        entry,
+        "избегайте пассивного залога",
+        {"style"},
+        5,
+    )
+    expected = (
+        get_scoring_weight("partial_text_match")
+        + get_scoring_weight("tag_primary")
+        + get_scoring_weight("tag_primary_bonus")
+    )
+    assert score == expected
+    assert neg_idx == -5
+
+
+def test_score_structural_entry_name_as_list_is_ignored() -> None:
+    """name списком не считается паттерном — score остаётся нулевым."""
+    entry: dict = {
+        "name": ["УникальноеИмя1", "УникальноеИмя2"],
+        "description": "УникальноеОписаниеXYZ",
+        "rule": "УникальноеПравилоABC",
+        "tags": [],
+    }
+    score, neg_idx = score_structural_entry(
+        entry,
+        "уникальноеимя1",
+        set(),
+        7,
+    )
+    assert score == 0
+    assert neg_idx == -7
+
+
+@pytest.mark.parametrize(
+    "when_to_use, text_to_match, should_match",
+    [
+        ("Для новостных текстов", "для новостных текстов", True),
+        (["Для блогов", "Для статей"], "для статей", True),
+        (["Для блогов", "Для статей"], "для новостей", False),
+        (["Для блогов", 42, None], "для блогов", True),
+    ],
+    ids=["str-match", "list-one-match", "list-none-match", "list-mixed"],
+)
+def test_score_structural_entry_when_to_use(
+    when_to_use: object, text_to_match: str, should_match: bool
+) -> None:
+    """when_to_use как str или list — все варианты обрабатываются."""
+    entry: dict = {
+        "name": "Не совпадает",
+        "description": "Тоже не совпадает",
+        "rule": "И это не совпадает",
+        "when_to_use": when_to_use,
+        "tags": [],
+    }
+    score, _ = score_structural_entry(entry, text_to_match, set(), 0)
+    if should_match:
+        assert score == get_scoring_weight("partial_text_match")
+    else:
+        assert score == 0
+
+
+@pytest.mark.parametrize(
+    "container_key, container_value, text, expected_positive",
+    [
+        ("steps", [{"name": "Шаг номер один"}], "шаг номер один", True),
+        ("sections", [{"description": "Описание секции"}], "описание секции", True),
+        (
+            "steps",
+            ["string", 42, None, {"name": "Рабочий шаг"}],
+            "рабочий шаг",
+            True,
+        ),
+        ("steps", [{"other": "поле"}], "поле", False),
+    ],
+    ids=[
+        "steps-name",
+        "sections-description",
+        "steps-non-dict-skipped",
+        "steps-no-name",
+    ],
+)
+def test_score_structural_entry_containers(
+    container_key: str, container_value: object, text: str, expected_positive: bool
+) -> None:
+    """steps и sections: dict-шаги обрабатываются, не-dict пропускаются."""
+    entry: dict = {
+        "name": "Не совпадает",
+        "description": "Тоже нет",
+        "rule": "И это нет",
+        "tags": [],
+    }
+    entry[container_key] = container_value
+    score, _ = score_structural_entry(entry, text, set(), 0)
+    if expected_positive:
+        assert score == get_scoring_weight("partial_text_match")
+    else:
+        assert score == 0
+
+
+def test_score_structural_entry_empty_entry_returns_zero() -> None:
+    """Пустая запись: нет паттернов, нет тегов — score 0."""
+    score, neg_idx = score_structural_entry({}, "любой текст", set(), 2)
+    assert score == 0
+    assert neg_idx == -2
+
+
+# ---------------------------------------------------------------------------
+# Характеристические тесты для select_entries_with_meta (итерация 14)
+# ---------------------------------------------------------------------------
+
+
+def test_select_entries_with_meta_always_returns_retrieval_result() -> None:
+    """С params=None новый API возвращает RetrievalResult, не list."""
+    kb = SimpleNamespace(
+        grammar_errors=[
+            {"wrong": "тест", "name": "Тест", "tags": ["grammar"]},
+        ],
+    )
+    result = select_entries_with_meta(
+        kb_or_entries=kb,
+        text="тест",
+        tags={"grammar"},
+        category="grammar",
+        params=None,
+    )
+    assert isinstance(result, RetrievalResult)
+    assert isinstance(result.entries, list)
+    assert isinstance(result.stage, FallbackStage)
+    assert isinstance(result.dropped_count, int)
+
+
+def test_select_entries_with_meta_forces_return_meta_true() -> None:
+    """Даже при params.return_meta=False новый API возвращает RetrievalResult."""
+    kb = SimpleNamespace(
+        grammar_errors=[
+            {"wrong": "тест", "name": "Тест", "tags": ["grammar"]},
+        ],
+    )
+    params = SelectionParams(
+        scorer=score_rule_entry,
+        return_meta=False,
+    )
+    result = select_entries_with_meta(
+        kb_or_entries=kb,
+        text="тест",
+        tags={"grammar"},
+        category="grammar",
+        params=params,
+    )
+    assert isinstance(result, RetrievalResult)
+
+
+def test_select_entries_with_meta_equals_select_entries_return_meta_true() -> None:
+    """Новый API даёт тот же результат, что старый с return_meta=True."""
+    kb = SimpleNamespace(
+        grammar_errors=[
+            {"wrong": "тест", "name": "Тест", "tags": ["grammar"]},
+            {"wrong": "проверка", "name": "Проверка", "tags": ["grammar"]},
+        ],
+    )
+    old_result = select_entries(
+        kb_or_entries=kb,
+        text="тест проверка",
+        tags={"grammar"},
+        category="grammar",
+        return_meta=True,
+    )
+    new_result = select_entries_with_meta(
+        kb_or_entries=kb,
+        text="тест проверка",
+        tags={"grammar"},
+        category="grammar",
+    )
+    assert isinstance(old_result, RetrievalResult)
+    assert isinstance(new_result, RetrievalResult)
+    assert old_result.entries == new_result.entries
+    assert old_result.stage == new_result.stage
+    assert old_result.dropped_count == new_result.dropped_count

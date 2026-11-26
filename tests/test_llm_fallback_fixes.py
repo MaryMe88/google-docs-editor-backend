@@ -48,7 +48,7 @@ async def test_fallback_skips_provider_without_key() -> None:
             raise ValueError("API key not provided for OPENAI_API_KEY")
         return good_client
 
-    with patch("src.llm_client.create_llm_client", side_effect=fake_create):
+    with patch("src.llm.fallback.create_llm_client", side_effect=fake_create):
         resp = await call_with_fallback(
             prompt="тест",
             providers=["openai", "openrouter"],
@@ -64,7 +64,7 @@ async def test_fallback_all_providers_without_key_raises_llmerror() -> None:
     def fake_create(provider, **kwargs):
         raise ValueError("API key not provided")
 
-    with patch("src.llm_client.create_llm_client", side_effect=fake_create):
+    with patch("src.llm.fallback.create_llm_client", side_effect=fake_create):
         with pytest.raises(LLMError):
             await call_with_fallback(
                 prompt="тест",
