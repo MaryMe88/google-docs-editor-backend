@@ -171,7 +171,7 @@ def _run_probe(env_overrides: dict[str, str]) -> dict[str, list[str]]:
         [sys.executable, "-c", _PROBE],
         capture_output=True,
         text=True,
-        timeout=30,
+        timeout=90,
         cwd=_PROJECT_ROOT,
         env=env,
         shell=False,

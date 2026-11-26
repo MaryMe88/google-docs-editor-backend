@@ -73,7 +73,76 @@ def load_core_config(base_path: Path = Path("config")) -> CoreConfig:
     )
 
 
-def load_domain_config(domain: str, base_path: Path = Path("config")) -> DomainConfig:  # noqa: C901  # see #93
+def _extract_domain_ip_ceiling(raw_ip: Any) -> float | None:
+    """Извлекает ip_ceiling домена: число, dict {"value": N} или None."""
+    if isinstance(raw_ip, int | float):
+        return float(raw_ip)
+    if isinstance(raw_ip, dict):
+        return float(raw_ip.get("value", 2.5))
+    return None
+
+
+def _normalize_domain_kb_limits(raw_kb_limits: Any, domain_name: str) -> dict[str, int]:
+    """Нормализует kb_limits домена: пропускает неизвестные/невалидные ключи, клэмпит в диапазон."""
+    if not isinstance(raw_kb_limits, dict):
+        return {}
+    kb_limits: dict[str, int] = {}
+    for k, v in raw_kb_limits.items():
+        if not isinstance(k, str):
+            logger.warning(
+                "kb_limits[%r] в домене '%s': ключ не строка — пропущен",
+                k,
+                domain_name,
+            )
+            continue
+        if k not in ALLOWED_KB_LIMIT_KEYS:
+            logger.warning(
+                "kb_limits: неизвестный ключ '%s' в домене '%s' — "
+                "проигнорирован. Допустимые: %s",
+                k,
+                domain_name,
+                ", ".join(sorted(ALLOWED_KB_LIMIT_KEYS)),
+            )
+            continue
+        if not isinstance(v, int | float) or isinstance(v, bool):
+            logger.warning(
+                "kb_limits['%s'] в домене '%s': значение %r не число — пропущено",
+                k,
+                domain_name,
+                v,
+            )
+            continue
+        value = int(v)
+        clamped = max(KB_LIMIT_MIN, min(KB_LIMIT_MAX, value))
+        if clamped != value:
+            logger.warning(
+                "kb_limits['%s']=%d в домене '%s' вне диапазона [%d, %d] — приведено к %d",
+                k,
+                value,
+                domain_name,
+                KB_LIMIT_MIN,
+                KB_LIMIT_MAX,
+                clamped,
+            )
+        kb_limits[k] = clamped
+    return kb_limits
+
+
+def _resolve_domain_edit_level(raw_edit_level: Any, domain_name: str) -> str:
+    """Валидирует edit_level домена; при недопустимом значении — 'processing'."""
+    if not isinstance(raw_edit_level, str) or raw_edit_level not in ALLOWED_EDIT_LEVELS:
+        logger.warning(
+            "load_domain_config: недопустимый edit_level=%r в домене '%s' — "
+            "используется 'processing'. Допустимые значения: %s",
+            raw_edit_level,
+            domain_name,
+            sorted(ALLOWED_EDIT_LEVELS),
+        )
+        return "processing"
+    return raw_edit_level
+
+
+def load_domain_config(domain: str, base_path: Path = Path("config")) -> DomainConfig:
     """Загружает конфигурацию домена; при отсутствии файла — дефолт.
 
     Args:
@@ -93,58 +162,13 @@ def load_domain_config(domain: str, base_path: Path = Path("config")) -> DomainC
             domain_path,
         )
         return _DEFAULT_DOMAIN_CONFIG
+
     data = load_json_file(domain_path)
+    domain_name = data.get("name", normalized_domain)
     raw_tasks = data.get("tasks", [])
     raw_constraints = data.get("constraints", [])
-    raw_ip = data.get("ip_ceiling")
-    domain_ip_ceiling: float | None = None
-    if isinstance(raw_ip, int | float):
-        domain_ip_ceiling = float(raw_ip)
-    elif isinstance(raw_ip, dict):
-        domain_ip_ceiling = float(raw_ip.get("value", 2.5))
-
-    raw_kb_limits = data.get("kb_limits", {})
-    kb_limits: dict[str, int] = {}
-    if isinstance(raw_kb_limits, dict):
-        domain_name = data.get("name", normalized_domain)
-        for k, v in raw_kb_limits.items():
-            if not isinstance(k, str):
-                logger.warning(
-                    "kb_limits[%r] в домене '%s': ключ не строка — пропущен",
-                    k,
-                    domain_name,
-                )
-                continue
-            if k not in ALLOWED_KB_LIMIT_KEYS:
-                logger.warning(
-                    "kb_limits: неизвестный ключ '%s' в домене '%s' — "
-                    "проигнорирован. Допустимые: %s",
-                    k,
-                    domain_name,
-                    ", ".join(sorted(ALLOWED_KB_LIMIT_KEYS)),
-                )
-                continue
-            if not isinstance(v, int | float) or isinstance(v, bool):
-                logger.warning(
-                    "kb_limits['%s'] в домене '%s': значение %r не число — " "пропущено",
-                    k,
-                    domain_name,
-                    v,
-                )
-                continue
-            value = int(v)
-            clamped = max(KB_LIMIT_MIN, min(KB_LIMIT_MAX, value))
-            if clamped != value:
-                logger.warning(
-                    "kb_limits['%s']=%d в домене '%s' вне диапазона [%d, %d] — " "приведено к %d",
-                    k,
-                    value,
-                    domain_name,
-                    KB_LIMIT_MIN,
-                    KB_LIMIT_MAX,
-                    clamped,
-                )
-            kb_limits[k] = clamped
+    domain_ip_ceiling = _extract_domain_ip_ceiling(data.get("ip_ceiling"))
+    kb_limits = _normalize_domain_kb_limits(data.get("kb_limits", {}), domain_name)
 
     priority = data.get("priority", 100)
     if not isinstance(priority, int):
@@ -153,21 +177,10 @@ def load_domain_config(domain: str, base_path: Path = Path("config")) -> DomainC
     conflicts_with = tuple(normalize_string_list(data.get("conflicts_with", [])))
     incompatible_intents = tuple(normalize_string_list(data.get("incompatible_intents", [])))
     incompatible_overlays = tuple(normalize_string_list(data.get("incompatible_overlays", [])))
-
-    # ---- edit_level (НОВОЕ) ----
-    raw_edit_level = data.get("edit_level", "processing")
-    if not isinstance(raw_edit_level, str) or raw_edit_level not in ALLOWED_EDIT_LEVELS:
-        logger.warning(
-            "load_domain_config: недопустимый edit_level=%r в домене '%s' — "
-            "используется 'processing'. Допустимые значения: %s",
-            raw_edit_level,
-            data.get("name", normalized_domain),
-            sorted(ALLOWED_EDIT_LEVELS),
-        )
-        raw_edit_level = "processing"
+    edit_level = _resolve_domain_edit_level(data.get("edit_level", "processing"), domain_name)
 
     return DomainConfig(
-        name=data.get("name", normalized_domain),
+        name=domain_name,
         system_rules=data.get("system_rules", ""),
         tone=data.get("tone", "neutral"),
         allow_storytelling=data.get("allow_storytelling", False),
@@ -181,7 +194,7 @@ def load_domain_config(domain: str, base_path: Path = Path("config")) -> DomainC
         conflicts_with=conflicts_with,
         incompatible_intents=incompatible_intents,
         incompatible_overlays=incompatible_overlays,
-        edit_level=raw_edit_level,
+        edit_level=edit_level,
     )
 
 

@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import json
 import logging
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
 from pathlib import Path
 from typing import Any
 
@@ -70,19 +70,31 @@ def _resolve_normalizers() -> (
     return normalize_tag, normalize_tags
 
 
+def _iter_category_value_dicts(
+    canonical_tags: dict[str, dict[str, Any]],
+) -> Iterator[dict[str, Any]]:
+    """Yields внутренние dict-значения из вложенной структуры CANONICAL_TAGS."""
+    for category_data in canonical_tags.values():
+        for tag_data in category_data.values():
+            if isinstance(tag_data, dict):
+                yield tag_data
+
+
+def _iter_tag_lists_from_canonical(
+    canonical_tags: dict[str, dict[str, Any]],
+) -> Iterator[list[str]]:
+    """Yields списки тегов, вложенные в CANONICAL_TAGS."""
+    for tag_data in _iter_category_value_dicts(canonical_tags):
+        for tag_list in tag_data.values():
+            if isinstance(tag_list, list):
+                yield tag_list
+
+
 def _build_known_tags_from_canonical() -> set[str]:
     """Строит множество всех canonical тегов."""
     tags: set[str] = set()
-
-    for category_data in CANONICAL_TAGS.values():  # noqa: PLR1702  # see #93
-        for tag_data in category_data.values():
-            if isinstance(tag_data, dict):
-                for tag_list in tag_data.values():
-                    if isinstance(tag_list, list):
-                        tags.update(
-                            _normalize_tag_local(tag) for tag in tag_list if isinstance(tag, str)
-                        )
-
+    for tag_list in _iter_tag_lists_from_canonical(CANONICAL_TAGS):
+        tags.update(_normalize_tag_local(tag) for tag in tag_list if isinstance(tag, str))
     return tags
 
 

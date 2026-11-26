@@ -12,9 +12,10 @@ from __future__ import annotations
 import logging
 import re
 from collections.abc import Iterable
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from enum import Enum
 from typing import (
+    TYPE_CHECKING,
     Any,
     Literal,
     NamedTuple,
@@ -23,6 +24,9 @@ from typing import (
 
 from src.scoring_weights import get_scoring_weight
 from src.tag_registry import normalize_tag
+
+if TYPE_CHECKING:
+    from src.semantic_index import SemanticIndexService
 
 logger = logging.getLogger(__name__)
 
@@ -150,32 +154,43 @@ def _entry_info_score(entry: dict[str, Any]) -> int:
     return score
 
 
-def _estimate_entry_chars(entry: dict[str, Any]) -> int:
+def _sum_string_field_lengths(mapping: dict[str, Any], fields: tuple[str, ...]) -> int:
+    """Суммирует len(value) по строковым значениям перечисленных полей."""
     total = 0
-    for field in (
-        "wrong",
-        "correct",
-        "rule",
-        "description",
-        "name",
-        "example_wrong",
-        "example_correct",
-        "example_explanation",
-    ):
-        value = entry.get(field)
+    for field in fields:
+        value = mapping.get(field)
         if isinstance(value, str):
             total += len(value)
-    for container_key in ("steps", "sections"):  # noqa: PLR1702  # see #93
-        container = entry.get(container_key)
-        if isinstance(container, list):
-            for step in container:
-                if not isinstance(step, dict):
-                    continue
-                for field in ("name", "description"):
-                    value = step.get(field)
-                    if isinstance(value, str):
-                        total += len(value)
     return total
+
+
+def _sum_container_field_lengths(entry: dict[str, Any]) -> int:
+    """Суммирует len(name/description) по элементам steps/sections."""
+    total = 0
+    for container_key in ("steps", "sections"):
+        container = entry.get(container_key)
+        if not isinstance(container, list):
+            continue
+        for step in container:
+            if isinstance(step, dict):
+                total += _sum_string_field_lengths(step, ("name", "description"))
+    return total
+
+
+def _estimate_entry_chars(entry: dict[str, Any]) -> int:
+    return _sum_string_field_lengths(
+        entry,
+        (
+            "wrong",
+            "correct",
+            "rule",
+            "description",
+            "name",
+            "example_wrong",
+            "example_correct",
+            "example_explanation",
+        ),
+    ) + _sum_container_field_lengths(entry)
 
 
 def score_rule_entry(
@@ -218,7 +233,76 @@ def score_rule_entry(
     return score, -idx
 
 
-def score_structural_entry(  # noqa: C901  # see #93
+def _str_pattern(value: Any) -> str | None:
+    if not isinstance(value, str):
+        return None
+    stripped = value.strip()
+    return stripped or None
+
+
+def _patterns_from_str_or_list(value: Any) -> list[str]:
+    single = _str_pattern(value)
+    if single is not None:
+        return [single]
+    if not isinstance(value, list):
+        return []
+    result: list[str] = []
+    for item in value:
+        pattern = _str_pattern(item)
+        if pattern is not None:
+            result.append(pattern)
+    return result
+
+
+def _patterns_from_containers(entry: dict[str, Any]) -> list[str]:
+    result: list[str] = []
+    for container_key in ("steps", "sections"):
+        container = entry.get(container_key)
+        if not isinstance(container, list):
+            continue
+        for step in container:
+            if not isinstance(step, dict):
+                continue
+            for field in ("name", "description"):
+                pattern = _str_pattern(step.get(field))
+                if pattern is not None:
+                    result.append(pattern)
+    return result
+
+
+def _collect_structural_patterns(entry: dict[str, Any]) -> list[str]:
+    raw: list[str] = []
+    for field in ("name", "description", "rule"):
+        pattern = _str_pattern(entry.get(field))
+        if pattern is not None:
+            raw.append(pattern)
+    raw.extend(_patterns_from_str_or_list(entry.get("when_to_use")))
+    raw.extend(_patterns_from_containers(entry))
+
+    unique: list[str] = []
+    seen: set[str] = set()
+    for pattern in raw:
+        if pattern not in seen:
+            seen.add(pattern)
+            unique.append(pattern)
+    return unique
+
+
+def _text_match_score(
+    patterns: list[str],
+    name_stripped: str,
+    normalized_text: str,
+) -> int:
+    for pattern in patterns:
+        if not _contains_pattern(normalized_text, pattern):
+            continue
+        if name_stripped and pattern == name_stripped:
+            return get_scoring_weight("name_exact_match")
+        return get_scoring_weight("partial_text_match")
+    return 0
+
+
+def score_structural_entry(
     entry: dict[str, Any],
     normalized_text: str,
     wanted_tags: set[str],
@@ -230,63 +314,9 @@ def score_structural_entry(  # noqa: C901  # see #93
     Returns:
         Кортеж (score, -idx) — вторая компонента для стабильной сортировки.
     """
-    score = 0
-    patterns: list[str] = []
-
-    def add_field(field: str) -> None:
-        value = entry.get(field)
-        if isinstance(value, str):
-            stripped = value.strip()
-            if stripped:
-                patterns.append(stripped)
-
-    add_field("name")
-    add_field("description")
-    add_field("rule")
-
-    when_to_use = entry.get("when_to_use")
-    if isinstance(when_to_use, str):
-        stripped = when_to_use.strip()
-        if stripped:
-            patterns.append(stripped)
-    elif isinstance(when_to_use, list):
-        for item in when_to_use:
-            if isinstance(item, str):
-                stripped = item.strip()
-                if stripped:
-                    patterns.append(stripped)
-
-    for container_key in ("steps", "sections"):  # noqa: PLR1702  # see #93
-        container = entry.get(container_key)
-        if isinstance(container, list):
-            for step in container:
-                if not isinstance(step, dict):
-                    continue
-                for field in ("name", "description"):
-                    value = step.get(field)
-                    if isinstance(value, str):
-                        stripped = value.strip()
-                        if stripped:
-                            patterns.append(stripped)
-
-    unique_patterns: list[str] = []
-    seen: set[str] = set()
-    for pattern in patterns:
-        if pattern not in seen:
-            seen.add(pattern)
-            unique_patterns.append(pattern)
-
-    name_val = entry.get("name", "")
-    name_stripped = name_val.strip() if isinstance(name_val, str) else ""
-
-    for pattern in unique_patterns:
-        if not _contains_pattern(normalized_text, pattern):
-            continue
-        if name_stripped and pattern == name_stripped:
-            score += get_scoring_weight("name_exact_match")
-        else:
-            score += get_scoring_weight("partial_text_match")
-        break
+    patterns = _collect_structural_patterns(entry)
+    name_stripped = _str_pattern(entry.get("name")) or ""
+    score = _text_match_score(patterns, name_stripped, normalized_text)
 
     entry_tags = entry.get("tags", [])
     if not isinstance(entry_tags, list | tuple):
@@ -460,13 +490,18 @@ def _semantic_rerank(
     query: str,
     semantic_weight: float = 0.35,
     top_k_factor: int = 3,
+    *,
+    service: SemanticIndexService | None = None,
 ) -> list[dict[str, Any]]:
     if not entries or not query or not query.strip() or semantic_weight <= 0:
         return entries
     try:
-        from src.semantic_index import ensure_semantic_index
+        if service is not None:
+            index = service.ensure("cointegrated/rubert-tiny2")
+        else:
+            from src.semantic_index import ensure_semantic_index
 
-        index = ensure_semantic_index()
+            index = ensure_semantic_index()
         if index is None or not index.is_ready():
             return entries
     except ImportError:
@@ -777,6 +812,7 @@ def select_entries(
     *,
     return_meta: Literal[True] = True,
     semantic_rerank: bool = False,
+    semantic_index_service: SemanticIndexService | None = None,
 ) -> RetrievalResult: ...
 
 
@@ -794,6 +830,7 @@ def select_entries(
     *,
     return_meta: bool = False,
     semantic_rerank: bool = False,
+    semantic_index_service: SemanticIndexService | None = None,
 ) -> list[dict[str, Any]]: ...
 
 
@@ -810,8 +847,12 @@ def select_entries(
     *,
     return_meta: bool = False,
     semantic_rerank: bool = False,
+    semantic_index_service: SemanticIndexService | None = None,
 ) -> list[dict[str, Any]] | RetrievalResult:
     """Отбирает записи из KB по категории, тексту и тегам с учётом fallback.
+
+    Совместимая обёртка. При return_meta=True делегирует в
+    select_entries_with_meta; при return_meta=False возвращает список.
 
     Args:
         kb_or_entries: KB-объект или список записей (для category="structural").
@@ -832,6 +873,87 @@ def select_entries(
     Raises:
         TypeError: Для category="structural", если kb_or_entries не list.
     """
+    if return_meta:
+        return select_entries_with_meta(
+            kb_or_entries=kb_or_entries,
+            text=text,
+            tags=tags,
+            category=category,
+            params=params,
+            limit=limit,
+            candidate_limit=candidate_limit,
+            min_score=min_score,
+            char_budget=char_budget,
+            semantic_rerank=semantic_rerank,
+            semantic_index_service=semantic_index_service,
+        )
+
+    p, entries_source, normalized_text, effective_tags, early = _resolve_selection_inputs(
+        kb_or_entries=kb_or_entries,
+        text=text,
+        tags=tags,
+        category=category,
+        params=params,
+        limit=limit,
+        candidate_limit=candidate_limit,
+        min_score=min_score,
+        char_budget=char_budget,
+        semantic_rerank=semantic_rerank,
+        return_meta=False,
+    )
+    if early is not None:
+        return []
+    if entries_source is None:
+        return []
+
+    raw = _select_ranked_entries(
+        entries=entries_source,
+        normalized_text=normalized_text,
+        wanted_tags=effective_tags,
+        limit=limit,
+        params=p,
+    )
+    result = _apply_semantic_rerank_if_needed(
+        raw,
+        category,
+        text,
+        semantic_rerank=p.semantic_rerank,
+        return_meta=False,
+        semantic_index_service=semantic_index_service,
+    )
+    if not isinstance(result, list):
+        raise RuntimeError(
+            "select_entries: expected list when return_meta=False, " f"got {type(result).__name__}"
+        )
+    return result
+
+
+_SelectionInputs = tuple[
+    SelectionParams, list[dict[str, Any]] | None, str, list[str], tuple[int, int] | None
+]
+
+
+def _resolve_selection_inputs(
+    kb_or_entries: Any,
+    text: str,
+    tags: Iterable[str],
+    category: Literal["grammar", "style", "logic", "structural"],
+    params: SelectionParams | None,
+    limit: int,
+    candidate_limit: int | None,
+    min_score: int,
+    char_budget: int | None,
+    *,
+    semantic_rerank: bool,
+    return_meta: bool,
+) -> _SelectionInputs:
+    """Готовит params, источник записей и нормализованные входы для select_*.
+
+    Возвращает кортеж (params, entries_source, normalized_text, effective_tags,
+    early_return). Если early_return не None — это (score, -idx) для
+    раннего возврата (пустой блок), и вызывающий должен вернуть пустой
+    результат соответствующей формы.
+    """
     if params is None:
         scorer = score_rule_entry if category != "structural" else score_structural_entry
         fb_policy = STRUCTURAL_FALLBACK_POLICY if category == "structural" else RULE_FALLBACK_POLICY
@@ -847,45 +969,142 @@ def select_entries(
             return_meta=return_meta,
             semantic_rerank=semantic_rerank,
         )
+    else:
+        params = replace(params, return_meta=return_meta)
 
+    entries_source: list[dict[str, Any]] | None
     if category == "structural":
         if not isinstance(kb_or_entries, list):
             raise TypeError("For category 'structural', kb_or_entries must be a list of entries.")
         entries_source = kb_or_entries
+        normalized_text = ""
+        effective_tags = list(tags) or []
     else:
         config = _CATEGORY_CONFIG[category]
         attr = config["attr"]
         entries_source = getattr(kb_or_entries, attr, [])
         if not entries_source:
             logger.warning("select_entries: %s пустой. Блок %s не будет добавлен.", attr, category)
-            if params.return_meta:
-                return RetrievalResult([], FallbackStage.EMPTY, 0)
-            return []
-
-    if category == "structural":
-        normalized_text = ""
-        effective_tags = list(tags) or []
-    else:
+            return params, None, "", [], (0, 0)  # early return
         normalized_text = normalize_text_for_match(text)
         effective_tags = list(tags) or config.get("default_tags", [category])
+
+    return params, entries_source, normalized_text, effective_tags, None
+
+
+def _apply_semantic_rerank_if_needed(
+    raw: list[dict[str, Any]] | RetrievalResult,
+    category: str,
+    text: str,
+    *,
+    semantic_rerank: bool,
+    return_meta: bool,
+    semantic_index_service: SemanticIndexService | None = None,
+) -> list[dict[str, Any]] | RetrievalResult:
+    if category == "structural":
+        return raw
+    weight = 0.35 if semantic_rerank else 0.0
+    if return_meta:
+        if not isinstance(raw, RetrievalResult):
+            raise RuntimeError(
+                "_apply_semantic_rerank_if_needed: expected RetrievalResult "
+                f"when return_meta=True, got {type(raw).__name__}"
+            )
+        reranked = _semantic_rerank(
+            raw.entries,
+            text,
+            semantic_weight=weight,
+            service=semantic_index_service,
+        )
+        return RetrievalResult(reranked, raw.stage, raw.dropped_count)
+    if not isinstance(raw, list):
+        raise RuntimeError(
+            "_apply_semantic_rerank_if_needed: expected list "
+            f"when return_meta=False, got {type(raw).__name__}"
+        )
+    return _semantic_rerank(raw, text, semantic_weight=weight, service=semantic_index_service)
+
+
+def select_entries_with_meta(
+    kb_or_entries: Any,
+    text: str,
+    tags: Iterable[str],
+    category: Literal["grammar", "style", "logic", "structural"],
+    params: SelectionParams | None = None,
+    limit: int = 10,
+    candidate_limit: int | None = None,
+    min_score: int = 1,
+    char_budget: int | None = None,
+    *,
+    semantic_rerank: bool = False,
+    semantic_index_service: SemanticIndexService | None = None,
+) -> RetrievalResult:
+    """Стабильный контракт: всегда возвращает RetrievalResult.
+
+    В отличие от select_entries, не принимает return_meta. Если передан
+    params с return_meta=False, он будет заменён на return_meta=True
+    через dataclasses.replace: новый метод по определению возвращает
+    metadata.
+
+    Args:
+        kb_or_entries: KB-объект или список записей (для category="structural").
+        text: Исходный текст для keyword-сравнения.
+        tags: Теги для скоринга.
+        category: Категория отбора.
+        params: Параметры отбора; при None собираются по category.
+        limit: Максимум записей в результате.
+        candidate_limit: Ограничение числа кандидатов до скоринга.
+        min_score: Минимальный скор для включения.
+        char_budget: Бюджет символов на результат.
+        semantic_rerank: Применить семантический re-rank после keyword-отбора.
+
+    Returns:
+        RetrievalResult(entries, stage, dropped_count).
+
+    Raises:
+        TypeError: Для category="structural", если kb_or_entries не list.
+        RuntimeError: Внутренний контракт _select_ranked_entries нарушен
+            (защита от случайного возврата list вместо RetrievalResult).
+    """
+    p, entries_source, normalized_text, effective_tags, early = _resolve_selection_inputs(
+        kb_or_entries=kb_or_entries,
+        text=text,
+        tags=tags,
+        category=category,
+        params=params,
+        limit=limit,
+        candidate_limit=candidate_limit,
+        min_score=min_score,
+        char_budget=char_budget,
+        semantic_rerank=semantic_rerank,
+        return_meta=True,
+    )
+    if early is not None:
+        return RetrievalResult([], FallbackStage.EMPTY, 0)
+    if entries_source is None:
+        return RetrievalResult([], FallbackStage.EMPTY, 0)
 
     raw = _select_ranked_entries(
         entries=entries_source,
         normalized_text=normalized_text,
         wanted_tags=effective_tags,
         limit=limit,
-        params=params,
+        params=p,
     )
-
-    if category != "structural":
-        weight = 0.35 if params.semantic_rerank else 0.0
-        if params.return_meta:
-            assert isinstance(raw, RetrievalResult)
-            reranked = _semantic_rerank(raw.entries, text, semantic_weight=weight)
-            return RetrievalResult(reranked, raw.stage, raw.dropped_count)
-        assert isinstance(raw, list)
-        return _semantic_rerank(raw, text, semantic_weight=weight)
-    return raw
+    reranked = _apply_semantic_rerank_if_needed(
+        raw,
+        category,
+        text,
+        semantic_rerank=p.semantic_rerank,
+        return_meta=True,
+        semantic_index_service=semantic_index_service,
+    )
+    if not isinstance(reranked, RetrievalResult):
+        raise RuntimeError(
+            "select_entries_with_meta: expected RetrievalResult "
+            f"after rerank, got {type(reranked).__name__}"
+        )
+    return reranked
 
 
 # ---------------------------------------------------------------------------
@@ -904,6 +1123,7 @@ def select_grammar_rules(
     *,
     return_meta: bool = False,
     semantic_rerank: bool = False,
+    semantic_index_service: SemanticIndexService | None = None,
 ) -> list[dict[str, Any]] | RetrievalResult:
     """Обёртка для обратной совместимости: select_entries для категории "grammar"."""
     params = SelectionParams(
@@ -925,6 +1145,7 @@ def select_grammar_rules(
         limit=limit,
         return_meta=return_meta,
         semantic_rerank=semantic_rerank,
+        semantic_index_service=semantic_index_service,
     )
 
 
@@ -939,6 +1160,7 @@ def select_style_issues(
     *,
     return_meta: bool = False,
     semantic_rerank: bool = False,
+    semantic_index_service: SemanticIndexService | None = None,
 ) -> list[dict[str, Any]] | RetrievalResult:
     """Обёртка для обратной совместимости: select_entries для категории "style"."""
     params = SelectionParams(
@@ -960,6 +1182,7 @@ def select_style_issues(
         limit=limit,
         return_meta=return_meta,
         semantic_rerank=semantic_rerank,
+        semantic_index_service=semantic_index_service,
     )
 
 
@@ -974,6 +1197,7 @@ def select_logic_issues(
     *,
     return_meta: bool = False,
     semantic_rerank: bool = False,
+    semantic_index_service: SemanticIndexService | None = None,
 ) -> list[dict[str, Any]] | RetrievalResult:
     """Обёртка для обратной совместимости: select_entries для категории "logic" (limit по умолчанию 8)."""
     params = SelectionParams(
@@ -995,6 +1219,7 @@ def select_logic_issues(
         limit=limit,
         return_meta=return_meta,
         semantic_rerank=semantic_rerank,
+        semantic_index_service=semantic_index_service,
     )
 
 

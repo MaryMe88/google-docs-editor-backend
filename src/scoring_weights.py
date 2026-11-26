@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import logging
+from functools import lru_cache
 from pathlib import Path
 from typing import Final
 
@@ -23,50 +24,52 @@ _DEFAULT_WEIGHTS: Final[dict[str, int]] = {
     "tag_expanded": 2,
 }
 
-_WEIGHTS_CACHE: dict[str, int] | None = None
 _CONFIG_PATH = Path("config") / "scoring_weights.json"
 
 
-def load_scoring_weights() -> dict[str, int]:
+@lru_cache(maxsize=1)
+def _load_scoring_weights_cached() -> dict[str, int]:
     """
-    Загружает веса из config/scoring_weights.json.
-    Если файл отсутствует или повреждён, возвращает значения по умолчанию
-    и логирует предупреждение.
-    """
-    global _WEIGHTS_CACHE
-    if _WEIGHTS_CACHE is not None:
-        return _WEIGHTS_CACHE
+    Загружает веса из config/scoring_weights.json (с кешированием в lru_cache).
 
+    Если файл отсутствует или повреждён, возвращает значения по умолчанию
+    и логирует предупреждение. Дополнительные ключи в файле разрешены,
+    но не используются.
+    """
     if not _CONFIG_PATH.is_file():
         logger.warning(
             "Scoring weights config not found at %s, using defaults.",
             _CONFIG_PATH,
         )
-        _WEIGHTS_CACHE = _DEFAULT_WEIGHTS.copy()
-        return _WEIGHTS_CACHE
+        return _DEFAULT_WEIGHTS.copy()
 
     try:
         with open(_CONFIG_PATH, encoding="utf-8") as f:
             data = json.load(f)
-        # Проверяем, что все ключи присутствуют и значения — int
         for key in _DEFAULT_WEIGHTS:
             if key not in data:
                 raise ValueError(f"Missing key '{key}' in scoring_weights.json")
             if not isinstance(data[key], int):
                 raise ValueError(f"Key '{key}' must be integer, got " f"{type(data[key]).__name__}")
-        # Дополнительные ключи в файле разрешены, но не используются
-        _WEIGHTS_CACHE = {key: data[key] for key in _DEFAULT_WEIGHTS}
+        result = {key: data[key] for key in _DEFAULT_WEIGHTS}
         logger.info("Loaded scoring weights from %s", _CONFIG_PATH)
+        return result
     except (json.JSONDecodeError, OSError, ValueError, TypeError) as e:
-        # Файл есть, но повреждён, недоступен для чтения или содержит
-        # данные неверного формата — не критично, используем дефолты.
         logger.error(
             "Failed to load scoring weights: %s. Using defaults.",
             e,
         )
-        _WEIGHTS_CACHE = _DEFAULT_WEIGHTS.copy()
+        return _DEFAULT_WEIGHTS.copy()
 
-    return _WEIGHTS_CACHE
+
+def load_scoring_weights() -> dict[str, int]:
+    """Возвращает веса скоринга (кешируются через lru_cache)."""
+    return _load_scoring_weights_cached()
+
+
+def reset_scoring_weights_cache() -> None:
+    """Сбрасывает кеш весов; для тестов и hot-reload."""
+    _load_scoring_weights_cached.cache_clear()
 
 
 def get_scoring_weight(name: str) -> int:

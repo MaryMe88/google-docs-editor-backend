@@ -1,8 +1,8 @@
 # LLM Editor for Google Docs (RU)
 
-Расширение для Google Docs и backend‑сервис, который помогает редактировать русскоязычные тексты с опорой на структурированную базу знаний: грамматика, стилистика, логика, композиция, сторителлинг и риторика.
+Backend-сервис (FastAPI) и клиент для Google Docs (Google Apps Script), которые помогают редактировать русскоязычные тексты с опорой на структурированную базу знаний: грамматика, стилистика, логика, композиция, сторителлинг и риторика.
 
-Правки применяются к выделенному фрагменту — автор сразу видит отредактированный текст, без объяснительных комментариев.
+Правки применяются к выделенному фрагменту — автор сразу видит отредактированный текст, без объяснительных комментариев (отчёт включается опционально).
 
 ## Что умеет
 
@@ -41,6 +41,7 @@
 * Пресс-релиз / новость
 * Лендинг / промостраница
 * Рабочий документ
+* Кейс-стади (`statya` + overlay `casestudy`)
 
 **Творческие режимы**
 
@@ -49,317 +50,223 @@
 
 ### 🔬 Глубокая проверка (опционально)
 
-Стандартный режим работы подбирает правила из базы знаний на основе точного совпадения ключевых слов и тегов. Это быстро и надёжно для большинства текстов.
+Стандартный режим подбирает правила из базы знаний по точному совпадению ключевых слов и тегов — это быстро и надёжно для большинства текстов.
 
-При включении опции **«Глубокая проверка»** (параметр `deep_semantic_search: true` в запросе) система дополнительно применяет семантический re‑ранкинг:
+При `deep_semantic_search: true` в запросе дополнительно применяется семантический re-rankинг:
 
-* Загружается лёгкая модель `sentence-transformers` (`cointegrated/rubert-tiny2`), которая вычисляет векторные представления записей базы знаний и текста пользователя.
-* Правила, уже отобранные по ключевым словам, пересортировываются с учётом смысловой близости к тексту.
-* Это позволяет **точнее подбирать** релевантные правила для творческих, композиционных и сложных стилистических задач, где ключевые слова могут не совпадать дословно.
+* Используется лёгкая модель `sentence-transformers` (`cointegrated/rubert-tiny2`), которая вычисляет векторные представления записей базы знаний и текста пользователя.
+* Правила, уже отобранные по тегам, пересортировываются с учётом смысловой близости к тексту.
+* Это позволяет точнее подбирать релевантные правила для творческих, композиционных и сложных стилистических задач, где ключевые слова могут не совпадать дословно.
 
 **Цена включения:**
 
-* Первый запрос с `deep_semantic_search=true` загружает модель (примерно 200–300 МБ ОЗУ) и строит индекс для всей базы знаний — это занимает несколько секунд.
-* Последующие запросы используют уже загруженный индекс, но каждый раз выполняется вычисление эмбеддинга текста и сравнение с записями, что добавляет **≈ 100–300 мс** к времени ответа.
-* Модель не загружается, если ни один запрос не использовал эту опцию — экономия ресурсов на сервере.
+* Первый запрос строит индекс для всей базы знаний — занимает несколько секунд и немного памяти.
+* Последующие запросы добавляют ≈ 100–300 мс к времени ответа (эмбеддинг текста + сравнение).
+* Модель не загружается, если ни один запрос не использовал эту опцию.
 
-**По умолчанию опция выключена** (`deep_semantic_search: false`), что гарантирует максимальную скорость для повседневных проверок. Клиенты (например, Google Apps Script) могут включить её через соответствующий параметр в запросе, когда пользователь явно запросил более глубокий анализ.
-
+**По умолчанию опция выключена** (`deep_semantic_search: false`).
 
 ## Стек
 
-* **Backend:** FastAPI, задеплоен на [Render](https://render.com)
-* **LLM‑провайдер:** [OpenRouter](https://openrouter.ai) (модель задаётся в конфиге или env)
-* **Клиент:** Google Apps Script (файл `New Script.js`)
+* **Backend:** FastAPI + Uvicorn, задеплоен на [Render](https://render.com) (`render.yaml`)
+* **LLM-провайдер:** [OpenRouter](https://openrouter.ai) по умолчанию; модель задаётся через allowlist в `src/model_policy.py`
+* **Семантический индекс:** `sentence-transformers` (`cointegrated/rubert-tiny2`), опционально
+* **Клиент:** Google Apps Script (`google_apps_script/New Script.js`)
 * **Python:** 3.11+ (CI проверяет 3.11 и 3.12)
+* **Качество:** Ruff (lint + format), mypy, pytest; CI и security-воркфлоу в `.github/workflows/`
 
 ## Архитектура
 
 ### Файловая структура
 
 ```
-google-docs-editor-backend/
-
 ├── src/
-
-│ ├── main.py # FastAPI-приложение, эндпоинт POST /api/edit
-
-│ ├── auth.py # Проверка X-API-Key (мягкий / строгий режим)
-
-│ ├── contracts.py # Pydantic-схемы запросов и ответов API
-
-│ ├── shared\_contracts.py # Общие Pydantic-типы, используемые в нескольких модулях
-
-│ ├── config\_types.py # TypedDict-типы для конфигов (core, domain, intent, overlay)
-
-│ ├── prompt\_builder/ # Пакет сборки промпта
-
-│ │ ├── init.py # Публичный API (реэкспорт)
-
-│ │ ├── builder.py # Класс PromptBuilder
-
-│ │ ├── normalization.py # Нормализация intent/overlays
-
-│ │ ├── defaults.py # Константы и дефолтные конфиги
-
-│ │ ├── config\_loaders.py # Загрузка конфигов (core, domain, intent, overlays)
-
-│ │ ├── kb\_loading.py # Загрузка KB, KBBlockConfig, KB\_BLOCK\_REGISTRY
-
-│ │ ├── kb\_rendering.py # Рендеринг KB-блоков, few-shot, confidence notes
-
-│ │ └── feature\_resolution.py# resolve\_prompt\_features и объяснимость
-
-│ ├── knowledge\_retrieval.py # Retrieval-логика: скоринг, селекторы, fallback
-
-│ ├── kb\_manifest\_loader.py # Загрузка и валидация kb\_manifest.json
-
-│ ├── semantic\_index.py # Лёгкий семантический индекс KB по тегам
-
-│ ├── tag\_registry.py # Реестр допустимых тегов KB
-
-│ ├── scoring\_weights.py # Веса скоринга для ранжирования правил KB
-
-│ ├── reason\_codes.py # Коды причин (reason codes) в отчёте правки
-
-│ ├── output\_guard.py # Постобработка и валидация ответа LLM
-
-│ ├── llm\_client.py # HTTP-клиент OpenRouter
-
-│ ├── registry.py # Реестр провайдеров и моделей
-
-│ ├── provider\_registry.py # Маппинг имён провайдеров на реализации клиентов
-
-│ └── startup\_checks.py # Проверки конфигурации при старте сервиса
-
+│   ├── main.py                     # FastAPI-приложение, lifespan, middleware, роутеры
+│   ├── auth.py                     # Проверка X-API-Key (soft-mode / строгий режим)
+│   ├── contracts.py                # Pydantic-схемы запросов и ответов API
+│   ├── shared_contracts.py         # Общие Pydantic-типы для нескольких модулей
+│   ├── config_types.py             # TypedDict-типы конфигов (core, domain, intent, overlay)
+│   ├── startup_checks.py           # Проверки конфигурации и окружения при старте
+│   │
+│   ├── routers/
+│   │   ├── edit.py                 # POST /api/edit
+│   │   └── health.py               # GET /, /health, /livez
+│   ├── services/
+│   │   ├── edit_service.py         # Оркестрация: retrieval → prompt → LLM → guard
+│   │   └── provider_health.py      # Проверка доступности провайдеров
+│   ├── middleware/
+│   │   └── body_size.py            # Ограничение размера тела запроса
+│   │
+│   ├── knowledge_retrieval.py      # Retrieval-логика: скоринг, селекторы, fallback
+│   ├── kb_manifest_loader.py       # Загрузка и валидация kb_manifest.json
+│   ├── semantic_index.py           # Семантический индекс KB (rubert-tiny2)
+│   ├── tag_registry.py             # Реестр допустимых тегов KB
+│   ├── scoring_weights.py          # Веса скоринга для ранжирования правил KB
+│   ├── reason_codes.py             # Коды причин правок в отчёте
+│   ├── output_guard.py             # Постобработка и валидация ответа LLM
+│   ├── context_budget.py           # Бюджет контекста модели, оценка токенов
+│   ├── model_policy.py             # Allowlist моделей и дефолты по провайдерам
+│   ├── error_mapping.py            # Маппинг внутренних ошибок в ответы API
+│   ├── rate_limit.py               # Rate limiting (slowapi)
+│   ├── llm_client.py               # HTTP-клиент OpenRouter (+ прочие провайдеры)
+│   ├── registry.py                 # Реестр провайдеров и моделей
+│   ├── provider_registry.py        # Маппинг имён провайдеров на реализации клиентов
+│   │
+│   ├── prompt_builder/
+│   │   ├── __init__.py             # Публичный API пакета (реэкспорт)
+│   │   ├── builder.py              # Класс PromptBuilder (сборка финального промпта)
+│   │   ├── contracts.py            # Внутренние контракты пакета
+│   │   ├── defaults.py             # Константы и дефолтные конфиги
+│   │   ├── normalization.py        # Нормализация intent/overlays
+│   │   ├── config_loaders.py       # Загрузка конфигов core/domain/intent/overlays
+│   │   ├── kb_loading.py           # Загрузка KB-блоков, KBBlockConfig, реестр блоков
+│   │   ├── kb_rendering.py         # Рендеринг KB-блоков, few-shot, confidence notes
+│   │   ├── feature_resolution.py   # resolve_prompt_features и объяснимость
+│   │   └── _patchable.py           # Точки для тестовых моков
+│   │
+│   └── config_models/
+│       ├── domain.py               # Типы доменных конфигов
+│       ├── tags.py                 # Теги и их синонимы
+│       ├── tag_constants.py        # Константы тегов
+│       ├── limits.py               # Лимиты на количество записей KB по блокам
+│       ├── knowledge_budget.py     # Бюджет знаний для промпта
+│       ├── explainability.py       # Модели объяснимости выбора правил
+│       └── cache.py                # Кэш конфигов и KB
+│
 ├── config/
-
-│ ├── core.json # Базовая роль редактора, приоритеты, запреты
-
-│ ├── domains/ # Режимы: basic\_edit, logic\_edit, marketing, blog, fiction,
-
-│ │ # composition, nora\_gal, nora\_gal\_soft, balanced\_edit,
-
-│ │ # deai, genre, cutnoise, makeclear, restructure, readerfirst
-
-│ ├── intents/ # Цели: analytical, marketingpush, storytelling, engagement
-
-│ ├── overlays/ # Надстройки: base, infostyle, coldemail, pressrelease,
-
-│ │ # landing, workdoc
-
-│ └── output\_format.json # Форматы ответа: text\_only, text\_and\_report
-
-├── knowledge\_base/
-
-│ ├── kb\_manifest.json # Реестр всех файлов KB с тегами и метаданными
-
-│ ├── grammar\_errors.json # Грамматические и орфографические ошибки
-
-│ ├── stop\_words.json # Стоп-слова и нежелательные конструкции
-
-│ ├── logic\_issues.json # Логические ошибки и проблемы связности
-
-│ ├── local\_cohesion.json # Приёмы локальной связности
-
-│ ├── composition\_principles.json # Принципы композиции
-
-│ ├── composition\_errors.json # Типичные композиционные ошибки
-
-│ ├── nkrj\_structure\_patterns.json # Структурные паттерны (по корпусу НКРЯ)
-
-│ ├── stylistic\_issues/ # Стилистические ошибки (папка, несколько файлов)
-
-│ ├── editorial\_techniques/ # Редакторские приёмы (папка, несколько файлов)
-
-│ ├── storytelling\_macrostructures.json # Макроструктуры нарратива (AIDA, трёхактная и др.)
-
-│ ├── storytelling\_microtechniques.json # Микротехники сторителлинга
-
-│ ├── rhetoric\_figures.json # Риторические фигуры
-
-│ ├── rhetoric\_topoi.json # Топосы и аргументативные схемы
-
-│ ├── rhetoric\_tropes\_and\_strategies.json # Тропы и риторические стратегии
-
-│ ├── marketing\_email.json # Шаблоны писем
-
-│ ├── marketing\_social.json # Шаблоны постов
-
-│ ├── marketing\_web.json # Шаблоны лендингов и веб-текстов
-
-│ └── marketing\_other.json # Прочие маркетинговые форматы
-
-├── New Script.js # Apps Script для Google Docs
-
-├── generate\_kb\_manifest.py # Скрипт генерации kb\_manifest.json
-
-└── requirements.txt
-
+│   ├── core.json                   # Базовая роль редактора, приоритеты, запреты
+│   ├── output_format.json          # Форматы ответа: text_only, text_and_report
+│   ├── scoring_weights.json        # Веса retrieval-скоринга
+│   ├── tag_map.json                # Карта тегов (запросы ↔ теги KB)
+│   ├── domains/                    # Режимы: basic_edit, logic_edit, marketing, blog,
+│   │                               # fiction, composition, nora_gal, nora_gal_soft,
+│   │                               # balanced_edit, deai, genre, cutnoise, makeclear,
+│   │                               # restructure, readerfirst, statya
+│   ├── intents/                    # Цели: analytical, engagement, marketingpush, storytelling
+│   └── overlays/                   # Надстройки: base, infostyle, post, coldemail,
+│                                   # pressrelease, landing, workdoc, casestudy, cohesion,
+│                                   # factcheck, finalcheck_full, finalcheck_light,
+│                                   # no_overwrite, readerfocus, recommendations,
+│                                   # structurefirst, audiencesegment
+│
+├── knowledge_base/
+│   ├── kb_manifest.json            # Реестр всех файлов KB: теги, load_mode, бюджет
+│   ├── grammar_errors.json         # Грамматические и орфографические ошибки
+│   ├── stop_words.json             # Стоп-слова и нежелательные конструкции
+│   ├── logic_issues.json           # Логические ошибки и проблемы связности
+│   ├── local_cohesion.json         # Приёмы локальной связности
+│   ├── composition_principles.json # Принципы композиции
+│   ├── composition_errors.json     # Типичные композиционные ошибки
+│   ├── nkrj_structure_patterns.json# Структурные паттерны (по корпусу НКРЯ)
+│   ├── otsenki.json                # Техники оценочного анализа текста
+│   ├── stylistic_issues/           # Стилистические ошибки (грамматика, лексика, фразеология)
+│   ├── editorial_techniques/       # Редакторские приёмы (Нора Галь, анти-ИИ, жанры и др.)
+│   ├── genres/business/            # Жанровые шаблоны (кейс-стади и др.)
+│   ├── storytelling_macrostructures.json
+│   ├── storytelling_microtechniques.json
+│   ├── rhetoric_figures.json       # Риторические фигуры
+│   ├── rhetoric_topoi.json         # Топосы и аргументативные схемы
+│   ├── rhetoric_tropes_and_strategies.json
+│   ├── marketing_email.json        # Шаблоны писем
+│   ├── marketing_social.json       # Шаблоны постов
+│   ├── marketing_web.json          # Шаблоны лендингов и веб-текстов
+│   └── marketing_other.json        # Прочие маркетинговые форматы
+│
+├── google_apps_script/
+│   └── New Script.js               # Клиент для Google Docs (Apps Script)
+├── .github/
+│   ├── workflows/                  # ci.yml (lint+mypy+tests), security.yml
+│   └── scripts/verify_torch.py     # Проверка установки torch в CI
+├── scripts/
+│   ├── generate_kb_manifest.py     # Генерация kb_manifest.json
+│   ├── validate_kb_tags.py         # Валидация тегов KB (запускается и при деплое)
+│   ├── audit_tags.py               # Аудит покрытия тегов
+│   ├── fix_tag_map.py              # Синхронизация tag_map.json
+│   └── llm_smoke.py                # Смоук-тест LLM-цепочки
+├── tests/                          # Юнит-, интеграционные и golden-тесты (pytest)
+├── docs/security/                  # Отчёты по безопасности и аудитам зависимостей
+├── render.yaml                     # Конфиг деплоя на Render
+├── pyproject.toml                  # Настройки Ruff, mypy, pytest
+├── requirements.txt / requirements-dev.txt
+└── .env.example                    # Шаблон переменных окружения
 ```
 
 ### Поток данных (request lifecycle)
 
 ```
 Google Docs (Apps Script)
-
-│
-
-│ POST /api/edit
-
-│ { text, domain, intent, audience, overlays }
-
-▼
-
-┌─────────────────────────────────────────────┐
-
-│ main.py (FastAPI) │
-
-│ 1. auth.py — проверка X-API-Key │
-
-│ 2. contracts.py — валидация запроса │
-
-│ 3. вызов PromptBuilder │
-
-└──────────────────┬──────────────────────────┘
-
-│
-
-▼
-
-┌─────────────────────────────────────────────┐
-
-│ prompt\_builder/ (пакет) │
-
-│ · Загружает core.json + domain + intent │
-
-│ + overlays (config\_loaders.py) │
-
-│ · Вызывает KnowledgeRetrieval для отбора │
-
-│ правил из KB │
-
-│ · Собирает финальный промпт: │
-
-│ роль + инструкции + KB-блок + текст │
-
-└──────────────────┬──────────────────────────┘
-
-│
-
-┌────────┴────────┐
-
-▼ ▼
-
-┌──────────────────┐ ┌─────────────────────────┐
-
-│ knowledge\_ │ │ config/ │
-
-│ retrieval.py │ │ core.json │
-
-│ │ │ domains/<domain>.json │
-
-│ · kb\_manifest\_ │ │ intents/<intent>.json │
-
-│ loader.py │ │ overlays/\*.json │
-
-│ · semantic\_ │ │ output\_format.json │
-
-│ index.py │ └─────────────────────────┘
-
-│ · tag\_registry │
-
-│ · scoring\_ │
-
-│ weights.py │
-
-└──────────────────┘
-
-│
-
-▼
-
-┌─────────────────────────────────────────────┐
-
-│ llm\_client.py │
-
-│ · Отправляет промпт в OpenRouter │
-
-│ · registry.py / provider\_registry.py — │
-
-│ выбор модели и провайдера │
-
-└──────────────────┬──────────────────────────┘
-
-│
-
-▼
-
-┌─────────────────────────────────────────────┐
-
-│ output\_guard.py │
-
-│ · Валидирует и санирует ответ LLM │
-
-│ · reason\_codes.py — коды правок в отчёте │
-
-└──────────────────┬──────────────────────────┘
-
-│
-
-▼
-
-Ответ → Google Docs
-
+        │  POST /api/edit  (X-API-Key)
+        ▼
+main.py (FastAPI)
+  1. middleware/body_size.py — лимит размера тела; rate_limit.py — лимит запросов
+  2. auth.py — проверка X-API-Key (strict-mode отклоняет запросы без ключа)
+  3. contracts.py — валидация схемы (text ≤ 10 000 симв., domain/intent/overlays/model)
+        ▼
+services/edit_service.py — оркестрация
+  ├─ Knowledge Retrieval:
+  │    kb_manifest_loader.py → tag_registry.py → semantic_index.py (опц.)
+  │    knowledge_retrieval.py + scoring_weights.py — скоринг и отбор правил
+  ├─ PromptBuilder (prompt_builder/):
+  │    core.json + domain + intent + overlays + KB-блоки + few-shot
+  │    context_budget.py — контроль бюджета токенов модели
+  ├─ llm_client.py + provider_registry.py — запрос к OpenRouter
+  └─ output_guard.py + reason_codes.py — валидация ответа, формирование отчёта
+        ▼
+EditResponse { edited_text, report?, usage, retrieval_meta? }
 ```
 
 ### Слои и ответственности модулей
 
-|Слой|Модули|Роль|
-|-|-|-|
-|**API / Transport**|`main.py`, `auth.py`, `contracts.py`, `shared\_contracts.py`|Приём запроса, аутентификация, валидация схемы|
-|**Оркестрация**|`prompt\_builder/`|Сборка финального промпта из конфигов и KB|
-|**Конфигурация**|`config\_types.py`, `startup\_checks.py`|Типизированные конфиги, проверка окружения при старте|
-|**Knowledge Retrieval**|`knowledge\_retrieval.py`, `kb\_manifest\_loader.py`, `semantic\_index.py`, `tag\_registry.py`, `scoring\_weights.py`|Загрузка KB, скоринг и отбор релевантных правил|
-|**LLM Client**|`llm\_client.py`, `registry.py`, `provider\_registry.py`|HTTP-обращение к OpenRouter, маршрутизация по провайдерам|
-|**Output**|`output\_guard.py`, `reason\_codes.py`|Постобработка ответа, формирование отчёта о правках|
+| Слой | Модули | Ответственность |
+|---|---|---|
+| API / Transport | `main.py`, `routers/`, `auth.py`, `contracts.py`, `shared_contracts.py`, `middleware/`, `rate_limit.py` | Приём запроса, аутентификация, валидация схемы, лимиты |
+| Сервис | `services/edit_service.py`, `error_mapping.py` | Оркестрация пайплайна, маппинг ошибок |
+| Конфигурация | `config_types.py`, `config_models/`, `startup_checks.py`, `model_policy.py` | Типизированные конфиги, allowlist моделей, проверки при старте |
+| Knowledge Retrieval | `knowledge_retrieval.py`, `kb_manifest_loader.py`, `semantic_index.py`, `tag_registry.py`, `scoring_weights.py` | Загрузка KB, скоринг и отбор релевантных правил |
+| Prompt Assembly | `prompt_builder/`, `context_budget.py` | Сборка промпта, бюджет контекста, объяснимость |
+| LLM Client | `llm_client.py`, `registry.py`, `provider_registry.py`, `services/provider_health.py` | HTTP-обращение к провайдерам, маршрутизация, fallback |
+| Output | `output_guard.py`, `reason_codes.py` | Постобработка ответа, защита от порчи текста, отчёт |
 
 ### Knowledge Retrieval: как выбираются правила
 
-Модуль `knowledge\_retrieval.py` реализует многоступенчатый отбор правил из базы знаний:
+Модуль `knowledge_retrieval.py` реализует многоступенчатый отбор:
 
-1. **Манифест** (`kb\_manifest\_loader.py`) — загружает `kb\_manifest.json` со списком всех файлов KB, их тегами и режимом загрузки (`load\_mode`: `always` / `on\_demand` / `tagged`).
-2. **Тег-реестр** (`tag\_registry.py`) — хранит допустимые теги и их синонимы; предотвращает опечатки и дрейф тегов.
-3. **Семантический индекс** (`semantic\_index.py`) — лёгкий индекс KB по тегам; позволяет быстро сузить кандидатов без эмбеддингов.
-4. **Скоринг** (`scoring\_weights.py`) — взвешивает совпадение тегов запроса (domain + intent + overlays) с тегами файлов KB; чем выше совпадение — тем выше ранг.
-5. **Fallback** — если ни один файл не прошёл порог релевантности, активируются файлы с `load\_mode: always`.
-6. **Финальный набор** правил передаётся в `prompt\_builder.py/` для включения в KB-блок промпта.
+1. **Манифест** (`kb_manifest_loader.py`) — `kb_manifest.json` содержит все файлы KB с полями `tags`, `intents`, `load_mode`, `budget_weight`, `stage`, `block_name`.
+2. **Режимы загрузки** (`load_mode`): `always` — грузится при каждом запросе; `by_tags` — при совпадении тегов; `by_intent` — только при явном интенте; `never` — отключён.
+3. **Тег-реестр** (`tag_registry.py`) — допустимые теги и синонимы; предотвращает опечатки и дрейф тегов.
+4. **Семантический индекс** (`semantic_index.py`) — эмбеддинги `rubert-tiny2` для re-rankинга (только при `deep_semantic_search=true`).
+5. **Скоринг** (`scoring_weights.py` + `config/scoring_weights.json`) — взвешивает совпадение тегов запроса (domain + intent + overlays) с тегами файлов KB.
+6. **Лимиты и бюджет** (`config_models/limits.py`, `knowledge_budget.py`, `context_budget.py`) — ограничивают число записей на блок и общий размер промпта; блоки с меньшим `budget_weight` урезаются первыми.
+7. Финальный набор правил передаётся в `prompt_builder/` для включения в KB-блок промпта.
 
 ### Как работает сборка промпта
 
-1. Google Docs отправляет JSON с текстом, `domain`, `intent`, `audience` и `overlays`
-2. `PromptBuilder` (в пакете `prompt\_builder/`) загружает `config/core.json` + нужный домен + интент + оверлеи
-3. `KnowledgeRetrieval` выбирает релевантные файлы KB по тегам и `load\_mode`
-4. Финальный промпт = роль + инструкции + KB-блок + текст пользователя
-5. Запрос уходит в OpenRouter, ответ проходит через `output\_guard.py` и возвращается в документ
+1. Клиент присылает `domain`, `intent`, `overlays`, `audience`, `output_mode`.
+2. `PromptBuilder` загружает `config/core.json` + домен + интент + оверлеи (`config_loaders.py`), нормализует их (`normalization.py`).
+3. Отбранные правила KB рендерятся в блоки с few-shot примерами (`kb_loading.py`, `kb_rendering.py`).
+4. `context_budget.py` контролирует, чтобы промпт + ожидаемый ответ помещались в окно контекста модели.
+5. Запрос уходит в OpenRouter (`llm_client.py`); ответ проходит через `output_guard.py` и возвращается в документ.
 
 ## Локальный запуск
 
 ```bash
 git clone https://github.com/MaryMe88/google-docs-editor-backend.git
 cd google-docs-editor-backend
+python -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
+cp .env.example .env   # заполните значения
 ```
 
-Создайте `.env`:
+Минимально необходимые переменные окружения (полный список — в `.env.example`):
 
 ```env
-OPENROUTER\_API\_KEY=...
-OPENROUTER\_SITE\_URL=https://docs.google.com
-OPENROUTER\_APP\_NAME=GoogleDocs LLM Editor
+OPENROUTER_API_KEY=...
+OPENROUTER_SITE_URL=https://docs.google.com
+OPENROUTER_APP_NAME=GoogleDocs LLM Editor
 # Секрет для аутентификации запросов из Apps Script (заголовок X-API-Key).
-# Если не задан — эндпоинты работают без проверки (soft-mode).
-API\_SECRET\_KEY=
+# Если не задан — эндпоинты работают в soft-mode (без проверки).
+API_SECRET_KEY=
+ENV=development
 ```
 
 Запуск:
@@ -371,57 +278,131 @@ uvicorn src.main:app --host 0.0.0.0 --port 8000 --reload
 Проверка:
 
 ```bash
-curl http://localhost:8000/health
+curl http://localhost:8000/health   # readiness
+curl http://localhost:8000/livez    # liveness
 ```
+
+Тесты и линтеры:
+
+```bash
+pip install -r requirements-dev.txt
+pytest
+ruff check src tests scripts && ruff format --check src tests scripts
+mypy src
+```
+
+## API
+
+### POST /api/edit
+
+Запрос (`src/contracts.py`, contract version 1.1.0):
+
+```json
+{
+  "text": "выделенный фрагмент, ≤ 10000 символов",
+  "domain": "marketing",
+  "intent": "analytical",
+  "overlays": ["infostyle"],
+  "audience": {"kind": "b2b", "expertise": "pro", "formality": "neutral"},
+  "output_mode": "text_only",
+  "provider": "openrouter",
+  "model": null,
+  "temperature": 0.3,
+  "include_knowledge": true,
+  "include_few_shot": true,
+  "include_retrieval_meta": false,
+  "deep_semantic_search": false,
+  "dry_run": false
+}
+```
+
+Ответ:
+
+```json
+{
+  "edited_text": "...",
+  "report": null,
+  "provider": "openrouter",
+  "model": "deepseek/deepseek-v4-flash",
+  "usage": {},
+  "retrieval_meta": null
+}
+```
+
+* `output_mode: "text_and_report"` — добавляет отчёт о правках с кодами причин (`reason_codes.py`).
+* `dry_run: true` — возвращает собранный промпт без обращения к LLM.
+* Явный выбор `model` разрешён только для OpenRouter и только из allowlist (`src/model_policy.py`).
+
+### Служебные эндпоинты
+
+* `GET /` и `GET /health` — состояние сервиса и провайдеров
+* `GET /livez` — liveness-проба для Render
 
 ## Подключение к Google Docs
 
 1. Откройте документ Google Docs
 2. `Extensions → Apps Script`
-3. Вставьте код из `New Script.js`
+3. Вставьте код из `google_apps_script/New Script.js`
 4. Сохраните проект и обновите документ — появится меню **«LLM редактор»**
 
 ### Настройка подключения (URL и API-ключ)
 
-URL бэкенда и секретный API-ключ **больше не хардкодятся** — они хранятся
-в Script Properties и не попадают в Git.
+URL бэкенда и секретный API-ключ **не хардкодятся** — они хранятся в Script Properties и не попадают в Git.
 
 1. В меню выберите **«LLM редактор → ⚙ Настройка подключения»**
-2. Введите URL бэкенда (endpoint `/api/edit`) — или оставьте пустым для fallback
-3. Введите API-ключ (значение `API\_SECRET\_KEY` на сервере). Чтобы удалить ключ
-и работать в soft-mode, введите `CLEAR`
+2. Введите URL бэкенда (endpoint `/api/edit`)
+3. Введите API-ключ (значение `API_SECRET_KEY` на сервере). Чтобы удалить ключ
+   и работать в soft-mode, введите `CLEAR`
 
-Альтернатива: задайте свойства `BACKEND\_URL` и `API\_SECRET\_KEY` вручную в
+Альтернатива: задайте свойства `BACKEND_URL` и `API_SECRET_KEY` вручную в
 `Project Settings → Script Properties` редактора Apps Script.
 
 ### Безопасность и ограничения
 
-* **Аутентификация**: запросы подписываются заголовком `X-API-Key`, если ключ задан
-* **Лимит текста**: выделение > 10000 символов отклоняется до отправки на сервер
+* **Аутентификация**: запросы подписываются заголовком `X-API-Key`; в strict-mode
+  (`ENV=production` + заданный ключ) запросы без ключа отклоняются
+* **Rate limiting**: `/api/edit` — 10 запросов/минуту на IP, health-эндпоинты — 60/минуту
+* **Лимит текста**: выделение > 10 000 символов отклоняется до отправки на сервер;
+  дополнительно ограничивается размер тела запроса (`middleware/body_size.py`)
+* **Allowlist моделей**: произвольные имена моделей отклоняются (`model_policy.py`)
+* **Output guard**: ответ LLM проверяется перед вставкой в документ — правки не должны
+  сокращать или полностью переписывать текст сверх разрешённого режима
 * **Откат**: перед заменой сохраняется оригинал; пункт **«↩ Отменить последнюю правку»**
-возвращает его на место
+  возвращает его на место
+* Отчёты по аудиту безопасности — в `docs/security/`
 
 ## Расширение базы знаний
 
-База знаний управляется через `knowledge\_base/kb\_manifest.json` — реестр всех файлов с тегами, `load\_mode` и метаданными. Добавить новый файл:
+База знаний управляется через `knowledge_base/kb_manifest.json` — реестр всех файлов
+с тегами, `load_mode`, `budget_weight` и метаданными. Добавить новый файл:
 
-1. Создайте JSON в нужной папке `knowledge\_base/`
-2. Запустите `python generate\_kb\_manifest.py` — он обновит манифест
-3. При необходимости отредактируйте теги и `load\_mode` в `kb\_manifest.json` вручную
+1. Создайте JSON в нужной папке `knowledge_base/`
+2. Запустите `python scripts/generate_kb_manifest.py` — он обновит манифест
+3. При необходимости отредактируйте теги, `load_mode` и `budget_weight` в манифесте
+4. Проверьте теги: `python scripts/validate_kb_tags.py`
 
 Добавить новый режим (домен):
 
 1. Создайте `config/domains/<name>.json`
-2. При необходимости добавьте intent в `config/intents/`
-3. Добавьте пункт меню в `New Script.js`
+2. При необходимости добавьте intent в `config/intents/` или overlay в `config/overlays/`
+3. Добавьте пункт меню в `google_apps_script/New Script.js`
+
+## Деплой
+
+`render.yaml` описывает сервис на Render: build `pip install -r requirements.txt`,
+pre-deploy `python3 scripts/validate_kb_tags.py`, start `uvicorn src.main:app --workers 2`,
+health check `/livez`. Секреты (`OPENROUTER_API_KEY`, `API_SECRET_KEY`) задаются
+в Dashboard Environment Variables и не хранятся в репозитории.
+
+CI (`.github/workflows/ci.yml`): ruff lint/format, mypy, gate сложности,
+валидация тегов KB, pytest на Python 3.11 и 3.12.
 
 ## Ограничения
 
 * Модель не должна придумывать факты и менять позицию автора — это задаётся в `config/core.json`
-* Режим `basic\_edit` ограничен лёгкой правкой, не затрагивает композицию
+* Режим `basic_edit` ограничен лёгкой правкой, не затрагивает композицию
 * Язык работы — русский; другие языки требуют отдельной конфигурации
 
 ## Лицензия
 
-MIT
-
+MIT (см. `LICENSE.txt` и `NOTICE.md`).
