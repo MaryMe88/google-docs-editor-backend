@@ -63,6 +63,7 @@ from .config_loaders import (
     load_overlay_config,
     load_overlay_configs,
 )
+from .contracts import BuildOptions, BuildRequest, BuildResult
 from .defaults import (
     ALLOWED_EDIT_LEVELS,
     ALLOWED_KB_LIMIT_KEYS,
@@ -143,4 +144,8 @@ __all__ = [  # noqa: RUF022
     "ALLOWED_EDIT_LEVELS",
     "KB_LIMIT_MIN",
     "KB_LIMIT_MAX",
+    # Контракты сборки промпта (итерация 15.1 карты №3)
+    "BuildOptions",
+    "BuildRequest",
+    "BuildResult",
 ]

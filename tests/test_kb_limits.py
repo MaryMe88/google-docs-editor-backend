@@ -166,7 +166,7 @@ def test_build_knowledge_block_uses_passed_limits():
 
         # Подменяем _process_kb_block, чтобы проверить переданные лимиты.
         # Патчим в модуле builder, где имя реально используется (там оно
-        # импортировано через from ._patchable import _process_kb_block).
+        # связан в namespace builder через from ._patchable import _process_kb_block).
         with patch("src.prompt_builder.builder._process_kb_block") as mock_process:
             # Создаём KnowledgeBlockRequest с кастомными лимитами
             custom_limits = LimitsConfig(stop_words_category=2, stop_words_items=1)

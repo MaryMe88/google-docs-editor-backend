@@ -11,6 +11,7 @@ import random
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from typing import (
+    TYPE_CHECKING,
     Any,
 )
 
@@ -28,6 +29,9 @@ from src.knowledge_retrieval import (
     select_structural_by_tags_or_all,
     select_style_issues,
 )
+
+if TYPE_CHECKING:
+    from src.semantic_index import SemanticIndexService
 
 logger = logging.getLogger(__name__)
 
@@ -146,92 +150,124 @@ def _append_editorial_entries(lines: list[str], title: str, entries: list[dict[s
             lines.append("- " + " | ".join(fragments))
 
 
-def _append_case_study_entries(lines: list[str], title: str, entries: list[dict[str, Any]]) -> None:  # noqa: C901  # see #93
+def _format_case_study_header(entry: dict[str, Any]) -> str:
+    """Собирает header case-study: «- name: description» / «- name» / «- description»."""
+    name = str(entry.get("name", "")).strip()
+    description = str(entry.get("description", "")).strip()
+    if name and description:
+        return f"- {name}: {description}"
+    if name:
+        return f"- {name}"
+    if description:
+        return f"- {description}"
+    return "-"
+
+
+def _append_case_study_constraints(lines: list[str], constraints: Any) -> None:
+    """Пишет до 4 непустых constraints в формате «  Ограничение: ...»."""
+    if not isinstance(constraints, list):
+        return
+    for constraint in constraints[:4]:
+        text = str(constraint).strip()
+        if text:
+            lines.append(f"  Ограничение: {text}")
+
+
+def _append_case_study_sections(lines: list[str], sections: Any) -> None:
+    """Пишет до 8 секций в формате «  N. name — goal» + опциональный «     Ориентир: hint»."""
+    if not isinstance(sections, list):
+        return
+    for index, section in enumerate(sections[:8], start=1):
+        if not isinstance(section, dict):
+            continue
+        section_name = str(section.get("name", "")).strip()
+        goal = str(section.get("goal", "")).strip()
+        hint = str(section.get("hint", "")).strip()
+        if not (section_name or goal):
+            continue
+        parts = [p for p in (section_name, goal) if p]
+        lines.append(f"  {index}. " + " — ".join(parts))
+        if hint:
+            lines.append(f"     Ориентир: {hint}")
+
+
+def _append_case_study_entries(lines: list[str], title: str, entries: list[dict[str, Any]]) -> None:
     if not entries:
         return
     lines.append(title)
     for entry in entries:
-        name = str(entry.get("name", "")).strip()
-        description = str(entry.get("description", "")).strip()
-        header = f"- {name}" if name else "-"
-        if description:
-            header = f"{header}: {description}" if name else f"- {description}"
-        lines.append(header)
-
-        constraints = entry.get("constraints", [])
-        if isinstance(constraints, list):
-            for constraint in constraints[:4]:
-                text = str(constraint).strip()
-                if text:
-                    lines.append(f"  Ограничение: {text}")
-
-        sections = entry.get("sections", [])
-        if isinstance(sections, list):
-            for index, section in enumerate(sections[:8], start=1):
-                if not isinstance(section, dict):
-                    continue
-                section_name = str(section.get("name", "")).strip()
-                goal = str(section.get("goal", "")).strip()
-                hint = str(section.get("hint", "")).strip()
-                if not (section_name or goal):
-                    continue
-                parts = [p for p in (section_name, goal) if p]
-                lines.append(f"  {index}. " + " — ".join(parts))
-                if hint:
-                    lines.append(f"     Ориентир: {hint}")
+        lines.append(_format_case_study_header(entry))
+        _append_case_study_constraints(lines, entry.get("constraints", []))
+        _append_case_study_sections(lines, entry.get("sections", []))
 
 
-def _append_evaluation_techniques(lines: list[str], title: str, data: dict[str, Any]) -> None:  # noqa: C901  # see #93
-    if not data:
-        return
-    lines.append(title)
-
+def _append_category_and_description(lines: list[str], data: dict[str, Any]) -> None:
+    """Пишет строки «Категория: ...» и «Описание: ...», если поля есть."""
     if "category" in data:
         lines.append(f"Категория: {data['category']}")
     if "description" in data:
         lines.append(f"Описание: {data['description']}")
 
+
+def _append_editor_rules(lines: list[str], data: dict[str, Any]) -> None:
+    """Пишет до 5 непустых editor_rules в формате «- rule»."""
     editor_rules = data.get("editor_rules", [])
-    if isinstance(editor_rules, list) and editor_rules:
-        lines.append("Правила редактора:")
-        for rule in editor_rules[:5]:
-            if isinstance(rule, str) and rule.strip():
-                lines.append(f"- {rule}")
+    if not isinstance(editor_rules, list) or not editor_rules:
+        return
+    lines.append("Правила редактора:")
+    for rule in editor_rules[:5]:
+        if isinstance(rule, str) and rule.strip():
+            lines.append(f"- {rule}")
 
+
+def _append_replacement_strategies(lines: list[str], data: dict[str, Any]) -> None:
+    """Пишет до 3 replacement_strategies в формате «- name: description» / «- name» / «- description»."""
     strategies = data.get("replacement_strategies", [])
-    if isinstance(strategies, list) and strategies:
-        lines.append("Стратегии замены оценок:")
-        for strategy in strategies[:3]:
-            if not isinstance(strategy, dict):
-                continue
-            name = strategy.get("name", "")
-            desc = strategy.get("description", "")
-            if name or desc:
-                lines.append(f"- {name}: {desc}" if name and desc else f"- {name or desc}")
+    if not isinstance(strategies, list) or not strategies:
+        return
+    lines.append("Стратегии замены оценок:")
+    for strategy in strategies[:3]:
+        if not isinstance(strategy, dict):
+            continue
+        name = strategy.get("name", "")
+        desc = strategy.get("description", "")
+        if name or desc:
+            lines.append(f"- {name}: {desc}" if name and desc else f"- {name or desc}")
 
-    diagnostics = data.get("diagnostics", [])
-    if isinstance(diagnostics, list) and diagnostics:
-        lines.append("Чек-листы для обнаружения оценок:")
-        for diag in diagnostics[:3]:
-            if isinstance(diag, dict):
-                dname = diag.get("name", "")
-                if dname:
-                    lines.append(f"- {dname}")
 
-    tests = data.get("tests", [])
-    if isinstance(tests, list) and tests:
-        lines.append("Тесты на замену оценок:")
-        for test in tests[:3]:
-            if isinstance(test, dict):
-                tname = test.get("name", "")
-                if tname:
-                    lines.append(f"- {tname}")
+def _append_named_entries(lines: list[str], entries: Any, header: str) -> None:
+    """Пишет до 3 непустых dict-элементов с полем name под заданным header."""
+    if not isinstance(entries, list) or not entries:
+        return
+    lines.append(header)
+    for entry in entries[:3]:
+        if not isinstance(entry, dict):
+            continue
+        name = entry.get("name", "")
+        if name:
+            lines.append(f"- {name}")
 
+
+def _append_source_title(lines: list[str], data: dict[str, Any]) -> None:
+    """Пишет «Источник: title», если source — dict с непустым title."""
     source = data.get("source")
-    if isinstance(source, dict):
-        title = source.get("title", "")
-        if title:
-            lines.append(f"Источник: {title}")
+    if not isinstance(source, dict):
+        return
+    title = source.get("title", "")
+    if title:
+        lines.append(f"Источник: {title}")
+
+
+def _append_evaluation_techniques(lines: list[str], title: str, data: dict[str, Any]) -> None:
+    if not data:
+        return
+    lines.append(title)
+    _append_category_and_description(lines, data)
+    _append_editor_rules(lines, data)
+    _append_replacement_strategies(lines, data)
+    _append_named_entries(lines, data.get("diagnostics"), "Чек-листы для обнаружения оценок:")
+    _append_named_entries(lines, data.get("tests"), "Тесты на замену оценок:")
+    _append_source_title(lines, data)
 
 
 def _append_glossary(lines: list[str], glossary: dict[str, Any], limit: int) -> None:
@@ -332,6 +368,7 @@ class ProcessContext:
     limits: LimitsConfig
     few_shot_seed: int | None = None
     semantic_rerank: bool = False
+    semantic_index_service: SemanticIndexService | None = None
 
 
 KB_BLOCK_REGISTRY: list[KBBlockConfig] = [
@@ -494,25 +531,19 @@ def _derive_seed(text: str) -> int:
     return int(digest[:8], 16)
 
 
-def _process_kb_block(config: KBBlockConfig, ctx: ProcessContext) -> int:  # noqa: C901  # see #93
-    """
-    Обрабатывает один блок знаний: выполняет retrieval, рендерит правила и few-shot.
-    Возвращает обновлённое количество использованных few-shot примеров.
-    """
-    # Guard: блок зарегистрирован, но не сконфигурирован (например,
-    # evaluation_techniques — см. отчёт 5.3). Пока retrieval/append не
-    # подключены, безопасно пропускаем, чтобы не упасть с
-    # TypeError: 'NoneType' object is not callable.
-    if config.retrieval_fn is None or config.append_fn is None:
-        return ctx.total_few_shot_used
-
+def _run_block_retrieval(
+    config: KBBlockConfig,
+    ctx: ProcessContext,
+    retrieval_fn: Callable,
+) -> tuple[list[dict[str, Any]], FallbackStage, int] | None:
+    """Выполняет retrieval для блока. None — если блок не должен попадать в промпт."""
     if not config.uses_structural_call:
         candidate_limit = (
             getattr(ctx.limits, config.candidate_attr) if config.candidate_attr else None
         )
         if candidate_limit is None:
             candidate_limit = DEFAULT_CANDIDATE_LIMIT
-        result = config.retrieval_fn(
+        result = retrieval_fn(
             kb=ctx.kb,
             text=ctx.text,
             tags=ctx.primary_tags,
@@ -521,14 +552,15 @@ def _process_kb_block(config: KBBlockConfig, ctx: ProcessContext) -> int:  # noq
             char_budget=getattr(ctx.budget, "char_budget", None),
             return_meta=True,
             semantic_rerank=ctx.semantic_rerank,
+            semantic_index_service=ctx.semantic_index_service,
         )
     else:
         if not config.kb_attr:
-            return ctx.total_few_shot_used
+            return None
         entries_source = ctx.kb.get(config.kb_attr)
         if not entries_source:
-            return ctx.total_few_shot_used
-        result = config.retrieval_fn(
+            return None
+        result = retrieval_fn(
             entries=entries_source,
             tags=ctx.primary_tags,
             limit=ctx.budget.entry_limit,
@@ -536,24 +568,36 @@ def _process_kb_block(config: KBBlockConfig, ctx: ProcessContext) -> int:  # noq
             char_budget=getattr(ctx.budget, "char_budget", None),
             return_meta=True,
         )
+    return _unpack_retrieval_result(result)
 
-    entries, stage, dropped = _unpack_retrieval_result(result)
-    pair_entries = [e for e in entries if _has_few_shot_pair(e)]
-    rule_entries = [e for e in entries if not _has_few_shot_pair(e)]
-    few_shot_examples = []
-    if ctx.include_few_shot:
-        allowed = min(3, 5 - ctx.total_few_shot_used)
-        if allowed > 0:
-            few_shot_examples = _select_few_shot_examples(
-                pair_entries, allowed, seed=ctx.few_shot_seed
-            )
 
+def _select_block_few_shot(
+    ctx: ProcessContext, pair_entries: list[dict[str, Any]]
+) -> list[dict[str, Any]]:
+    """Выбирает few-shot примеры для блока согласно include_few_shot и лимитам."""
+    if not ctx.include_few_shot:
+        return []
+    allowed = min(3, 5 - ctx.total_few_shot_used)
+    if allowed <= 0:
+        return []
+    return _select_few_shot_examples(pair_entries, allowed, seed=ctx.few_shot_seed)
+
+
+def _render_block_content(
+    ctx: ProcessContext,
+    config: KBBlockConfig,
+    append_fn: Callable,
+    rule_entries: list[dict[str, Any]],
+    few_shot_examples: list[dict[str, Any]],
+    stage: FallbackStage,
+) -> None:
+    """Пишет в ctx.lines confidence note, rule entries и few-shot примеры."""
     confidence_note = _get_confidence_note(stage)
     if (rule_entries or few_shot_examples) and confidence_note:
         ctx.lines.append(confidence_note)
 
     if rule_entries:
-        config.append_fn(ctx.lines, config.title, rule_entries)
+        append_fn(ctx.lines, config.title, rule_entries)
 
     if few_shot_examples:
         ctx.lines.append("Примеры редактирования:")
@@ -561,8 +605,17 @@ def _process_kb_block(config: KBBlockConfig, ctx: ProcessContext) -> int:  # noq
             ctx.lines.append(_format_few_shot_example(ex))
         ctx.lines.append("")
 
-    new_total = ctx.total_few_shot_used + len(few_shot_examples)
 
+def _record_block_meta(
+    ctx: ProcessContext,
+    config: KBBlockConfig,
+    entries: list[dict[str, Any]],
+    rule_entries: list[dict[str, Any]],
+    few_shot_examples: list[dict[str, Any]],
+    stage: FallbackStage,
+    dropped: int,
+) -> None:
+    """Записывает метаданные блока в ctx.meta и логирует truncation."""
     ctx.meta[config.name] = {
         "stage": stage.value,
         "entries_count": len(entries),
@@ -573,7 +626,6 @@ def _process_kb_block(config: KBBlockConfig, ctx: ProcessContext) -> int:  # noq
         "entry_names": [e.get("name") for e in entries[:5] if e.get("name")],
         "truncated_count": dropped,
     }
-
     if dropped > 0:
         logger.info(
             "Char budget truncated %d records for block='%s'",
@@ -581,6 +633,13 @@ def _process_kb_block(config: KBBlockConfig, ctx: ProcessContext) -> int:  # noq
             config.name,
         )
 
+
+def _warn_if_block_empty(
+    ctx: ProcessContext,
+    config: KBBlockConfig,
+    stage: FallbackStage,
+) -> None:
+    """Предупреждает о пустом/нейтральном retrieval для блока (диагностика)."""
     if stage in (FallbackStage.EMPTY, FallbackStage.NEUTRAL):
         _warn_if_empty_retrieval(
             block=config.name,
@@ -592,4 +651,30 @@ def _process_kb_block(config: KBBlockConfig, ctx: ProcessContext) -> int:  # noq
             primary_tags=ctx.primary_tags,
         )
 
+
+def _process_kb_block(config: KBBlockConfig, ctx: ProcessContext) -> int:
+    """
+    Обрабатывает один блок знаний: выполняет retrieval, рендерит правила и few-shot.
+    Возвращает обновлённое количество использованных few-shot примеров.
+    """
+    # Guard: блок зарегистрирован, но не сконфигурирован (например,
+    # evaluation_techniques — см. отчёт 5.3). Пока retrieval/append не
+    # подключены, безопасно пропускаем.
+    if config.retrieval_fn is None or config.append_fn is None:
+        return ctx.total_few_shot_used
+
+    retrieved = _run_block_retrieval(config, ctx, config.retrieval_fn)
+    if retrieved is None:
+        return ctx.total_few_shot_used
+    entries, stage, dropped = retrieved
+
+    pair_entries = [e for e in entries if _has_few_shot_pair(e)]
+    rule_entries = [e for e in entries if not _has_few_shot_pair(e)]
+
+    few_shot_examples = _select_block_few_shot(ctx, pair_entries)
+    _render_block_content(ctx, config, config.append_fn, rule_entries, few_shot_examples, stage)
+    _record_block_meta(ctx, config, entries, rule_entries, few_shot_examples, stage, dropped)
+    _warn_if_block_empty(ctx, config, stage)
+
+    new_total = ctx.total_few_shot_used + len(few_shot_examples)
     return new_total

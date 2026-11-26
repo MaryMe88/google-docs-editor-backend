@@ -193,9 +193,9 @@ def test_load_all_configs_success(tmp_path):
 
     # Подменяем ALLOWED_DOMAINS и т.д. на наши временные значения
     with (
-        patch("src.startup_checks.ALLOWED_DOMAINS", {"blog"}),
-        patch("src.startup_checks.ALLOWED_INTENTS", {"neutral", "analytical"}),
-        patch("src.startup_checks.ALLOWED_OVERLAYS", {"base"}),
+        patch("src.startup_checks.providers.ALLOWED_DOMAINS", {"blog"}),
+        patch("src.startup_checks.providers.ALLOWED_INTENTS", {"neutral", "analytical"}),
+        patch("src.startup_checks.providers.ALLOWED_OVERLAYS", {"base"}),
     ):
         domains, intents, overlays = _load_all_configs(config_dir)
         assert "blog" in domains

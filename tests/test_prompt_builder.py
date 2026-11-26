@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 import re
-import warnings
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
@@ -19,6 +18,9 @@ from src.config_types import (
 from src.knowledge_retrieval import FallbackStage, _collect_with_budget
 from src.prompt_builder import (
     KB_BLOCK_REGISTRY,
+    BuildOptions,
+    BuildRequest,
+    BuildResult,
     KBBlockConfig,
     KnowledgeBlockRequest,
     PromptBuilder,
@@ -725,18 +727,31 @@ def test_derive_seed_stable() -> None:
 # ----------------------------------------------------------------------------
 
 
-def test_deprecation_warning(builder: PromptBuilder) -> None:
-    """Вызов build_prompt должен вызывать DeprecationWarning."""
-    with warnings.catch_warnings():
-        warnings.simplefilter("always")
-        with pytest.warns(
-            DeprecationWarning, match=r"build_prompt\(\) is deprecated, use build\(\)"
-        ):
-            builder.build_prompt(
-                text="Тест",
-                domain="blog",
-                include_knowledge=False,
-            )
+def test_build_prompt_accepts_build_request(builder: PromptBuilder) -> None:
+    """build_prompt(request) -> BuildResult с валидным prompt."""
+    req = BuildRequest(
+        text="Тест",
+        domain="blog",
+        options=BuildOptions(include_knowledge=False),
+    )
+    result = builder.build_prompt(req)
+    assert isinstance(result, BuildResult)
+    assert isinstance(result.prompt, str)
+    assert result.prompt
+    assert result.retrieval_meta is None
+
+
+def test_build_prompt_returns_retrieval_meta_when_requested(builder: PromptBuilder) -> None:
+    """build_prompt(request) с include_retrieval_meta=True -> dict."""
+    req = BuildRequest(
+        text="Тест",
+        domain="blog",
+        options=BuildOptions(include_knowledge=False, include_retrieval_meta=True),
+    )
+    result = builder.build_prompt(req)
+    assert isinstance(result, BuildResult)
+    assert isinstance(result.prompt, str)
+    assert result.retrieval_meta == {}
 
 
 # ----------------------------------------------------------------------------
